@@ -1,0 +1,815 @@
+/* Readyset UI. Vanilla JS, one render() per view, event delegation on data-action. */
+(function () {
+  'use strict';
+  const E = window.Engine;
+  const $ = (s, r) => (r || document).querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const LIFTS = ['squat', 'bench', 'deadlift'];
+  const LIFTNAME = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
+  const DIFF = ['', 'Easy', 'Solid', 'Very hard', 'Crushed me'];
+
+  let state = null;
+  let view = 'today';
+  const ui = { checkin: null, sheet: null, timer: null, confirm: null, setupStep: 0, draft: null, expand: {}, cardioRun: null, importText: '' };
+
+  // ---------- Dates ----------
+  function todayISO(d) { d = d || new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+  function fmtDate(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
+  function fmtDateLong(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+  function daysBetween(a, b) { return Math.round((new Date(b) - new Date(a)) / 864e5); }
+
+  // ---------- Storage ----------
+  const Store = {
+    key: 'readyset.v1', db: null, timer: null, chain: Promise.resolve(), remoteOk: false,
+    loadLocal() { try { const t = localStorage.getItem(this.key); return t ? JSON.parse(t) : null; } catch (e) { return null; } },
+    saveLocal(s) { try { localStorage.setItem(this.key, JSON.stringify(s)); } catch (e) { /* storage may be unavailable */ } },
+    async init() {
+      let local = this.loadLocal();
+      try {
+        if (window.claude && typeof window.claude.use === 'function') {
+          const db = await Promise.race([window.claude.use('db'), new Promise(r => setTimeout(() => r(null), 5000))]);
+          if (db) {
+            this.db = db;
+            const snap = await db.doc('app/state').get();
+            if (snap.exists) {
+              const remote = snap.data();
+              const q = await db.collection('sessions').limit(1000).get();
+              remote.sessions = q.docs.map(d => d.data()).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+              if (!local || (remote.updatedAt || 0) >= (local.updatedAt || 0)) local = remote;
+              this.remoteOk = true;
+            } else if (local) {
+              this.remoteOk = true; this.pushAll(local);
+            } else this.remoteOk = true;
+          }
+        }
+      } catch (e) { /* fall back to local */ }
+      return local;
+    },
+    save(s) {
+      s.updatedAt = Date.now();
+      this.saveLocal(s);
+      if (!this.db) return;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.pushState(s), 1200);
+    },
+    pushState(s) {
+      if (!this.db) return;
+      const copy = Object.assign({}, s); delete copy.sessions;
+      this.chain = this.chain.then(() => this.db.doc('app/state').set(copy)).catch(() => {});
+    },
+    pushSession(sess) {
+      if (!this.db) return;
+      this.chain = this.chain.then(() => this.db.doc('sessions/' + sess.id).set(sess)).catch(() => {});
+    },
+    pushAll(s) { this.pushState(s); for (const x of s.sessions || []) this.pushSession(x); },
+    deleteSession(id) { if (this.db) this.chain = this.chain.then(() => this.db.doc('sessions/' + id).delete()).catch(() => {}); },
+  };
+  function save() { Store.save(state); }
+  function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
+
+  // ---------- Toast / confirm ----------
+  function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
+
+  // ---------- Audio / vibration for the rest timer ----------
+  let audioCtx = null;
+  function beep() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination); o.frequency.value = 880; g.gain.value = 0.15;
+      o.start(); o.stop(audioCtx.currentTime + 0.25);
+      setTimeout(() => { const o2 = audioCtx.createOscillator(), g2 = audioCtx.createGain(); o2.connect(g2); g2.connect(audioCtx.destination); o2.frequency.value = 1175; g2.gain.value = 0.15; o2.start(); o2.stop(audioCtx.currentTime + 0.3); }, 300);
+    } catch (e) { /* no audio */ }
+    try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) { /* no vibration */ }
+  }
+  function unlockAudio() { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) { /* ignore */ } }
+
+  // ---------- Rest timer ----------
+  function startTimer(seconds) {
+    stopTimer();
+    ui.timer = { end: Date.now() + seconds * 1000, total: seconds, fired: false, iv: setInterval(tickTimer, 250) };
+    tickTimer();
+  }
+  function stopTimer() { if (ui.timer) clearInterval(ui.timer.iv); ui.timer = null; const el = $('#timer'); if (el) el.remove(); }
+  function tickTimer() {
+    if (!ui.timer) return;
+    let el = $('#timer');
+    if (!el) { el = document.createElement('div'); el.id = 'timer'; el.className = 'timer'; document.body.appendChild(el); }
+    const left = Math.ceil((ui.timer.end - Date.now()) / 1000);
+    if (left <= 0 && !ui.timer.fired) { ui.timer.fired = true; beep(); }
+    el.classList.toggle('over', left <= 0);
+    const a = Math.abs(left), txt = left <= 0 ? `Rest done ${a >= 60 ? '+' + Math.floor(a / 60) + ':' + String(a % 60).padStart(2, '0') : '+' + a + 's'}` : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    el.innerHTML = `<span>${txt}</span><button data-action="timer-add">+30s</button><button data-action="timer-stop">Done</button>`;
+    if (left <= -600) stopTimer();
+  }
+
+  // ---------- Wake lock ----------
+  let wakeLock = null;
+  async function keepAwake() { try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { wakeLock = null; } }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state && state.current) keepAwake(); });
+
+  // ---------- Helpers ----------
+  function lbl(n) { return n == null ? '—' : String(n); }
+  function pctLabel(e) { return e.pctTM != null ? Math.round(e.pctTM * 100) + '% TM' : ''; }
+  function sessionsOfWeek() { const P = state.program; return state.sessions.filter(s => s.mesoCount === P.mesoCount && s.week === P.week && s.blockIdx === P.blockIdx && !s.isRest); }
+  function sessionsOfMeso() { const P = state.program; return state.sessions.filter(s => s.mesoCount === P.mesoCount && s.blockIdx === P.blockIdx && !s.isRest); }
+  function lastSession() { for (let i = state.sessions.length - 1; i >= 0; i--) if (!state.sessions[i].skipped) return state.sessions[i]; return null; }
+  function plateText(w) {
+    const r = E.plateLoad(w, state.settings.barWeight, state.settings.plates);
+    if (w <= state.settings.barWeight) return 'Empty bar';
+    const counts = {}; r.plates.forEach(p => counts[p] = (counts[p] || 0) + 1);
+    const parts = Object.keys(counts).sort((a, b) => b - a).map(p => counts[p] > 1 ? `${p}×${counts[p]}` : `${p}`);
+    return (parts.length ? parts.join(' · ') + ' per side' : 'Empty bar') + (r.exact ? '' : ` (${r.short * 2} lb short)`);
+  }
+  function hr(v) { const h = Math.floor(v / 60), m = v % 60; return h ? `${h}h ${m ? m + 'm' : ''}`.trim() : `${m}m`; }
+
+  // ---------- Views ----------
+  function render() {
+    const main = $('#main');
+    if (!state.setupDone) { $('#tabbar').hidden = true; $('#pos').textContent = 'Setup'; main.innerHTML = renderSetup(); return; }
+    $('#tabbar').hidden = false;
+    document.querySelectorAll('#tabbar button').forEach(b => b.toggleAttribute('aria-current', b.dataset.view === view) || (b.dataset.view === view ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
+    const pos = E.positionLabel(state);
+    $('#pos').textContent = `${pos.block.name} · ${pos.label}`;
+    main.innerHTML = view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings();
+    if (view === 'history') requestAnimationFrame(drawCharts);
+    if (view === 'today' && state.current && state.current.phase === 'cardio' && ui.cardioRun) requestAnimationFrame(tickCardio);
+  }
+
+  // ---------- Setup wizard ----------
+  function draft() {
+    if (!ui.draft) {
+      const s = state.settings;
+      ui.draft = { name: s.name || '', squat: state.lifts.squat.oneRM || '', bench: state.lifts.bench.oneRM || '', deadlift: state.lifts.deadlift.oneRM || '', calc: {}, tmPct: s.tmPct, barWeight: s.barWeight, plates: s.plates.slice(), dbIncrement: s.dbIncrement, days: s.days.slice(), cardioMin: s.cardioMin, cardioWatts: s.cardioWatts, deadliftStyle: s.deadliftStyle, easyWeek: true, includePeak: s.includePeak !== false };
+    }
+    return ui.draft;
+  }
+  function renderSetup() {
+    const d = draft(), step = ui.setupStep;
+    const steps = `<div class="steps">${[0, 1, 2, 3].map(i => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`;
+    if (step === 0) return `
+      <div class="card"><h1>Readyset</h1>
+      <p>A four-day powerlifting program that reads how you are recovering and adjusts itself, built on the Renaissance Periodization training principles.</p>
+      <p class="muted small">Setup takes about two minutes: your current maxes, your equipment, your training days.</p>
+      ${steps}
+      <label class="f">Your name (optional)<input id="d-name" data-draft="name" value="${esc(d.name)}" placeholder="Jerm"></label>
+      <button class="btn primary block" data-action="setup-next">Start</button></div>`;
+    if (step === 1) return `
+      <div class="card"><h2>Current maxes</h2>
+      <p class="small muted">Enter a recent 1RM, or tap "from a set" and enter a hard set you did lately. The program works off a Training Max of ${Math.round(d.tmPct * 100)}% of these numbers, so even a rough estimate is fine. Round down if unsure.</p>
+      ${steps}
+      ${LIFTS.map(l => `
+        <div class="stack">
+          <div class="row between"><span class="label" style="font-weight:600">${LIFTNAME[l]} 1RM</span><button class="btn sm quiet" data-action="setup-calc" data-lift="${l}">${d.calc[l] ? 'hide' : 'from a set'}</button></div>
+          <div class="row"><label class="f" style="flex:1"><span class="tiny">lb</span><input id="d-${l}" type="number" inputmode="decimal" data-draft="${l}" value="${esc(d[l])}" placeholder="e.g. 315"></label></div>
+          ${d.calc[l] ? `<div class="row small" style="align-items:flex-end">
+            <label class="f" style="flex:1">Weight<input id="c-w-${l}" type="number" inputmode="decimal" data-calc="${l}:w" value="${esc(d.calc[l].w || '')}"></label>
+            <label class="f" style="flex:1">Reps<input id="c-r-${l}" type="number" inputmode="numeric" data-calc="${l}:r" value="${esc(d.calc[l].r || '')}"></label>
+            <label class="f" style="flex:1">RPE<input id="c-e-${l}" type="number" inputmode="decimal" step="0.5" min="5" max="10" data-calc="${l}:e" value="${esc(d.calc[l].e || '')}" placeholder="8"></label>
+            <button class="btn sm" data-action="setup-apply-calc" data-lift="${l}">Use</button></div>` : ''}
+        </div>`).join('')}
+      <label class="f">Training Max as % of 1RM
+        <select id="d-tm" data-draft="tmPct"><option value="0.85" ${d.tmPct == 0.85 ? 'selected' : ''}>85% (very conservative)</option><option value="0.875" ${d.tmPct == 0.875 ? 'selected' : ''}>87.5%</option><option value="0.9" ${d.tmPct == 0.9 ? 'selected' : ''}>90% (recommended)</option><option value="0.925" ${d.tmPct == 0.925 ? 'selected' : ''}>92.5%</option></select></label>
+      <label class="f">Deadlift stance<select id="d-dl" data-draft="deadliftStyle"><option value="conventional" ${d.deadliftStyle === 'conventional' ? 'selected' : ''}>Conventional</option><option value="sumo" ${d.deadliftStyle === 'sumo' ? 'selected' : ''}>Sumo</option></select></label>
+      <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-next">Next</button></div></div>`;
+    if (step === 2) return `
+      <div class="card"><h2>Equipment</h2>${steps}
+      <label class="f">Bar weight (lb)<input id="d-bar" type="number" inputmode="decimal" data-draft="barWeight" value="${esc(d.barWeight)}"></label>
+      <div class="stack"><span class="tiny">Plates you own (per side)</span>
+        <div class="chips">${[55, 45, 35, 25, 15, 10, 5, 2.5, 1.25].map(p => `<button data-action="setup-plate" data-p="${p}" aria-pressed="${d.plates.includes(p)}">${p}</button>`).join('')}</div>
+        <p class="small muted">Barbell loads round to ${d.plates.includes(1.25) ? 2.5 : d.plates.includes(2.5) ? 5 : 10} lb jumps based on your smallest plate.</p></div>
+      <label class="f">Dumbbell step (lb)<select id="d-dbi" data-draft="dbIncrement"><option value="2.5" ${d.dbIncrement == 2.5 ? 'selected' : ''}>2.5</option><option value="5" ${d.dbIncrement == 5 ? 'selected' : ''}>5</option></select></label>
+      <p class="small muted">The plan assumes: power rack, bench, barbell, adjustable dumbbells, belt squat, lat pulldown / low row, seated leg curl, leg extension. Swap anything from the Program tab later.</p>
+      <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-next">Next</button></div></div>`;
+    return `
+      <div class="card"><h2>Schedule</h2>${steps}
+      <div class="stack"><span class="tiny">Training days (pick 4, two rest days back to back works best)</span>
+        <div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="setup-day" data-d="${x}" aria-pressed="${d.days.includes(x)}">${x}</button>`).join('')}</div></div>
+      <div class="grid2">
+        <label class="f">Easy bike after lifting (min)<input id="d-cm" type="number" inputmode="numeric" data-draft="cardioMin" value="${esc(d.cardioMin)}"></label>
+        <label class="f">Usual easy watts (optional)<input id="d-cw" type="number" inputmode="numeric" data-draft="cardioWatts" value="${esc(d.cardioWatts)}"></label>
+      </div>
+      <p class="small muted">The book's guideline is to keep extra cardio under about 1,500 kcal a week and truly easy, and to judge it by whether the lifts keep moving. The app keeps a running weekly estimate so you can see where you stand.</p>
+      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-easy" data-draft="easyWeek" ${d.easyWeek ? 'checked' : ''} style="width:22px;height:22px"> Start with one easy week first <span class="muted small" style="font-weight:500">(recommended if you are coming off a program that beat you up)</span></label>
+      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-peak" data-draft="includePeak" ${d.includePeak ? 'checked' : ''} style="width:22px;height:22px"> Include the 3-week Peak &amp; Test block <span class="muted small" style="font-weight:500">(heavy singles and a test week every 12 weeks)</span></label>
+      <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-finish">Build my program</button></div></div>`;
+  }
+  function finishSetup() {
+    const d = draft();
+    const bad = LIFTS.filter(l => !(Number(d[l]) > 0));
+    if (bad.length) { toast(`Enter a ${LIFTNAME[bad[0]]} max first`); ui.setupStep = 1; render(); return; }
+    if (d.days.length !== 4) { toast('Pick exactly four training days'); render(); return; }
+    const s = state.settings;
+    s.name = d.name.trim(); s.tmPct = Number(d.tmPct); s.barWeight = Number(d.barWeight) || 45; s.plates = d.plates.slice().sort((a, b) => b - a);
+    s.increment = d.plates.includes(1.25) ? 2.5 : d.plates.includes(2.5) ? 5 : 10; s.dbIncrement = Number(d.dbIncrement); s.days = d.days.slice();
+    s.cardioMin = Math.max(0, Number(d.cardioMin) || 0); s.cardioWatts = Number(d.cardioWatts) || 110; s.deadliftStyle = d.deadliftStyle; s.includePeak = !!d.includePeak;
+    for (const l of LIFTS) E.applyTM(state, l, Number(d[l]));
+    state.program.startedAt = todayISO();
+    if (d.easyWeek) E.startActiveRest(state, 1);
+    state.setupDone = true;
+    addLog(`Program started. 1RMs: squat ${state.lifts.squat.oneRM}, bench ${state.lifts.bench.oneRM}, deadlift ${state.lifts.deadlift.oneRM}. Training maxes at ${Math.round(s.tmPct * 100)}%.`);
+    ui.draft = null; save(); render();
+  }
+
+  // ---------- Today ----------
+  function renderToday() {
+    if (state.current) {
+      if (state.current.phase === 'lift') return renderSession();
+      if (state.current.phase === 'post') return renderPost();
+      if (state.current.phase === 'cardio') return renderCardio();
+    }
+    if (ui.checkin) return renderCheckin();
+    const pos = E.positionLabel(state), P = state.program;
+    const plan = E.buildSession(state, 'full');
+    const last = lastSession();
+    let html = '';
+    if (state.undoSkip) html += `<div class="callout warn row between"><span>Skipped ${esc(state.undoSkip.dayName)}.</span><button class="btn sm" data-action="undo-skip">Undo skip</button></div>`;
+    if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
+    if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Two signals of stacking fatigue showed up this week. The book's rule is to take the deload now rather than grind into it. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
+    if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
+    const nameHi = state.settings.name ? `, ${esc(state.settings.name)}` : '';
+    html += `<div class="card accent">
+      <div class="tiny">${pos.isRest ? 'Easy week' : pos.isDeload ? 'Deload week' : pos.isTest ? 'Test week' : `${esc(pos.block.name)} block · ${esc(pos.label)}`}</div>
+      <h1>${esc(plan.dayName)}</h1>
+      <div class="row between"><span>About ${plan.estMinutes} min of lifting${plan.cardioMin ? ` + ${plan.cardioMin} min easy bike` : ''}</span></div>
+      <div class="small">${plan.exercises.map(e => `${esc(e.name)} ${e.sets.length}×${e.sets[0].reps}${e.sets[0].w ? ' @ ' + e.sets[0].w : ''}`).join(' · ')}</div>
+      <button class="btn block" style="background:var(--accent-fg);color:var(--accent);border:0" data-action="checkin">Check in and start</button>
+      <div class="row between small"><button class="btn sm quiet" style="color:inherit" data-action="skip-session">Skip this session</button><span class="muted">Today ${fmtDateLong(todayISO())}</span></div>
+    </div>`;
+    if (last) {
+      const d = daysBetween(last.date, todayISO());
+      html += `<div class="card"><h3>Last session</h3><div class="row between"><div><b>${esc(last.dayName)}</b> <span class="muted small">${fmtDate(last.date)}${d === 0 ? ' (today)' : d === 1 ? ' (yesterday)' : ` (${d} days ago)`}</span></div>${last.readiness ? `<span class="pill ${last.readiness.color}">${last.readiness.score} ready</span>` : ''}</div>
+        <div class="small muted">${last.post ? DIFF[last.post.difficulty] : ''}${last.durationMin ? ` · ${last.durationMin} min` : ''}${last.cardio && last.cardio.min ? ` · bike ${last.cardio.min} min` : ''}${last.mode !== 'full' ? ` · ${E.MODES[last.mode].label}` : ''}</div></div>`;
+    }
+    html += renderWeekBrief();
+    return html;
+  }
+  function renderWeekBrief() {
+    const P = state.program, pos = E.positionLabel(state);
+    const done = sessionsOfWeek();
+    const dots = E.DAYS.map((d, i) => { const s = done.find(x => x.dayIdx === i); return `<span class="pill ${s ? (s.skipped ? '' : 'green') : i === P.dayIdx ? 'accent' : ''}">${d.id}</span>`; }).join(' ');
+    const sets = LIFTS.map(l => `<div class="kpi"><span class="tiny">${LIFTNAME[l]} sets</span><span class="v num">${E.weeklySets(state, l)}<small>/ ${E.CAPS[l]}</small></span></div>`).join('');
+    const kcal = weekCardio();
+    return `<div class="card"><div class="row between"><h3>This week</h3><div class="row" style="gap:4px">${dots}</div></div>
+      <div class="grid3">${sets}</div>
+      <div class="row between small"><span class="muted">Easy cardio this week</span><span class="num"><b>${kcal.min} min</b> · ~${kcal.kcal} kcal of a 1,500 guideline</span></div>
+      <div class="bar"><i style="width:${Math.min(100, kcal.kcal / 15)}%;background:${kcal.kcal > 1500 ? 'var(--warn)' : 'var(--accent)'}"></i></div></div>`;
+  }
+  function weekCardio() {
+    const t = new Date(), day = (t.getDay() + 6) % 7; const mon = new Date(t); mon.setDate(t.getDate() - day); const monISO = todayISO(mon);
+    let min = 0, kcal = 0;
+    for (const s of state.sessions) if (s.date >= monISO && s.cardio && s.cardio.min) { min += s.cardio.min; kcal += s.cardio.kcal || E.cardioKcal(s.cardio.min, state.settings.cardioWatts); }
+    for (const c of state.extraCardio || []) if (c.date >= monISO) { min += c.min; kcal += c.kcal; }
+    return { min, kcal };
+  }
+
+  // ---------- Check-in ----------
+  function startCheckin() {
+    const last = lastSession();
+    ui.checkin = { sleep: 0, energy: 0, motivation: 0, groups: { legs: 0, push: 0, hinge: 0 }, askGroups: !!last && !last.soreness, result: null, choice: null };
+    render();
+  }
+  function renderCheckin() {
+    const c = ui.checkin;
+    const seg = (key, labels) => `<div class="seg">${labels.map((t, i) => `<button data-action="ci" data-k="${key}" data-v="${i + 1}" aria-pressed="${(key.includes(':') ? c.groups[key.split(':')[1]] : c[key]) === i + 1}">${i + 1}<small>${t}</small></button>`).join('')}</div>`;
+    if (c.result) {
+      const r = c.result, pos = E.positionLabel(state);
+      const plan = E.buildSession(state, c.choice || r.mode);
+      const explain = r.color === 'green' ? 'Good to go. Loads and sets as planned, and the first set of each main lift can take bonus reps if it moves well.'
+        : r.color === 'yellow' ? 'So-so day. The book\'s rule: most days like this still allow an overload, so loads stay. Bonus reps and any earned extra sets are dropped.'
+        : 'Rough day. Grinding a planned overload through this is the fatigue trap. A light session (fewer sets, lighter loads) clears fatigue better than a day off and keeps the week on track.';
+      return `<div class="card">
+        <div class="row between"><h2>Readiness ${r.score}</h2><span class="pill ${r.color}">${r.color === 'green' ? 'Green' : r.color === 'yellow' ? 'Yellow' : 'Red'}</span></div>
+        <p>${explain}</p>
+        ${r.color === 'red' ? `<div class="seg wrap">
+            <button data-action="ci-choice" data-v="light" aria-pressed="${c.choice === 'light'}">Light session<small>recommended</small></button>
+            <button data-action="ci-choice" data-v="full" aria-pressed="${c.choice === 'full'}">As planned<small>if you know it's not fatigue</small></button>
+          </div>
+          <button class="btn block" data-action="ci-rest">Rest today, keep this session for next time</button>` : ''}
+        <div class="callout">${esc(plan.dayName)} · ${plan.exercises.map(e => `${esc(e.name)} ${e.sets.length}×${e.sets[0].reps}${e.sets[0].w ? ' @ ' + e.sets[0].w : ''}`).join(' · ')} · about ${plan.estMinutes} min</div>
+        <div class="btnrow"><button class="btn" data-action="ci-back">Back</button><button class="btn primary" data-action="start-session" data-mode="${c.choice || r.mode}">Start ${E.MODES[c.choice || r.mode].label.toLowerCase()}</button></div>
+      </div>`;
+    }
+    return `<div class="card">
+      <h2>Check in</h2><p class="small muted">Be honest, then trust the plan. This takes six taps.</p>
+      ${c.askGroups ? `<div class="q"><span class="label">How are you feeling since the last session?</span>
+        ${['legs|Legs', 'push|Chest, shoulders, arms', 'hinge|Lower back, hips, hamstrings'].map(x => { const [k, t] = x.split('|'); return `<span class="tiny">${t}</span>${seg('g:' + k, ['Fresh', 'A bit', 'Sore', 'Very sore'])}`; }).join('')}</div>` :
+        `<div class="q"><span class="label">How beat up do you feel overall?</span>${seg('g:legs', ['Fresh', 'A bit', 'Sore', 'Very sore'])}</div>`}
+      <div class="q"><span class="label">Sleep last night</span>${seg('sleep', ['Awful', 'Poor', 'OK', 'Good', 'Great'])}</div>
+      <div class="q"><span class="label">Energy and mood</span>${seg('energy', ['Drained', 'Low', 'OK', 'Good', 'Fresh'])}</div>
+      <div class="q"><span class="label">Motivation to train</span>${seg('motivation', ['None', 'Low', 'OK', 'Good', 'Fired up'])}</div>
+      <div class="btnrow"><button class="btn" data-action="ci-cancel">Cancel</button><button class="btn primary" data-action="ci-submit">See today's plan</button></div>
+    </div>`;
+  }
+  function submitCheckin() {
+    const c = ui.checkin;
+    if (!c.sleep || !c.energy || !c.motivation || !c.groups.legs || (c.askGroups && (!c.groups.push || !c.groups.hinge))) { toast('Answer every question'); return; }
+    const soreness = E.sorenessFromGroups(c.groups);
+    const r = E.readinessScore({ sleep: c.sleep, energy: c.energy, soreness, motivation: c.motivation });
+    r.answers = { sleep: c.sleep, energy: c.energy, motivation: c.motivation, groups: Object.assign({}, c.groups) };
+    r.mode = state.program.lightRestOfWeek ? 'light' : r.color === 'green' ? 'full' : r.color === 'yellow' ? 'trim' : 'light';
+    const pos = E.positionLabel(state);
+    if ((pos.isDeload || pos.isRest) && r.mode !== 'full') r.mode = 'full';
+    c.result = r; c.choice = r.color === 'red' ? 'light' : null;
+    const last = lastSession();
+    if (last && c.askGroups) { last.soreness = Object.assign({}, c.groups); Store.pushSession(last); }
+    save(); render();
+  }
+  function startSession(mode) {
+    const c = ui.checkin, P = state.program;
+    const sess = E.buildSession(state, mode);
+    const pos = E.position(state);
+    Object.assign(sess, { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), phase: 'lift', startedAt: Date.now(), readiness: c ? c.result : null, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, notes: '', skippedSlots: [] });
+    if (c && c.result) { delete sess.readiness.mode; }
+    sess.exercises.forEach(e => e.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; }));
+    state.current = sess; ui.checkin = null; state.undoSkip = null;
+    if (c && c.result && c.result.color === 'red') {
+      const redsThisWeek = sessionsOfWeek().filter(s => s.readiness && s.readiness.color === 'red').length + 1;
+      if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.isRest && P.dayIdx < 3) { P.lightRestOfWeek = true; addLog('Second red check-in this week: remaining sessions switched to light (the book: light sessions, not an unplanned deload).'); }
+    }
+    unlockAudio(); keepAwake(); save(); render(); window.scrollTo(0, 0);
+  }
+  function restToday() { ui.checkin = null; addLog('Rested instead of training; the session stays queued.'); save(); render(); }
+  function skipSession() {
+    const P = state.program, pos = E.positionLabel(state);
+    // Snapshot everything a skip can change, so it can be undone even across a week boundary.
+    const snap = JSON.stringify({ program: state.program, lifts: state.lifts, learned: state.learned, lastReport: state.lastReport || null, logLen: state.log.length });
+    const s = { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), skipped: true, dayId: pos.day.id, dayName: pos.day.name, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, week: P.week, isRest: pos.isRest, isDeload: pos.isDeload, exercises: [] };
+    state.sessions.push(s); Store.pushSession(s);
+    addLog(`Skipped ${pos.day.name}.`);
+    afterSession();
+    state.undoSkip = { snap, id: s.id, dayName: pos.day.name };
+    save(); render();
+  }
+  function undoSkip() {
+    const u = state.undoSkip; if (!u) return;
+    const snap = JSON.parse(u.snap);
+    state.program = snap.program; state.lifts = snap.lifts; state.learned = snap.learned; state.lastReport = snap.lastReport;
+    state.log.splice(0, Math.max(0, state.log.length - snap.logLen));
+    const i = state.sessions.findIndex(x => x.id === u.id);
+    if (i >= 0) { state.sessions.splice(i, 1); Store.deleteSession(u.id); }
+    state.undoSkip = null;
+    save(); render(); toast(`${u.dayName} is back on`);
+  }
+
+  // ---------- Session ----------
+  function renderSession() {
+    const s = state.current;
+    const doneSets = s.exercises.reduce((n, e) => n + e.sets.filter(x => x.done).length, 0);
+    const totalSets = s.exercises.reduce((n, e) => n + (s.skippedSlots.includes(e.slotKey) ? 0 : e.sets.length), 0);
+    let html = `<div class="row between"><div><h2>${esc(s.dayName)}</h2><div class="small muted">${esc(s.blockName)} · ${s.isDeload ? 'deload' : s.isRest ? 'easy week' : s.isTest ? 'test week' : 'week ' + s.week} · ${E.MODES[s.mode].label}</div></div><span class="pill ${s.readiness ? s.readiness.color : ''}">${doneSets}/${totalSets} sets</span></div>`;
+    for (const n of s.notes || []) html += `<div class="callout">${esc(n)}</div>`;
+    s.exercises.forEach((e, ei) => {
+      const skipped = s.skippedSlots.includes(e.slotKey);
+      const first = e.sets.find(x => x.kind === 'work' || x.kind === 'test') || e.sets[0];
+      const swaps = (E.SWAPS[e.slotKey] || []).filter(x => x !== e.ex);
+      html += `<section class="ex" data-ei="${ei}">
+        <div class="ex-head"><div><div class="name">${esc(e.name)}</div>
+          <div class="meta">${e.role === 'primary' ? 'Main lift' : e.role === 'secondary' ? 'Second lift' : 'Accessory'}${e.optional ? ' · optional' : ''}${e.pctTM != null ? ` · ${pctLabel(e)}` : ''}${e.rpeTarget != null && !s.isTest ? (e.rpeTarget >= 6 ? ` · aim RPE ${e.rpeTarget}` : ' · keep it easy') : ''}${e.repRange ? ` · ${e.repRange[0]}–${e.repRange[1]} reps, add weight when every set hits ${e.repRange[1]}` : ''}</div></div>
+          ${e.optional || skipped ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}">${skipped ? 'Undo skip' : 'Skip'}</button>` : ''}</div>
+        ${e.cue ? `<div class="ex-note">${esc(e.cue)}</div>` : ''}${e.note ? `<div class="ex-note">${esc(e.note)}</div>` : ''}
+        ${e.adjLog && e.adjLog.length ? `<div class="ex-note" style="color:var(--accent)">${esc(e.adjLog[e.adjLog.length - 1])}</div>` : ''}
+        ${skipped ? '' : renderSets(e, ei)}
+        ${skipped ? '' : `<div class="ex-foot">
+          ${e.load === 'bar' && first && first.w ? `<span class="plates"><b>${first.w}</b> = ${esc(plateText(first.w))}</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
+          ${swaps.length ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.EX[x].name)}</option>`).join('')}</select>` : ''}
+        </div>`}
+        ${!skipped && e.load === 'bar' && first && first.w && !s.isTest && (e.role !== 'accessory') ? `<details class="warm"><summary class="tiny">Warm-up ramp</summary>${E.warmups(first.w, state.settings.barWeight, state.settings.increment).map(w => `<span class="num">${w.w} × ${w.reps}</span>`).join('')}</details>` : ''}
+      </section>`;
+    });
+    html += `<div class="card"><label class="f">Notes<textarea id="sess-notes" data-action="notes" rows="2" placeholder="Anything worth remembering">${esc(s.notes)}</textarea></label>
+      <button class="btn primary block" data-action="finish-lifting">Finish lifting</button>
+      ${ui.confirm === 'finish' ? `<div class="callout warn">${totalSets - doneSets} sets are not ticked. Finish anyway? <div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="finish-confirm">Yes, finish</button><button class="btn sm" data-action="confirm-cancel">Keep going</button></div></div>` : ''}
+      <button class="btn quiet block" data-action="abandon">Discard this session</button>
+      ${ui.confirm === 'abandon' ? `<div class="callout bad">Throw away everything logged today? <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="abandon-confirm">Discard</button><button class="btn sm" data-action="confirm-cancel">Keep</button></div></div>` : ''}
+    </div>`;
+    return html;
+  }
+  function renderSets(e, ei) {
+    const s = state.current;
+    return `<div class="sets">${e.sets.map((x, si) => {
+      const w = x.actualW != null ? x.actualW : x.w;
+      const reps = x.actualReps != null ? x.actualReps : '';
+      const kind = x.kind === 'warm' ? 'warm-up' : x.kind === 'test' ? (x.open ? 'top single' : 'single') : x.ind ? `top set` : '';
+      return `<div class="set ${x.done ? 'done' : ''}" data-si="${si}">
+        <span class="n">${x.kind === 'warm' ? 'W' : si + 1 - e.sets.filter((y, j) => j < si && y.kind === 'warm').length}</span>
+        <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}" ${e.load === 'bw' && w == null ? '' : ''}><span class="u">${e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
+        <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" value="${reps}" placeholder="${x.reps}${x.plus ? '+' : ''}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
+        ${x.kind === 'warm' ? '<span></span>' : `<button class="rpe ${x.rpe == null ? 'empty' : ''}" data-action="rpe" data-ei="${ei}" data-si="${si}" aria-label="RPE">${x.rpe == null ? (x.rpeTarget != null ? `~${x.rpeTarget}` : 'RPE') : x.rpe}</button>`}
+        <button class="ok" data-action="done" data-ei="${ei}" data-si="${si}" aria-label="${x.done ? 'Undo set' : 'Set done'}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></button>
+      </div>`;
+    }).join('')}</div>`;
+  }
+  function setField(ei, si, which, val) {
+    const e = state.current.exercises[ei], x = e.sets[si];
+    const v = val === '' ? null : Number(val);
+    if (which === 'w') {
+      x.actualW = v;
+      // Propagate a weight change to the remaining undone sets of the same kind.
+      e.sets.forEach((y, j) => { if (j > si && !y.done && y.kind === x.kind && y.actualW == null) y.actualW = v; });
+      if (e.needsWeight && v != null) { e.needsWeight = false; }
+      e.sets.forEach((y, j) => { if (j >= si && !y.done && y.kind === x.kind) { const el = $(`#w-${ei}-${j}`); if (el && el.value === '' && v != null) el.value = v; } });
+    } else x.actualReps = v;
+    save();
+  }
+  function toggleDone(ei, si) {
+    const e = state.current.exercises[ei], x = e.sets[si];
+    if (x.done) { x.done = false; save(); render(); return; }
+    const wEl = $(`#w-${ei}-${si}`), rEl = $(`#r-${ei}-${si}`);
+    if (wEl && wEl.value !== '') x.actualW = Number(wEl.value); else if (x.actualW == null && x.w != null) x.actualW = x.w;
+    if (rEl && rEl.value !== '') x.actualReps = Number(rEl.value); else if (x.actualReps == null) x.actualReps = x.reps;
+    if (x.actualW == null && e.load !== 'bw') { toast('Enter the weight first'); wEl && wEl.focus(); return; }
+    x.done = true; x.doneAt = Date.now();
+    if (x.kind !== 'warm') startTimer(e.rest);
+    autoAdjust(ei, si);
+    save(); render();
+  }
+  // In-session autoregulation: a working set that comes in well over its target RPE lowers the
+  // remaining sets of that exercise; one that comes in well under raises them once. Deload, easy
+  // and test weeks are left alone (their loads are light on purpose).
+  function autoAdjust(ei, si) {
+    const s = state.current, e = s.exercises[ei], x = e.sets[si];
+    if (!x.done || x.rpe == null || x.rpeTarget == null || x.kind !== 'work' || x.adjApplied) return;
+    if (e.pctTM == null || s.isDeload || s.isRest || s.isTest) return;
+    const delta = x.rpe - x.rpeTarget;
+    let f = 0;
+    if (delta >= 1.5) f = -0.05; else if (delta >= 1.0) f = -0.025; else if (delta <= -1.5 && !e.bumped) f = 0.025;
+    x.adjApplied = true;
+    if (!f) return;
+    e.adjTotal = (e.adjTotal || 0) + f;
+    if (e.adjTotal < -0.10) { e.adjTotal = -0.10; return; }
+    if (f > 0) e.bumped = true;
+    const inc = state.settings.increment, bar = state.settings.barWeight;
+    let changed = 0;
+    e.sets.forEach((y, j) => {
+      if (j <= si || y.done || y.kind !== 'work') return;
+      const base = y.actualW != null ? y.actualW : y.w;
+      const nw = Math.max(bar, E.roundTo(base * (1 + f), inc));
+      if (nw !== base) { y.actualW = nw; changed++; }
+    });
+    if (!changed) return;
+    const msg = `Set ${si + 1} came in at RPE ${x.rpe} vs ${x.rpeTarget} planned: remaining sets ${f > 0 ? '+' : ''}${Math.round(f * 1000) / 10}%`;
+    e.adjLog = (e.adjLog || []).concat(msg);
+    toast(`${e.name}: remaining sets ${f > 0 ? 'up' : 'down'} ${Math.abs(Math.round(f * 1000) / 10)}%`);
+  }
+  function openRpe(ei, si) { ui.sheet = { ei, si }; renderSheet(); }
+  function renderSheet() {
+    const ov = $('#overlay');
+    if (!ui.sheet) { ov.innerHTML = ''; return; }
+    const { ei, si } = ui.sheet, e = state.current.exercises[ei], x = e.sets[si];
+    const opts = [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10];
+    const tips = { 6: '4 left', 7: '3 left', 8: '2 left', 9: '1 left', 10: 'max' };
+    ov.innerHTML = `<div class="sheet-bg" data-action="sheet-close"><div class="sheet" data-stop="1">
+      <div class="row between"><h2>How hard was that set?</h2><button class="btn sm quiet" data-action="sheet-close">Close</button></div>
+      <p class="small muted">${esc(e.name)} · set ${si + 1}${x.rpeTarget != null ? ` · planned about RPE ${x.rpeTarget}` : ''}. RPE 8 means two clean reps were left.</p>
+      <div class="rpegrid">${opts.map(v => `<button class="${v === x.rpeTarget ? 'target' : ''}" data-action="rpe-pick" data-v="${v}">${v}<small>${tips[v] || ''}</small></button>`).join('')}<button data-action="rpe-pick" data-v="">—<small>clear</small></button></div>
+    </div></div>`;
+  }
+  function swapExercise(ei, exId) {
+    const s = state.current, e = s.exercises[ei];
+    if (!exId) return;
+    state.program.swaps[e.slotKey] = exId;
+    // Rebuild this exercise only, from a fresh plan under the same mode.
+    const fresh = E.buildSession(state, s.mode).exercises.find(x => x.slotKey === e.slotKey);
+    fresh.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; });
+    s.exercises[ei] = fresh;
+    addLog(`${E.EX[exId].name} now fills the ${e.slotKey.replace(/_/g, ' ')} slot.`);
+    save(); render();
+  }
+  function finishLifting(force) {
+    const s = state.current;
+    const open = s.exercises.reduce((n, e) => n + (s.skippedSlots.includes(e.slotKey) ? 0 : e.sets.filter(x => !x.done).length), 0);
+    if (open > 0 && !force) { ui.confirm = 'finish'; render(); return; }
+    ui.confirm = null; stopTimer();
+    s.phase = 'post'; s.finishedAt = Date.now(); s.durationMin = Math.max(1, Math.round((s.finishedAt - s.startedAt) / 60000));
+    s.post = { difficulty: 0 };
+    save(); render(); window.scrollTo(0, 0);
+  }
+  function abandon() { stopTimer(); state.current = null; ui.confirm = null; state.program.lightRestOfWeek = state.program.lightRestOfWeek; save(); render(); }
+
+  // ---------- Post-session ----------
+  function renderPost() {
+    const s = state.current;
+    const est = bestE1rm(s);
+    return `<div class="card">
+      <h2>How did that go?</h2>
+      <div class="small muted">${s.durationMin} min of lifting${est.length ? ' · ' + est.map(x => `${LIFTNAME[x.lift]} est. 1RM ${Math.round(x.e1rm)}`).join(' · ') : ''}</div>
+      <div class="q"><span class="label">Overall, that session was</span>
+        <div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${s.post.difficulty === v}">${DIFF[v]}<small>${['', 'left plenty in the tank', 'hard work, felt right', 'barely got through it', 'should have gone light'][v]}</small></button>`).join('')}</div></div>
+      <p class="small muted">This answer, your RPEs and how recovered you are next time decide whether next week adds a set, holds, or backs off.</p>
+      <button class="btn primary block" data-action="post-next">${state.settings.cardioMin ? 'Next: easy bike' : 'Save session'}</button>
+    </div>`;
+  }
+  function bestE1rm(s) {
+    const out = [];
+    for (const l of LIFTS) {
+      let best = 0;
+      for (const e of s.exercises) if (e.lift === l && E.EX[e.ex].mult === 1) for (const x of e.sets) if (x.done && x.rpe != null && x.rpe >= 7 && x.kind !== 'warm') { const w = x.actualW != null ? x.actualW : x.w, r = x.actualReps != null ? x.actualReps : x.reps; if (w && r) best = Math.max(best, E.e1rm(w, r, x.rpe)); }
+      if (best) out.push({ lift: l, e1rm: best });
+    }
+    return out;
+  }
+
+  // ---------- Cardio ----------
+  function renderCardio() {
+    const s = state.current, target = s.cardioMin || state.settings.cardioMin;
+    const run = ui.cardioRun;
+    const elapsed = run ? Math.floor(((run.paused ? run.pausedAt : Date.now()) - run.start - run.pausedTotal) / 1000) : (s.cardio && s.cardio.sec) || 0;
+    const mm = Math.floor(elapsed / 60), ss = elapsed % 60;
+    return `<div class="card">
+      <h2>Easy bike</h2>
+      <p class="small muted">Target ${target} min on the BikeErg at a conversational pace (you could talk in full sentences, nose breathing is comfortable). This is for health and recovery, not training stress. If your legs feel heavy, go easier, not shorter.</p>
+      <div class="kpi" style="align-items:center"><span class="v num" id="cardio-clock" style="font-size:3.4rem">${mm}:${String(ss).padStart(2, '0')}</span><span class="tiny">${run && !run.paused ? 'running' : run && run.paused ? 'paused' : 'ready'}</span></div>
+      <div class="btnrow">${!run ? `<button class="btn primary" data-action="cardio-start">Start timer</button>` : run.paused ? `<button class="btn primary" data-action="cardio-resume">Resume</button>` : `<button class="btn" data-action="cardio-pause">Pause</button>`}</div>
+      <hr class="sep">
+      <div class="grid2">
+        <label class="f">Minutes done<input id="cardio-min" type="number" inputmode="numeric" value="${run ? Math.round(elapsed / 60) : (s.cardio && s.cardio.min) || ''}" placeholder="${target}"></label>
+        <label class="f">Average watts (optional)<input id="cardio-w" type="number" inputmode="numeric" value="${(s.cardio && s.cardio.watts) || ''}" placeholder="${state.settings.cardioWatts}"></label>
+      </div>
+      <div class="btnrow"><button class="btn primary" data-action="cardio-save">Save session</button><button class="btn" data-action="cardio-skip">No bike today</button></div>
+    </div>`;
+  }
+  function tickCardio() {
+    if (!ui.cardioRun || view !== 'today' || !state.current || state.current.phase !== 'cardio') return;
+    const run = ui.cardioRun, el = $('#cardio-clock');
+    if (el && !run.paused) { const e = Math.floor((Date.now() - run.start - run.pausedTotal) / 1000); el.textContent = `${Math.floor(e / 60)}:${String(e % 60).padStart(2, '0')}`; const m = $('#cardio-min'); if (m && document.activeElement !== m) m.value = Math.round(e / 60); }
+    setTimeout(() => requestAnimationFrame(tickCardio), 1000);
+  }
+  function saveCardio(skip) {
+    const s = state.current;
+    if (skip) s.cardio = { min: 0 };
+    else {
+      const min = Number($('#cardio-min').value) || 0, watts = Number($('#cardio-w').value) || null;
+      s.cardio = { min, watts, kcal: E.cardioKcal(min, watts || state.settings.cardioWatts) };
+    }
+    ui.cardioRun = null;
+    completeSession();
+  }
+
+  // ---------- Completing a session, reviews ----------
+  function completeSession() {
+    const s = state.current; s.phase = 'done'; delete s.phase;
+    // Accessory double progression.
+    for (const e of s.exercises) {
+      if (e.lift || s.skippedSlots.includes(e.slotKey)) continue;
+      const p = E.accessoryProgress(state, { load: e.load, repRange: e.repRange, sets: e.sets.map(x => ({ done: x.done, w: x.actualW != null ? x.actualW : x.w, reps: x.reps, actualReps: x.actualReps })) });
+      if (p) { state.acc[e.ex] = { weight: p.weight, updated: s.date }; }
+      else { const d = e.sets.find(x => x.done && x.actualW != null); if (d && !state.acc[e.ex]) state.acc[e.ex] = { weight: d.actualW, updated: s.date }; }
+    }
+    // Belt squat and other self-loaded second lifts also remember the weight used.
+    state.current = null;
+    state.sessions.push(s); Store.pushSession(s);
+    afterSession();
+    try { if (wakeLock) wakeLock.release(); } catch (e) { /* ignore */ }
+    save(); render(); window.scrollTo(0, 0);
+  }
+  function afterSession() {
+    const P = state.program, pos = E.position(state);
+    const wasLastDay = P.dayIdx === E.DAYS.length - 1;
+    const lines = [];
+    let title = null;
+    if (wasLastDay) {
+      P.lightRestOfWeek = false;
+      const willEndMeso = !pos.rest && P.week >= E.totalWeeks(pos.block);
+      if (!pos.rest && !pos.isDeload && !pos.isTest) {
+        const r = E.weeklyReview(state, sessionsOfWeek());
+        P.setAdj = r.setAdj; P.loadAdj = r.loadAdj; P.flags = r.flags;
+        r.log.forEach(l => { addLog(l); lines.push(l); });
+        if (r.suggestDeload) P.pendingDeload = true;
+        title = `Week ${P.week} review`;
+      }
+      if (willEndMeso) {
+        const mr = E.mesoReview(state, sessionsOfMeso(), !!pos.block.test);
+        for (const l of LIFTS) if (mr.oneRM[l]) E.applyTM(state, l, mr.oneRM[l]);
+        mr.log.forEach(l => { addLog(l); lines.push(l); });
+        title = `${pos.block.name} block complete`;
+        P.pendingDeload = false;
+      }
+    }
+    const res = E.advanceDay(state);
+    if (res.restDone) { lines.push('Easy week done. The Build block starts next session.'); addLog('Easy week complete.'); title = title || 'Easy week complete'; }
+    if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(`Next up: ${nb.name} block (${nb.focus.toLowerCase()}).`); }
+    if (lines.length) state.lastReport = { title: title || 'Update', lines };
+  }
+
+  // ---------- Program ----------
+  function renderProgram() {
+    const P = state.program, pos = E.positionLabel(state);
+    const seq = E.BLOCKS.filter(b => !(b.test && state.settings.includePeak === false));
+    let cells = '', wkIdx = 0;
+    for (const b of seq) for (let w = 1; w <= E.totalWeeks(b); w++) { const isD = w > b.weeks; const now = !pos.isRest && b.id === pos.block.id && w === P.week; cells += `<div class="w ${isD ? 'deload' : b.id} ${now ? 'now' : ''}" title="${b.name} week ${w}">${isD ? (b.test ? 'T' : 'D') : b.id[0].toUpperCase() + w}</div>`; wkIdx++; }
+    const week = [0, 1, 2, 3].map(d => { const saved = P.dayIdx; P.dayIdx = d; const s = E.buildSession(state, 'full'); P.dayIdx = saved; return s; });
+    const sets = LIFTS.map(l => { const n = E.weeklySets(state, l); return `<div class="stack"><div class="row between small"><span>${LIFTNAME[l]} pattern</span><span class="num"><b>${n}</b> / ${E.CAPS[l]} sets</span></div><div class="bar"><i style="width:${Math.min(100, n / E.CAPS[l] * 100)}%"></i></div></div>`; }).join('');
+    const adj = LIFTS.map(l => `<tr><td>${LIFTNAME[l]}</td><td class="num">${state.lifts[l].oneRM}</td><td class="num">${state.lifts[l].tm}</td><td class="num">${P.setAdj[l] > 0 ? '+' : ''}${P.setAdj[l]}</td><td class="num">${P.loadAdj[l] ? (P.loadAdj[l] > 0 ? '+' : '') + Math.round(P.loadAdj[l] * 1000) / 10 + '%' : '—'}</td><td>${P.flags[l] ? '⚑'.repeat(P.flags[l]) : ''}</td></tr>`).join('');
+    const slotKeys = Object.keys(E.SWAPS).filter(k => E.SWAPS[k].length > 1);
+    const blk = pos.isRest ? null : pos.block;
+    const blockText = {
+      build: 'Sets of 7-8 at 70-77% of your 1RM. Each week adds about 3% and, if you are recovering, a set. Belt squat, close-grip bench and RDLs rotate in as the variations.',
+      strength: 'Sets of 3-5 from 76% up to about 86% of 1RM over three weeks, same set count, then a deload. Paused squat, long-pause bench and paused deadlift keep the technique honest.',
+      peak: 'Two weeks of heavy triples and doubles at 85-90%, low volume, then a test week: work up to a single at RPE 9 on each lift. New maxes come from that.',
+    };
+    return `
+      <div class="card"><h3>12-week cycle</h3><div class="timeline">${cells}</div>
+        <div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--good)"></span> Build 4+1</span><span><span class="dot" style="background:var(--accent)"></span> Strength 3+1</span>${state.settings.includePeak !== false ? '<span><span class="dot" style="background:var(--bad)"></span> Peak 2+test</span>' : ''}<span>D = deload</span></div>
+        ${blk ? `<p><b>${esc(blk.name)}:</b> ${blockText[blk.id]}</p>` : '<p><b>Easy week:</b> half the sets at half the loads on variations, to shake off fatigue before Build starts.</p>'}
+      </div>
+      <div class="card"><h3>This week's plan</h3>
+        ${week.map(s => `<details ${s.dayIdx === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 0"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
+          <div class="tablewrap"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${e.sets.length}×${e.sets[0].reps}${e.sets[0].plus ? '+' : ''}</td><td class="num">${e.sets[0].w != null ? e.sets[0].w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`).join('')}</table></div></details>`).join('')}
+      </div>
+      <div class="card"><h3>Weekly working sets</h3>${sets}<p class="small muted">Counts the competition lift plus its close barbell variations. The caps are the ceiling the adaptive rules can climb to; the book's advice for someone coming off too much volume is to start low and only add when you are clearly recovering.</p></div>
+      <div class="card"><h3>Maxes and adjustments</h3>
+        <div class="tablewrap"><table><tr><th>Lift</th><th class="num">1RM</th><th class="num">TM</th><th class="num">Sets</th><th class="num">Load</th><th>Flags</th></tr>${adj}</table></div>
+        <p class="small muted">Sets and load are the adaptive offsets in effect this week. A flag means a week where you missed reps, got crushed or stayed sore; two flags on two lifts suggests a deload.</p>
+        <div class="btnrow"><button class="btn" data-action="deload-now-confirm">Deload now</button><button class="btn" data-action="rest-now-confirm">Easy week</button></div>
+        ${ui.confirm === 'deload' ? `<div class="callout warn">Jump to this block's deload week now? Next session becomes deload day A.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="deload-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
+        ${ui.confirm === 'rest' ? `<div class="callout warn">Insert one easy week (half sets, half loads, variations) before continuing? Use it once or twice a year or when life gets heavy.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="rest-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
+        <label class="f">After this block, run<select id="next-block" data-action="next-block"><option value="">the normal sequence</option>${E.BLOCKS.map((b, i) => `<option value="${i}" ${P.nextBlockOverride === i ? 'selected' : ''}>${b.name}</option>`).join('')}</select></label>
+      </div>
+      <div class="card"><h3>Exercise choices</h3>
+        <p class="small muted">Variations rotate each block automatically. Pin a choice here if your equipment or joints prefer it; clear it to go back to the rotation.</p>
+        ${slotKeys.map(k => `<label class="f">${k.replace(/_/g, ' ')}<select id="swap-${k}" data-action="pin-swap" data-k="${k}"><option value="">Block default (${esc(E.EX[(blk && blk.variation && blk.variation[k]) || E.SWAPS[k][0]].name)})</option>${E.SWAPS[k].map(x => `<option value="${x}" ${P.swaps[k] === x ? 'selected' : ''}>${esc(E.EX[x].name)}</option>`).join('')}</select></label>`).join('')}
+      </div>
+      <div class="card"><h3>Why things changed</h3>${state.log.length ? `<div class="loglist">${state.log.slice(0, 25).map(l => `<div class="item"><span class="d">${fmtDate(l.date)}</span><span>${esc(l.msg)}</span></div>`).join('')}</div>` : '<p class="muted small">Nothing yet. After each full week the review lands here.</p>'}</div>`;
+  }
+
+  // ---------- History ----------
+  function renderHistory() {
+    const done = state.sessions.filter(s => !s.skipped).slice().reverse();
+    return `
+      <div class="card"><h3>Estimated 1RM</h3><canvas id="c-e1rm" height="200"></canvas><div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> Squat</span><span><span class="dot" style="background:var(--good)"></span> Bench</span><span><span class="dot" style="background:var(--fg)"></span> Deadlift</span></div><p class="small muted">From sets where you logged an RPE on the competition lifts. Test-week singles count too.</p></div>
+      <div class="card"><h3>Readiness</h3><canvas id="c-ready" height="140"></canvas></div>
+      <div class="card"><h3>Sessions</h3>${done.length ? done.slice(0, 60).map((s, i) => `<details class="session-item" style="display:block"><summary class="row between"><div><b>${esc(s.dayName)}</b> <span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></div><div class="row" style="gap:6px">${s.readiness ? `<span class="pill ${s.readiness.color}">${s.readiness.score}</span>` : ''}${s.post ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</div></summary>
+          <div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done).map(x => `${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
+          <div class="small muted" style="margin-top:6px">${s.durationMin ? s.durationMin + ' min' : ''}${s.cardio && s.cardio.min ? ` · bike ${s.cardio.min} min` : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</div>
+          <button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="margin-top:6px;color:var(--bad)">Delete</button></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on the Today tab.</p>'}</div>`;
+  }
+  function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  function drawCharts() {
+    const pts = { squat: [], bench: [], deadlift: [] }, ready = [];
+    for (const s of state.sessions) {
+      if (s.skipped) continue;
+      if (s.readiness) ready.push({ x: s.ts, y: s.readiness.score, c: s.readiness.color });
+      for (const b of bestE1rm(s)) pts[b.lift].push({ x: s.ts, y: b.e1rm });
+    }
+    for (const l of LIFTS) if (!pts[l].length && state.lifts[l].oneRM) pts[l].push({ x: Date.now(), y: state.lifts[l].oneRM });
+    lineChart($('#c-e1rm'), [{ pts: pts.squat, color: cssVar('--accent') }, { pts: pts.bench, color: cssVar('--good') }, { pts: pts.deadlift, color: cssVar('--fg') }], { unit: '' });
+    lineChart($('#c-ready'), [{ pts: ready, color: cssVar('--accent'), dots: true }], { min: 0, max: 100, bands: [[0, 40, cssVar('--bad-soft')], [40, 60, cssVar('--warn-soft')], [60, 100, cssVar('--good-soft')]] });
+  }
+  function lineChart(cv, series, opt) {
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 320, H = Number(cv.getAttribute('height'));
+    cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px';
+    const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+    const all = series.flatMap(s => s.pts);
+    const padL = 40, padR = 10, padT = 10, padB = 22;
+    ctx.font = '11px ' + cssVar('--body'); ctx.fillStyle = cssVar('--muted'); ctx.strokeStyle = cssVar('--line');
+    if (!all.length) { ctx.fillText('No data yet', padL, H / 2); return; }
+    let xs = all.map(p => p.x), ys = all.map(p => p.y);
+    let x0 = Math.min(...xs), x1 = Math.max(...xs); if (x1 === x0) { x0 -= 864e5 * 3; x1 += 864e5 * 3; }
+    let y0 = opt.min != null ? opt.min : Math.min(...ys), y1 = opt.max != null ? opt.max : Math.max(...ys);
+    if (opt.min == null) { const r = Math.max(10, (y1 - y0) * 0.15); y0 = Math.floor((y0 - r) / 10) * 10; y1 = Math.ceil((y1 + r) / 10) * 10; }
+    const X = x => padL + (x - x0) / (x1 - x0) * (W - padL - padR), Y = y => padT + (1 - (y - y0) / (y1 - y0)) * (H - padT - padB);
+    if (opt.bands) for (const [a, b, c] of opt.bands) { ctx.fillStyle = c; ctx.fillRect(padL, Y(b), W - padL - padR, Y(a) - Y(b)); }
+    ctx.fillStyle = cssVar('--muted');
+    const ticks = 4;
+    for (let i = 0; i <= ticks; i++) { const y = y0 + (y1 - y0) * i / ticks; ctx.beginPath(); ctx.moveTo(padL, Y(y)); ctx.lineTo(W - padR, Y(y)); ctx.stroke(); ctx.fillText(Math.round(y), 4, Y(y) + 4); }
+    const d0 = new Date(x0), d1 = new Date(x1); ctx.fillText(d0.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), padL, H - 6); const t = d1.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); ctx.fillText(t, W - padR - ctx.measureText(t).width, H - 6);
+    for (const s of series) {
+      if (!s.pts.length) continue;
+      ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.beginPath();
+      s.pts.forEach((p, i) => i ? ctx.lineTo(X(p.x), Y(p.y)) : ctx.moveTo(X(p.x), Y(p.y))); ctx.stroke();
+      ctx.fillStyle = s.color;
+      s.pts.forEach((p, i) => { if (s.dots || i === s.pts.length - 1) { ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), 3.5, 0, Math.PI * 2); ctx.fill(); } });
+      const last = s.pts[s.pts.length - 1]; ctx.fillText(Math.round(last.y), Math.min(W - padR - 28, X(last.x) + 6), Y(last.y) - 6);
+    }
+  }
+
+  // ---------- Settings ----------
+  function renderSettings() {
+    const s = state.settings;
+    return `
+      <div class="card"><h3>Maxes</h3>
+        <div class="grid3">${LIFTS.map(l => `<label class="f">${LIFTNAME[l]} 1RM<input id="set-1rm-${l}" type="number" inputmode="decimal" data-setting="1rm:${l}" value="${state.lifts[l].oneRM}"></label>`).join('')}</div>
+        <label class="f">Training Max %<select id="set-tm" data-setting="tmPct"><option value="0.85" ${s.tmPct == 0.85 ? 'selected' : ''}>85%</option><option value="0.875" ${s.tmPct == 0.875 ? 'selected' : ''}>87.5%</option><option value="0.9" ${s.tmPct == 0.9 ? 'selected' : ''}>90%</option><option value="0.925" ${s.tmPct == 0.925 ? 'selected' : ''}>92.5%</option></select></label>
+        <p class="small muted">Training maxes: squat ${state.lifts.squat.tm}, bench ${state.lifts.bench.tm}, deadlift ${state.lifts.deadlift.tm}. Every barbell load in the plan is a percentage of these.</p>
+      </div>
+      <div class="card"><h3>Equipment</h3>
+        <div class="grid2"><label class="f">Bar weight<input id="set-bar" type="number" data-setting="barWeight" value="${s.barWeight}"></label><label class="f">Dumbbell step<select id="set-dbi" data-setting="dbIncrement"><option value="2.5" ${s.dbIncrement == 2.5 ? 'selected' : ''}>2.5</option><option value="5" ${s.dbIncrement == 5 ? 'selected' : ''}>5</option></select></label></div>
+        <div class="stack"><span class="tiny">Plates per side</span><div class="chips">${[55, 45, 35, 25, 15, 10, 5, 2.5, 1.25].map(p => `<button data-action="set-plate" data-p="${p}" aria-pressed="${s.plates.includes(p)}">${p}</button>`).join('')}</div></div>
+        <div class="stack"><span class="tiny">Accessory working weights</span><div class="tablewrap"><table>${Object.keys(state.acc).length ? Object.keys(state.acc).map(k => `<tr><td>${esc(E.EX[k] ? E.EX[k].name : k)}</td><td class="num"><input id="acc-${k}" type="number" inputmode="decimal" data-setting="acc:${k}" value="${state.acc[k].weight}" style="width:80px;border:1px solid var(--line);border-radius:6px;padding:4px 6px;background:var(--surface)"></td></tr>`).join('') : '<tr><td class="muted small">They appear here once you enter them in a session.</td></tr>'}</table></div></div>
+      </div>
+      <div class="card"><h3>Schedule and cardio</h3>
+        <div class="stack"><span class="tiny">Training days</span><div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="set-day" data-d="${x}" aria-pressed="${s.days.includes(x)}">${x}</button>`).join('')}</div></div>
+        <div class="grid2"><label class="f">Bike after lifting (min)<input id="set-cm" type="number" data-setting="cardioMin" value="${s.cardioMin}"></label><label class="f">Usual easy watts<input id="set-cw" type="number" data-setting="cardioWatts" value="${s.cardioWatts}"></label></div>
+        <div class="grid3"><label class="f">Rest, main (s)<input id="set-r1" type="number" data-setting="restPrimary" value="${s.restPrimary}"></label><label class="f">Rest, second (s)<input id="set-r2" type="number" data-setting="restSecondary" value="${s.restSecondary}"></label><label class="f">Rest, accessory (s)<input id="set-r3" type="number" data-setting="restAccessory" value="${s.restAccessory}"></label></div>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-peak" data-setting="includePeak" ${s.includePeak !== false ? 'checked' : ''} style="width:22px;height:22px"> Include the Peak &amp; Test block</label>
+        <label class="f">Extra easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
+      </div>
+      <div class="card"><h3>Data</h3>
+        <p class="small muted">${Store.db ? 'Synced to your Claude account, so it follows you across devices.' : 'Stored in this browser only. Export now and then as a backup.'}</p>
+        <div class="btnrow"><button class="btn" data-action="export">Copy backup</button><button class="btn" data-action="import-toggle">Restore from backup</button></div>
+        ${ui.importText != null && ui.showImport ? `<label class="f">Paste a backup<textarea id="import-text" rows="4"></textarea></label><button class="btn primary" data-action="import">Restore</button>` : ''}
+        <button class="btn danger block" data-action="reset-confirm">Start over</button>
+        ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every logged session. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}
+      </div>
+      <p class="small muted" style="text-align:center">Readyset · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.</p>`;
+  }
+  function applySetting(key, val) {
+    const s = state.settings;
+    if (key.startsWith('1rm:')) { const l = key.split(':')[1]; if (Number(val) > 0) E.applyTM(state, l, Number(val)); }
+    else if (key === 'tmPct') { s.tmPct = Number(val); LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); }
+    else if (key.startsWith('acc:')) { const k = key.split(':')[1]; state.acc[k] = { weight: Number(val), updated: todayISO() }; }
+    else if (key === 'includePeak') s.includePeak = !!val;
+    else if (['barWeight', 'dbIncrement', 'cardioMin', 'cardioWatts', 'restPrimary', 'restSecondary', 'restAccessory'].includes(key)) s[key] = Number(val);
+    save();
+  }
+
+  // ---------- Events ----------
+  document.addEventListener('click', (ev) => {
+    const t = ev.target.closest('[data-action],[data-view]');
+    if (!t) return;
+    if (t.dataset.view) { view = t.dataset.view; ui.confirm = null; render(); window.scrollTo(0, 0); return; }
+    const a = t.dataset.action, d = t.dataset;
+    if (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') return;
+    switch (a) {
+      case 'setup-next': if (ui.setupStep === 1) { const bad = LIFTS.filter(l => !(Number(draft()[l]) > 0)); if (bad.length) { toast(`Enter a ${LIFTNAME[bad[0]]} max`); return; } } ui.setupStep++; render(); window.scrollTo(0, 0); break;
+      case 'setup-back': ui.setupStep = Math.max(0, ui.setupStep - 1); render(); break;
+      case 'setup-calc': { const dr = draft(); dr.calc[d.lift] = dr.calc[d.lift] ? null : {}; render(); break; }
+      case 'setup-apply-calc': { const dr = draft(), c = dr.calc[d.lift] || {}; const w = Number(c.w), r = Number(c.r), e = Number(c.e) || 8; if (w > 0 && r > 0) { dr[d.lift] = Math.round(E.e1rm(w, r, e) / 2.5) * 2.5; dr.calc[d.lift] = null; render(); } else toast('Enter weight and reps'); break; }
+      case 'setup-plate': { const dr = draft(), p = Number(d.p); dr.plates = dr.plates.includes(p) ? dr.plates.filter(x => x !== p) : dr.plates.concat(p); render(); break; }
+      case 'setup-day': { const dr = draft(); dr.days = dr.days.includes(d.d) ? dr.days.filter(x => x !== d.d) : dr.days.concat(d.d); render(); break; }
+      case 'setup-finish': finishSetup(); break;
+      case 'checkin': startCheckin(); break;
+      case 'ci': { const c = ui.checkin; if (d.k.startsWith('g:')) c.groups[d.k.slice(2)] = Number(d.v); else c[d.k] = Number(d.v); render(); break; }
+      case 'ci-submit': submitCheckin(); break;
+      case 'ci-cancel': ui.checkin = null; render(); break;
+      case 'ci-back': ui.checkin.result = null; render(); break;
+      case 'ci-choice': ui.checkin.choice = d.v; render(); break;
+      case 'ci-rest': restToday(); break;
+      case 'start-session': startSession(d.mode); break;
+      case 'skip-session': if (window.__skipArmed) { window.__skipArmed = false; skipSession(); } else { window.__skipArmed = true; toast('Tap again to skip this session'); setTimeout(() => { window.__skipArmed = false; }, 3000); } break;
+      case 'done': toggleDone(Number(d.ei), Number(d.si)); break;
+      case 'rpe': openRpe(Number(d.ei), Number(d.si)); break;
+      case 'rpe-pick': { const { ei, si } = ui.sheet; state.current.exercises[ei].sets[si].rpe = d.v === '' ? null : Number(d.v); ui.sheet = null; renderSheet(); autoAdjust(ei, si); save(); render(); break; }
+      case 'sheet-close': if (ev.target === t || ev.target.closest('[data-stop]') == null || t.tagName === 'BUTTON') { ui.sheet = null; renderSheet(); } break;
+      case 'toggle-skip': { const s = state.current, e = s.exercises[Number(d.ei)]; const i = s.skippedSlots.indexOf(e.slotKey); if (i >= 0) s.skippedSlots.splice(i, 1); else s.skippedSlots.push(e.slotKey); save(); render(); break; }
+      case 'finish-lifting': finishLifting(false); break;
+      case 'finish-confirm': finishLifting(true); break;
+      case 'abandon': ui.confirm = 'abandon'; render(); break;
+      case 'abandon-confirm': abandon(); break;
+      case 'confirm-cancel': ui.confirm = null; render(); break;
+      case 'post-diff': state.current.post.difficulty = Number(d.v); save(); render(); break;
+      case 'post-next': if (!state.current.post.difficulty) { toast('Pick one'); return; } if (state.settings.cardioMin) { state.current.phase = 'cardio'; save(); render(); } else { state.current.cardio = { min: 0 }; completeSession(); } break;
+      case 'cardio-start': ui.cardioRun = { start: Date.now(), pausedTotal: 0, paused: false }; keepAwake(); render(); break;
+      case 'cardio-pause': ui.cardioRun.paused = true; ui.cardioRun.pausedAt = Date.now(); render(); break;
+      case 'cardio-resume': ui.cardioRun.pausedTotal += Date.now() - ui.cardioRun.pausedAt; ui.cardioRun.paused = false; render(); break;
+      case 'cardio-save': saveCardio(false); break;
+      case 'cardio-skip': saveCardio(true); break;
+      case 'timer-add': if (ui.timer) { ui.timer.end += 30000; ui.timer.fired = false; tickTimer(); } break;
+      case 'timer-stop': stopTimer(); break;
+      case 'dismiss-report': state.lastReport = null; save(); render(); break;
+      case 'undo-skip': undoSkip(); break;
+      case 'deload-now-confirm': ui.confirm = 'deload'; render(); break;
+      case 'rest-now-confirm': ui.confirm = 'rest'; render(); break;
+      case 'deload-now': E.startDeloadNow(state); state.program.pendingDeload = false; ui.confirm = null; addLog('Deload started early.'); save(); render(); break;
+      case 'deload-later': state.program.pendingDeload = false; addLog('Deload suggestion declined; pushing on.'); save(); render(); break;
+      case 'rest-now': E.startActiveRest(state, 1); ui.confirm = null; addLog('Easy week inserted.'); save(); render(); break;
+      case 'set-plate': { const s = state.settings, p = Number(d.p); s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); save(); render(); break; }
+      case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
+      case 'extra-cardio': { const m = Number($('#extra-cardio').value) || 0; if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
+      case 'export': { const txt = JSON.stringify(state); const ok = () => toast('Backup copied. Paste it somewhere safe.'); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt)); else fallbackCopy(txt); break; }
+      case 'import-toggle': ui.showImport = !ui.showImport; render(); break;
+      case 'import': { try { const obj = JSON.parse($('#import-text').value); if (!obj.settings || !obj.program) throw new Error('bad'); state = obj; Store.pushAll(state); save(); ui.showImport = false; toast('Restored'); render(); } catch (e) { toast('That does not look like a Readyset backup'); } break; }
+      case 'reset-confirm': ui.confirm = 'reset'; render(); break;
+      case 'reset': { for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; save(); render(); break; }
+      case 'delete-session': { const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
+    }
+  });
+  function fallbackCopy(txt) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('Backup copied'); } catch (e) { toast('Copy failed; select and copy manually'); } ta.remove(); }
+  document.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (t.dataset.draft) { const dr = draft(); dr[t.dataset.draft] = t.type === 'checkbox' ? t.checked : t.value; return; }
+    if (t.dataset.calc) { const [l, k] = t.dataset.calc.split(':'); const dr = draft(); dr.calc[l] = dr.calc[l] || {}; dr.calc[l][k] = t.value; return; }
+    if (t.dataset.set) { setField(Number(t.dataset.ei), Number(t.dataset.si), t.dataset.set, t.value); return; }
+    if (t.dataset.setting) { applySetting(t.dataset.setting, t.type === 'checkbox' ? t.checked : t.value); render(); return; }
+    if (t.dataset.action === 'swap') { swapExercise(Number(t.dataset.ei), t.value); return; }
+    if (t.dataset.action === 'notes') { state.current.notes = t.value; save(); return; }
+    if (t.dataset.action === 'next-block') { state.program.nextBlockOverride = t.value === '' ? null : Number(t.value); save(); return; }
+    if (t.dataset.action === 'pin-swap') { if (t.value === '') delete state.program.swaps[t.dataset.k]; else state.program.swaps[t.dataset.k] = t.value; save(); render(); return; }
+  });
+  document.addEventListener('input', (ev) => { const t = ev.target; if (t.dataset.draft && t.type !== 'checkbox') draft()[t.dataset.draft] = t.value; if (t.dataset.calc) { const [l, k] = t.dataset.calc.split(':'); const dr = draft(); dr.calc[l] = dr.calc[l] || {}; dr.calc[l][k] = t.value; } });
+
+  // ---------- Boot ----------
+  async function boot() {
+    const h = (location.hash || '').replace('#', '');
+    if (['today', 'program', 'history', 'settings'].includes(h)) view = h;
+    state = E.defaultState();
+    $('#main').innerHTML = '<p class="empty">Loading…</p>';
+    const loaded = await Store.init();
+    if (loaded) state = Object.assign(E.defaultState(), loaded);
+    if (state.current && state.current.phase === 'cardio') ui.cardioRun = null;
+    render();
+  }
+  boot();
+})();
