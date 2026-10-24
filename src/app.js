@@ -140,7 +140,7 @@
   function draft() {
     if (!ui.draft) {
       const s = state.settings;
-      ui.draft = { name: s.name || '', squat: state.lifts.squat.oneRM || '', bench: state.lifts.bench.oneRM || '', deadlift: state.lifts.deadlift.oneRM || '', calc: {}, tmPct: s.tmPct, barWeight: s.barWeight, plates: s.plates.slice(), dbIncrement: s.dbIncrement, days: s.days.slice(), cardioMin: s.cardioMin, cardioWatts: s.cardioWatts, deadliftStyle: s.deadliftStyle, easyWeek: true, includePeak: s.includePeak !== false };
+      ui.draft = { name: s.name || '', squat: state.lifts.squat.oneRM || '', bench: state.lifts.bench.oneRM || '', deadlift: state.lifts.deadlift.oneRM || '', calc: {}, tmPct: s.tmPct, barWeight: s.barWeight, plates: s.plates.slice(), dbIncrement: s.dbIncrement, days: s.days.slice(), cardioMin: s.cardioMin, cardioWatts: s.cardioWatts, deadliftStyle: s.deadliftStyle, squatStyle: s.squatStyle || 'lowbar', easyWeek: true, includePeak: s.includePeak !== false };
     }
     return ui.draft;
   }
@@ -170,7 +170,11 @@
         </div>`).join('')}
       <label class="f">Training Max as % of 1RM
         <select id="d-tm" data-draft="tmPct"><option value="0.85" ${d.tmPct == 0.85 ? 'selected' : ''}>85% (very conservative)</option><option value="0.875" ${d.tmPct == 0.875 ? 'selected' : ''}>87.5%</option><option value="0.9" ${d.tmPct == 0.9 ? 'selected' : ''}>90% (recommended)</option><option value="0.925" ${d.tmPct == 0.925 ? 'selected' : ''}>92.5%</option></select></label>
-      <label class="f">Deadlift stance<select id="d-dl" data-draft="deadliftStyle"><option value="conventional" ${d.deadliftStyle === 'conventional' ? 'selected' : ''}>Conventional</option><option value="sumo" ${d.deadliftStyle === 'sumo' ? 'selected' : ''}>Sumo</option></select></label>
+      <div class="grid2">
+      <label class="f">Your squat<select id="d-sq" data-draft="squatStyle"><option value="lowbar" ${d.squatStyle === 'lowbar' ? 'selected' : ''}>Low-bar</option><option value="highbar" ${d.squatStyle === 'highbar' ? 'selected' : ''}>High-bar</option></select></label>
+      <label class="f">Your deadlift<select id="d-dl" data-draft="deadliftStyle"><option value="conventional" ${d.deadliftStyle === 'conventional' ? 'selected' : ''}>Conventional</option><option value="sumo" ${d.deadliftStyle === 'sumo' ? 'selected' : ''}>Sumo</option></select></label>
+      </div>
+      <p class="small muted">These are your competition lifts. The other bar position shows up as a variation.</p>
       <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-next">Next</button></div></div>`;
     if (step === 2) return `
       <div class="card"><h2>Equipment</h2>${steps}
@@ -202,7 +206,7 @@
     const s = state.settings;
     s.name = d.name.trim(); s.tmPct = Number(d.tmPct); s.barWeight = Number(d.barWeight) || 45; s.plates = d.plates.slice().sort((a, b) => b - a);
     s.increment = d.plates.includes(1.25) ? 2.5 : d.plates.includes(2.5) ? 5 : 10; s.dbIncrement = Number(d.dbIncrement); s.days = d.days.slice();
-    s.cardioMin = Math.max(0, Number(d.cardioMin) || 0); s.cardioWatts = Number(d.cardioWatts) || 110; s.deadliftStyle = d.deadliftStyle; s.includePeak = !!d.includePeak;
+    s.cardioMin = Math.max(0, Number(d.cardioMin) || 0); s.cardioWatts = Number(d.cardioWatts) || 110; s.deadliftStyle = d.deadliftStyle; s.squatStyle = d.squatStyle; s.includePeak = !!d.includePeak;
     for (const l of LIFTS) E.applyTM(state, l, Number(d[l]));
     state.program.startedAt = todayISO();
     if (d.easyWeek) E.startActiveRest(state, 1);
@@ -362,7 +366,7 @@
     s.exercises.forEach((e, ei) => {
       const skipped = s.skippedSlots.includes(e.slotKey);
       const first = e.sets.find(x => x.kind === 'work' || x.kind === 'test') || e.sets[0];
-      const swaps = (E.SWAPS[e.slotKey] || []).filter(x => x !== e.ex);
+      const swaps = E.swapOptions(state, e.slotKey).filter(x => x !== e.ex);
       html += `<section class="ex" data-ei="${ei}">
         <div class="ex-head"><div><div class="name">${esc(e.name)}</div>
           <div class="meta">${e.role === 'primary' ? 'Main lift' : e.role === 'secondary' ? 'Second lift' : 'Accessory'}${e.optional ? ' · optional' : ''}${e.pctTM != null ? ` · ${pctLabel(e)}` : ''}${e.rpeTarget != null && !s.isTest ? (e.rpeTarget >= 6 ? ` · aim RPE ${e.rpeTarget}` : ' · keep it easy') : ''}${e.repRange ? ` · ${e.repRange[0]}–${e.repRange[1]} reps, add weight when every set hits ${e.repRange[1]}` : ''}</div></div>
@@ -372,7 +376,7 @@
         ${skipped ? '' : renderSets(e, ei)}
         ${skipped ? '' : `<div class="ex-foot">
           ${e.load === 'bar' && first && first.w ? `<span class="plates"><b>${first.w}</b> = ${esc(plateText(first.w))}</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
-          ${swaps.length ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.EX[x].name)}</option>`).join('')}</select>` : ''}
+          ${swaps.length ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}
         </div>`}
         ${!skipped && e.load === 'bar' && first && first.w && !s.isTest && (e.role !== 'accessory') ? `<details class="warm"><summary class="tiny">Warm-up ramp</summary>${E.warmups(first.w, state.settings.barWeight, state.settings.increment).map(w => `<span class="num">${w.w} × ${w.reps}</span>`).join('')}</details>` : ''}
       </section>`;
@@ -473,7 +477,7 @@
     const fresh = E.buildSession(state, s.mode).exercises.find(x => x.slotKey === e.slotKey);
     fresh.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; });
     s.exercises[ei] = fresh;
-    addLog(`${E.EX[exId].name} now fills the ${e.slotKey.replace(/_/g, ' ')} slot.`);
+    addLog(`${E.exerciseName(state, exId)} now fills the ${e.slotKey.replace(/_/g, ' ')} slot.`);
     save(); render();
   }
   function finishLifting(force) {
@@ -628,7 +632,7 @@
       </div>
       <div class="card"><h3>Exercise choices</h3>
         <p class="small muted">Variations rotate each block automatically. Pin a choice here if your equipment or joints prefer it; clear it to go back to the rotation.</p>
-        ${slotKeys.map(k => `<label class="f">${k.replace(/_/g, ' ')}<select id="swap-${k}" data-action="pin-swap" data-k="${k}"><option value="">Block default (${esc(E.EX[(blk && blk.variation && blk.variation[k]) || E.SWAPS[k][0]].name)})</option>${E.SWAPS[k].map(x => `<option value="${x}" ${P.swaps[k] === x ? 'selected' : ''}>${esc(E.EX[x].name)}</option>`).join('')}</select></label>`).join('')}
+        ${slotKeys.map(k => { const def = (blk && blk.variation && blk.variation[k]) || E.SWAPS[k][0]; const defName = E.exerciseName(state, (def === 'high_bar_squat' || def === 'low_bar_squat') ? (state.settings.squatStyle === 'highbar' ? 'low_bar_squat' : 'high_bar_squat') : def); return `<label class="f">${k.replace(/_/g, ' ')}<select id="swap-${k}" data-action="pin-swap" data-k="${k}"><option value="">Block default (${esc(defName)})</option>${E.swapOptions(state, k).map(x => `<option value="${x}" ${P.swaps[k] === x ? 'selected' : ''}>${esc(E.exerciseName(state, x))}</option>`).join('')}</select></label>`; }).join('')}
       </div>
       <div class="card"><h3>Why things changed</h3>${state.log.length ? `<div class="loglist">${state.log.slice(0, 25).map(l => `<div class="item"><span class="d">${fmtDate(l.date)}</span><span>${esc(l.msg)}</span></div>`).join('')}</div>` : '<p class="muted small">Nothing yet. After each full week the review lands here.</p>'}</div>`;
   }
@@ -691,6 +695,10 @@
     return `
       <div class="card"><h3>Maxes</h3>
         <div class="grid3">${LIFTS.map(l => `<label class="f">${LIFTNAME[l]} 1RM<input id="set-1rm-${l}" type="number" inputmode="decimal" data-setting="1rm:${l}" value="${state.lifts[l].oneRM}"></label>`).join('')}</div>
+        <div class="grid2">
+        <label class="f">Your squat<select id="set-sq" data-setting="squatStyle"><option value="lowbar" ${s.squatStyle !== 'highbar' ? 'selected' : ''}>Low-bar</option><option value="highbar" ${s.squatStyle === 'highbar' ? 'selected' : ''}>High-bar</option></select></label>
+        <label class="f">Your deadlift<select id="set-dl" data-setting="deadliftStyle"><option value="conventional" ${s.deadliftStyle !== 'sumo' ? 'selected' : ''}>Conventional</option><option value="sumo" ${s.deadliftStyle === 'sumo' ? 'selected' : ''}>Sumo</option></select></label>
+        </div>
         <label class="f">Training Max %<select id="set-tm" data-setting="tmPct"><option value="0.85" ${s.tmPct == 0.85 ? 'selected' : ''}>85%</option><option value="0.875" ${s.tmPct == 0.875 ? 'selected' : ''}>87.5%</option><option value="0.9" ${s.tmPct == 0.9 ? 'selected' : ''}>90%</option><option value="0.925" ${s.tmPct == 0.925 ? 'selected' : ''}>92.5%</option></select></label>
         <p class="small muted">Training maxes: squat ${state.lifts.squat.tm}, bench ${state.lifts.bench.tm}, deadlift ${state.lifts.deadlift.tm}. Every barbell load in the plan is a percentage of these.</p>
       </div>
@@ -721,6 +729,7 @@
     else if (key === 'tmPct') { s.tmPct = Number(val); LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); }
     else if (key.startsWith('acc:')) { const k = key.split(':')[1]; state.acc[k] = { weight: Number(val), updated: todayISO() }; }
     else if (key === 'includePeak') s.includePeak = !!val;
+    else if (key === 'squatStyle' || key === 'deadliftStyle') s[key] = val;
     else if (['barWeight', 'dbIncrement', 'cardioMin', 'cardioWatts', 'restPrimary', 'restSecondary', 'restAccessory'].includes(key)) s[key] = Number(val);
     save();
   }

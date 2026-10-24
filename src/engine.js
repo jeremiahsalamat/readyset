@@ -48,6 +48,7 @@
     paused_squat:    { name: 'Paused Squat', tm: 'squat', mult: 0.85, load: 'bar', group: 'legs', muscles: ['quads', 'glutes'], cue: '2-count pause in the hole, stay tight, drive up' },
     tempo_squat:     { name: 'Tempo Squat', tm: 'squat', mult: 0.80, load: 'bar', group: 'legs', muscles: ['quads', 'glutes'], cue: '3 s down, no pause, normal up' },
     high_bar_squat:  { name: 'High-Bar Squat', tm: 'squat', mult: 0.88, load: 'bar', group: 'legs', muscles: ['quads', 'glutes'], cue: 'Bar on traps, upright torso, quads do the work' },
+    low_bar_squat:   { name: 'Low-Bar Squat', tm: 'squat', mult: 1.0, load: 'bar', group: 'legs', muscles: ['glutes', 'hamstrings', 'quads'], cue: 'Bar on rear delts, hips back, forward lean, drive the hips up' },
     belt_squat:      { name: 'Belt Squat', tm: null, load: 'belt', group: 'legs', muscles: ['quads', 'glutes'], startHint: 'Pick a weight you could do for about 15 reps' },
     comp_bench:      { name: 'Competition Bench', tm: 'bench', mult: 1.0, load: 'bar', group: 'push', muscles: ['chest', 'triceps', 'delts'] },
     close_grip:      { name: 'Close-Grip Bench', tm: 'bench', mult: 0.90, load: 'bar', group: 'push', muscles: ['triceps', 'chest'], cue: 'Grip at least one hand-width (3-4 in) narrower than competition' },
@@ -84,7 +85,7 @@
     bench_primary: ['comp_bench'],
     deadlift_primary: ['comp_deadlift'],
     bench_secondary: ['comp_bench', 'spoto_press', 'larsen_press', 'paused_bench'],
-    squat_variation: ['belt_squat', 'paused_squat', 'tempo_squat', 'high_bar_squat', 'comp_squat'],
+    squat_variation: ['belt_squat', 'paused_squat', 'tempo_squat', 'high_bar_squat', 'low_bar_squat', 'comp_squat'],
     bench_variation: ['close_grip', 'paused_bench', 'spoto_press', 'larsen_press', 'comp_bench'],
     hinge_variation: ['rdl', 'paused_deadlift', 'deficit_deadlift', 'block_pull', 'comp_deadlift'],
     press_secondary: ['ohp', 'db_shoulder', 'db_incline'],
@@ -191,12 +192,27 @@
 
   // ---------- Session generation ----------
   function tmOf(state, lift) { return state.lifts[lift].tm; }
+  // The "other" bar position is the variation: high-bar for a low-bar competitor and vice versa.
+  function otherSquat(state) { return state.settings.squatStyle === 'highbar' ? 'low_bar_squat' : 'high_bar_squat'; }
   function resolveExercise(state, slot, block, rest) {
     const sw = state.program.swaps || {};
-    if (sw[slot.key]) return sw[slot.key];
-    if (rest && REST.variation[slot.key]) return REST.variation[slot.key];
-    if (block.variation && block.variation[slot.key]) return block.variation[slot.key];
-    return SWAPS[slot.key][0];
+    let id;
+    if (sw[slot.key]) id = sw[slot.key];
+    else if (rest && REST.variation[slot.key]) id = REST.variation[slot.key];
+    else if (block.variation && block.variation[slot.key]) id = block.variation[slot.key];
+    else id = SWAPS[slot.key][0];
+    if (id === 'high_bar_squat' || id === 'low_bar_squat') id = otherSquat(state);
+    return id;
+  }
+  function exerciseName(state, exId) {
+    if (exId === 'comp_squat') return `Competition Squat (${state.settings.squatStyle === 'highbar' ? 'high-bar' : 'low-bar'})`;
+    if (exId === 'comp_deadlift') return `Competition Deadlift (${state.settings.deadliftStyle === 'sumo' ? 'sumo' : 'conventional'})`;
+    return EX[exId].name;
+  }
+  // Swap choices for a slot, hiding the bar position that is already the competition squat.
+  function swapOptions(state, slotKey) {
+    const hide = state.settings.squatStyle === 'highbar' ? 'high_bar_squat' : 'low_bar_squat';
+    return (SWAPS[slotKey] || []).filter(x => x !== hide);
   }
   function accWeight(state, ex) { const a = (state.acc || {})[ex]; return a && a.weight != null ? a.weight : null; }
   function position(state) {
@@ -218,7 +234,7 @@
     for (const slot of day.slots) {
       const exId = resolveExercise(state, slot, block, rest);
       const ex = EX[exId], lift = slot.tm || null;
-      const item = { slotKey: slot.key, ex: exId, name: ex.name, role: slot.role, lift, load: ex.load, optional: !!slot.optional, cue: ex.cue || null, sets: [],
+      const item = { slotKey: slot.key, ex: exId, name: exerciseName(state, exId), role: slot.role, lift, load: ex.load, optional: !!slot.optional, cue: ex.cue || null, sets: [],
         rest: slot.role === 'primary' ? S.restPrimary : slot.role === 'secondary' ? S.restSecondary : S.restAccessory };
 
       // --- Test week: primaries work up to a heavy single ---
@@ -505,7 +521,7 @@
   function defaultState() {
     return {
       version: 1,
-      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', cardioMin: 60, cardioWatts: 110, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: true, name: '' },
+      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', squatStyle: 'lowbar', cardioMin: 60, cardioWatts: 110, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: true, name: '' },
       lifts: { squat: { oneRM: 0, tm: 0 }, bench: { oneRM: 0, tm: 0 }, deadlift: { oneRM: 0, tm: 0 } },
       acc: {},
       program: { blockIdx: 0, week: 1, dayIdx: 0, mesoCount: 0, setAdj: { squat: 0, bench: 0, deadlift: 0, acc: 0 }, loadAdj: { squat: 0, bench: 0, deadlift: 0 }, flags: { squat: 0, bench: 0, deadlift: 0 }, swaps: {}, special: null, nextBlockOverride: null, pendingDeload: false, lightRestOfWeek: false, startedAt: null },
@@ -518,6 +534,6 @@
   }
 
   root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, plateLoad, EX, SWAPS, BLOCKS, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
-    readinessScore, sorenessFromGroups, buildSession, warmups, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
+    readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
     positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes };
 })(typeof window !== 'undefined' ? window : globalThis);

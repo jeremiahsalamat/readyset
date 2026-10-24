@@ -49,6 +49,7 @@ no rest-period numbers; those are conventional.
 | Slot | Build | Strength | Peak |
 |---|---|---|---|
 | Squat variation | belt squat | paused squat | competition squat (light) |
+| (easy week) | the other bar position: high-bar for a low-bar squatter, low-bar for a high-bar squatter | | |
 | Bench variation | close-grip bench | long-pause bench | competition bench (light) |
 | Hinge variation | Romanian deadlift | paused deadlift | competition deadlift (light) |
 
