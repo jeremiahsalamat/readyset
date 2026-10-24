@@ -121,6 +121,17 @@
     const parts = Object.keys(counts).sort((a, b) => b - a).map(p => counts[p] > 1 ? `${p}×${counts[p]}` : `${p}`);
     return (parts.length ? parts.join(' · ') + ' per side' : 'Empty bar') + (r.exact ? '' : ` (${r.short * 2} lb short)`);
   }
+  // One-line summary of an exercise's working sets (warm-ups excluded).
+  function summ(e) {
+    const work = e.sets.filter(x => x.kind !== 'warm'), f = work[0] || e.sets[0];
+    return `${esc(e.name)} ${work.length}×${f.reps}${f.w ? ' @ ' + f.w : ''}`;
+  }
+  function platesShort(w) {
+    if (w <= state.settings.barWeight) return 'bar';
+    const r = E.plateLoad(w, state.settings.barWeight, state.settings.plates), counts = {};
+    r.plates.forEach(p => counts[p] = (counts[p] || 0) + 1);
+    return Object.keys(counts).sort((a, b) => b - a).map(p => counts[p] > 1 ? `${p}×${counts[p]}` : `${p}`).join('+') + ' /side';
+  }
   function hr(v) { const h = Math.floor(v / 60), m = v % 60; return h ? `${h}h ${m ? m + 'm' : ''}`.trim() : `${m}m`; }
 
   // ---------- Views ----------
@@ -235,7 +246,7 @@
       <div class="tiny">${pos.isRest ? 'Easy week' : pos.isDeload ? 'Deload week' : pos.isTest ? 'Test week' : `${esc(pos.block.name)} block · ${esc(pos.label)}`}</div>
       <h1>${esc(plan.dayName)}</h1>
       <div class="row between"><span>About ${plan.estMinutes} min of lifting${plan.cardioMin ? ` + ${plan.cardioMin} min easy bike` : ''}</span></div>
-      <div class="small">${plan.exercises.map(e => `${esc(e.name)} ${e.sets.length}×${e.sets[0].reps}${e.sets[0].w ? ' @ ' + e.sets[0].w : ''}`).join(' · ')}</div>
+      <div class="small">${plan.exercises.map(summ).join(' · ')}</div>
       <button class="btn block" style="background:var(--accent-fg);color:var(--accent);border:0" data-action="checkin">Check in and start</button>
       <div class="row between small"><button class="btn sm quiet" style="color:inherit" data-action="skip-session">Skip this session</button><span class="muted">Today ${fmtDateLong(todayISO())}</span></div>
     </div>`;
@@ -292,7 +303,7 @@
             <button data-action="ci-choice" data-v="full" aria-pressed="${c.choice === 'full'}">As planned<small>if you know it's not fatigue</small></button>
           </div>
           <button class="btn block" data-action="ci-rest">Rest today, keep this session for next time</button>` : ''}
-        <div class="callout">${esc(plan.dayName)} · ${plan.exercises.map(e => `${esc(e.name)} ${e.sets.length}×${e.sets[0].reps}${e.sets[0].w ? ' @ ' + e.sets[0].w : ''}`).join(' · ')} · about ${plan.estMinutes} min</div>
+        <div class="callout">${esc(plan.dayName)} · ${plan.exercises.map(summ).join(' · ')} · about ${plan.estMinutes} min</div>
         <div class="btnrow"><button class="btn" data-action="ci-back">Back</button><button class="btn primary" data-action="start-session" data-mode="${c.choice || r.mode}">Start ${E.MODES[c.choice || r.mode].label.toLowerCase()}</button></div>
       </div>`;
     }
@@ -366,8 +377,8 @@
   // ---------- Session ----------
   function renderSession() {
     const s = state.current;
-    const doneSets = s.exercises.reduce((n, e) => n + e.sets.filter(x => x.done).length, 0);
-    const totalSets = s.exercises.reduce((n, e) => n + (s.skippedSlots.includes(e.slotKey) ? 0 : e.sets.length), 0);
+    const doneSets = s.exercises.reduce((n, e) => n + e.sets.filter(x => x.done && x.kind !== 'warm').length, 0);
+    const totalSets = s.exercises.reduce((n, e) => n + (s.skippedSlots.includes(e.slotKey) ? 0 : e.sets.filter(x => x.kind !== 'warm').length), 0);
     let html = `<div class="row between"><div><h2>${esc(s.dayName)}</h2><div class="small muted">${esc(s.blockName)} · ${s.isDeload ? 'deload' : s.isRest ? 'easy week' : s.isTest ? 'test week' : 'week ' + s.week} · ${E.MODES[s.mode].label}</div></div><span class="pill ${s.readiness ? s.readiness.color : ''}">${doneSets}/${totalSets} sets</span></div>`;
     for (const n of s.notes || []) html += `<div class="callout">${esc(n)}</div>`;
     s.exercises.forEach((e, ei) => {
@@ -385,7 +396,7 @@
           ${e.load === 'bar' && first && first.w ? `<span class="plates"><b>${first.w}</b> = ${esc(plateText(first.w))}</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
           ${swaps.length ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}
         </div>`}
-        ${!skipped && e.load === 'bar' && first && first.w && !s.isTest && (e.role !== 'accessory') ? `<details class="warm"><summary class="tiny">Warm-up ramp</summary>${E.warmups(first.w, state.settings.barWeight, state.settings.increment).map(w => `<span class="num">${w.w} × ${w.reps}</span>`).join('')}</details>` : ''}
+        ${!skipped && e.load === 'bar' && first && first.w && !s.isTest && e.role !== 'accessory' && !e.sets.some(x => x.kind === 'warm') ? `<details class="warm"><summary class="tiny">Warm-up ramp</summary>${E.warmups(first.w, state.settings.barWeight, state.settings.increment, e.role).map(w => `<span class="num">${w.w} × ${w.reps}</span>`).join('')}</details>` : ''}
       </section>`;
     });
     html += `<div class="card"><label class="f">Notes<textarea id="sess-notes" data-action="notes" rows="2" placeholder="Anything worth remembering">${esc(s.notes)}</textarea></label>
@@ -404,7 +415,7 @@
       const kind = x.kind === 'warm' ? 'warm-up' : x.kind === 'test' ? (x.open ? 'top single' : 'single') : x.ind ? `top set` : '';
       return `<div class="set ${x.done ? 'done' : ''}" data-si="${si}">
         <span class="n">${x.kind === 'warm' ? 'W' : si + 1 - e.sets.filter((y, j) => j < si && y.kind === 'warm').length}</span>
-        <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}" ${e.load === 'bw' && w == null ? '' : ''}><span class="u">${e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
+        <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${x.kind === 'warm' && e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
         <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" value="${reps}" placeholder="${x.reps}${x.plus ? '+' : ''}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
         ${x.kind === 'warm' ? '<span></span>' : `<button class="rpe ${x.rpe == null ? 'empty' : ''}" data-action="rpe" data-ei="${ei}" data-si="${si}" aria-label="RPE">${x.rpe == null ? (x.rpeTarget != null ? `~${x.rpeTarget}` : 'RPE') : x.rpe}</button>`}
         <button class="ok" data-action="done" data-ei="${ei}" data-si="${si}" aria-label="${x.done ? 'Undo set' : 'Set done'}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></button>
@@ -431,7 +442,8 @@
     if (rEl && rEl.value !== '') x.actualReps = Number(rEl.value); else if (x.actualReps == null) x.actualReps = x.reps;
     if (x.actualW == null && e.load !== 'bw') { toast('Enter the weight first'); wEl && wEl.focus(); return; }
     x.done = true; x.doneAt = Date.now();
-    if (x.kind !== 'warm') startTimer(e.rest);
+    if (x.kind === 'warm') { const lastWarm = !e.sets.slice(si + 1).some(y => y.kind === 'warm'); startTimer(lastWarm ? Math.min(120, e.rest) : 60); }
+    else startTimer(e.rest);
     autoAdjust(ei, si);
     save(); render();
   }
@@ -446,6 +458,10 @@
     let f = 0;
     if (delta >= 1.5) f = -0.05; else if (delta >= 1.0) f = -0.025; else if (delta <= -1.5 && !e.bumped) f = 0.025;
     x.adjApplied = true;
+    // The first work set often feels heaviest regardless of fitness (warm-up, nerves), so a hard
+    // first set only earns half the cut; sets 2+ get the full rule.
+    const firstWork = e.sets.findIndex(y => y.kind === 'work') === si;
+    if (f < 0 && firstWork) f = f / 2;
     if (!f) return;
     e.adjTotal = (e.adjTotal || 0) + f;
     if (e.adjTotal < -0.10) { e.adjTotal = -0.10; return; }
@@ -626,7 +642,7 @@
       </div>
       <div class="card"><h3>This week's plan</h3>
         ${week.map(s => `<details ${s.dayIdx === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 0"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
-          <div class="tablewrap"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${e.sets.length}×${e.sets[0].reps}${e.sets[0].plus ? '+' : ''}</td><td class="num">${e.sets[0].w != null ? e.sets[0].w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`).join('')}</table></div></details>`).join('')}
+          <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind !== 'warm'), f = work[0]; return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join('')}
       </div>
       <div class="card"><h3>Weekly working sets</h3>${sets}<p class="small muted">Counts the competition lift plus its close barbell variations. The caps are the ceiling the adaptive rules can climb to; the book's advice for someone coming off too much volume is to start low and only add when you are clearly recovering.</p></div>
       <div class="card"><h3>Maxes and adjustments</h3>
@@ -651,7 +667,7 @@
       <div class="card"><h3>Estimated 1RM</h3><canvas id="c-e1rm" height="200"></canvas><div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> Squat</span><span><span class="dot" style="background:var(--good)"></span> Bench</span><span><span class="dot" style="background:var(--fg)"></span> Deadlift</span></div><p class="small muted">From sets where you logged an RPE on the competition lifts. Test-week singles count too.</p></div>
       <div class="card"><h3>Readiness</h3><canvas id="c-ready" height="140"></canvas></div>
       <div class="card"><h3>Sessions</h3>${done.length ? done.slice(0, 60).map((s, i) => `<details class="session-item" style="display:block"><summary class="row between"><div><b>${esc(s.dayName)}</b> <span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></div><div class="row" style="gap:6px">${s.readiness ? `<span class="pill ${s.readiness.color}">${s.readiness.score}</span>` : ''}${s.post ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</div></summary>
-          <div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done).map(x => `${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
+          <div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
           <div class="small muted" style="margin-top:6px">${s.durationMin ? s.durationMin + ' min' : ''}${s.cardio && s.cardio.min ? ` · bike ${s.cardio.min} min` : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</div>
           <button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="margin-top:6px;color:var(--bad)">Delete</button></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on the Today tab.</p>'}</div>`;
   }
@@ -719,6 +735,7 @@
         <div class="grid2"><label class="f">Bike after lifting (min)<input id="set-cm" type="number" data-setting="cardioMin" value="${s.cardioMin}"></label><label class="f">Usual easy watts<input id="set-cw" type="number" data-setting="cardioWatts" value="${s.cardioWatts}"></label></div>
         <div class="grid3"><label class="f">Rest, main (s)<input id="set-r1" type="number" data-setting="restPrimary" value="${s.restPrimary}"></label><label class="f">Rest, second (s)<input id="set-r2" type="number" data-setting="restSecondary" value="${s.restSecondary}"></label><label class="f">Rest, accessory (s)<input id="set-r3" type="number" data-setting="restAccessory" value="${s.restAccessory}"></label></div>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-peak" data-setting="includePeak" ${s.includePeak !== false ? 'checked' : ''} style="width:22px;height:22px"> Include the Peak &amp; Test block</label>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-warm" data-setting="warmupSets" ${s.warmupSets !== false ? 'checked' : ''} style="width:22px;height:22px"> Show warm-up sets in each session</label>
         <label class="f">Extra easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
       </div>
       <div class="card"><h3>Data</h3>
@@ -736,6 +753,7 @@
     else if (key === 'tmPct') { s.tmPct = Number(val); LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); }
     else if (key.startsWith('acc:')) { const k = key.split(':')[1]; state.acc[k] = { weight: Number(val), updated: todayISO() }; }
     else if (key === 'includePeak') s.includePeak = !!val;
+    else if (key === 'warmupSets') s.warmupSets = !!val;
     else if (key === 'squatStyle' || key === 'deadliftStyle') s[key] = val;
     else if (['barWeight', 'dbIncrement', 'cardioMin', 'cardioWatts', 'restPrimary', 'restSecondary', 'restAccessory'].includes(key)) s[key] = Number(val);
     save();

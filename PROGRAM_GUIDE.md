@@ -90,11 +90,25 @@ Sleep, energy, motivation, and soreness by region, combined into a 0-100 readine
 A second red check-in in one week switches the rest of that week to light sessions. That is the
 book's rule for a week that goes wrong: "Use Extra Light Sessions, not Deloads" (p.160).
 
+### Warm-ups
+
+Every barbell lift starts with warm-up sets built from the first working weight, not from the 1RM:
+the empty bar, then steps at roughly 35-40%, 50-55%, 60-70%, 80% and 90% of the working weight,
+with reps falling from 8 to a single as the load rises. Jumps shrink near the top and the last step
+is a single at about 90%, so the first work set never arrives as a surprise. Heavier working
+weights get more steps; the second barbell lift of a session, already warm, gets three. Rest is a
+minute between warm-ups and up to two before the first work set. The book gives no warm-up
+protocol; this is the common strength-coaching practice, and it exists because a first set that
+feels heavy after a lazy warm-up is the most common reason a good day gets logged as a bad one.
+Warm-up sets never count toward volume, reviews or max estimates. They can be hidden in Settings.
+
 ### During a session: RPE adjusts the rest of the exercise
 
 When you log a working set's RPE at 1.5 or more above its target, the remaining sets of that
 exercise drop 5% (1.0 above drops 2.5%), to a floor of −10% for the exercise. A set 1.5 or more
-below target raises the remaining sets 2.5%, once per exercise. The note under the exercise says
+below target raises the remaining sets 2.5%, once per exercise. A hard *first* work set earns only
+half the cut, because the first set often feels heaviest for reasons that have nothing to do with
+fitness (warm-up, nerves); sets 2 onward get the full rule. The note under the exercise says
 what happened and why. Deload, easy and test weeks are exempt because their loads are light on
 purpose. The weekly review then sees the loads you actually lifted and the RPEs you logged, so a
 day where the Training Max was slightly off is corrected on the spot without distorting next week.

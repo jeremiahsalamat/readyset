@@ -270,6 +270,7 @@
         const pct1rm = w / (state.lifts[lift].oneRM * ex.mult);
         const rpe = plannedRPE(pct1rm, base.reps);
         const plusOk = mode === 'full' && !isDeload && !isTest && !rest && block.plus > 0;
+        if (S.warmupSets !== false) for (const st of warmups(Math.max(w, S.barWeight), S.barWeight, S.increment, slot.role)) item.sets.push({ w: st.w, reps: st.reps, kind: 'warm' });
         for (let i = 0; i < sets; i++) {
           const ind = i === 0 && plusOk;
           item.sets.push({ w, reps: base.reps, pct, kind: 'work', ind, plus: ind ? block.plus : 0, rpeTarget: rpe });
@@ -308,17 +309,29 @@
   function estimateMinutes(sess) {
     let s = 8;
     for (const e of sess.exercises) {
-      const n = e.sets.length;
-      s += n * (e.rest / 60 + 0.75) + (e.role === 'primary' ? 5 : e.role === 'secondary' ? 3 : 1);
+      const warm = e.sets.filter(x => x.kind === 'warm').length, n = e.sets.length - warm;
+      s += n * (e.rest / 60 + 0.75) + warm * 1.1 + (warm ? 0.5 : e.role === 'primary' ? 5 : e.role === 'secondary' ? 3 : 1);
     }
     return Math.round(s);
   }
 
-  function warmups(target, bar, increment) {
-    const steps = [{ w: bar, reps: 8 }];
+  // Warm-up ramp to the first working weight. Fractions are of the WORKING weight, not the 1RM:
+  // reps fall as load rises, jumps shrink near the top, and the last step is a single at ~90% so
+  // the first work set is not a surprise. A heavier target earns more steps; the second barbell
+  // lift of a session (already warm) gets a shorter ramp. Steps closer than 10 lb are dropped.
+  function warmups(target, bar, increment, role) {
+    const steps = [{ w: bar, reps: role === 'primary' ? 10 : 8 }];
     if (target <= bar + 20) return steps;
-    const ramp = [[0.45, 5], [0.65, 3], [0.8, 2], [0.9, 1]];
-    for (const [r, reps] of ramp) { const w = roundTo(target * r, increment); if (w > bar + 5 && w < target - 5) steps.push({ w, reps }); }
+    const full = target >= 300 ? [[0.35, 8], [0.5, 5], [0.62, 4], [0.72, 3], [0.82, 2], [0.9, 1]]
+      : target >= bar * 3 ? [[0.4, 8], [0.55, 5], [0.7, 3], [0.82, 2], [0.9, 1]]
+      : [[0.5, 5], [0.7, 3], [0.85, 1]];
+    const short = target >= bar * 3 ? [[0.5, 5], [0.7, 3], [0.85, 1]] : [[0.6, 4], [0.8, 2]];
+    const ramp = role === 'primary' ? full : short;
+    let last = bar;
+    for (const [r, reps] of ramp) {
+      const w = roundTo(target * r, increment);
+      if (w >= last + 10 && w <= target - 10) { steps.push({ w, reps }); last = w; }
+    }
     return steps;
   }
 
@@ -521,7 +534,7 @@
   function defaultState() {
     return {
       version: 1,
-      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', squatStyle: 'lowbar', cardioMin: 60, cardioWatts: 110, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: true, name: '' },
+      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', squatStyle: 'lowbar', cardioMin: 60, cardioWatts: 110, warmupSets: true, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: true, name: '' },
       lifts: { squat: { oneRM: 0, tm: 0 }, bench: { oneRM: 0, tm: 0 }, deadlift: { oneRM: 0, tm: 0 } },
       acc: {},
       program: { blockIdx: 0, week: 1, dayIdx: 0, mesoCount: 0, setAdj: { squat: 0, bench: 0, deadlift: 0, acc: 0 }, loadAdj: { squat: 0, bench: 0, deadlift: 0 }, flags: { squat: 0, bench: 0, deadlift: 0 }, swaps: {}, special: null, nextBlockOverride: null, pendingDeload: false, lightRestOfWeek: false, startedAt: null },
