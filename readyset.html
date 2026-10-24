@@ -892,7 +892,7 @@ canvas { width: 100%; height: auto; display: block; }
     document.querySelectorAll('#tabbar button').forEach(b => b.toggleAttribute('aria-current', b.dataset.view === view) || (b.dataset.view === view ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
     const pos = E.positionLabel(state);
     $('#pos').textContent = `${pos.block.name} · ${pos.label}`;
-    main.innerHTML = view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings();
+    main.innerHTML = (state.current ? '' : renderUndo()) + (view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings());
     if (view === 'history') requestAnimationFrame(drawCharts);
     if (view === 'today' && state.current && state.current.phase === 'cardio' && ui.cardioRun) requestAnimationFrame(tickCardio);
   }
@@ -988,7 +988,6 @@ canvas { width: 100%; height: auto; display: block; }
     const plan = E.buildSession(state, 'full');
     const last = lastSession();
     let html = '';
-    if (state.undoSkip) html += `<div class="callout warn row between"><span>Skipped ${esc(state.undoSkip.dayName)}.</span><button class="btn sm" data-action="undo-skip">Undo skip</button></div>`;
     if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
     if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Two signals of stacking fatigue showed up this week. The book's rule is to take the deload now rather than grind into it. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
     if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
@@ -1091,7 +1090,7 @@ canvas { width: 100%; height: auto; display: block; }
     Object.assign(sess, { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), phase: 'lift', startedAt: Date.now(), readiness: c ? c.result : null, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, notes: '', skippedSlots: [] });
     if (c && c.result) { delete sess.readiness.mode; }
     sess.exercises.forEach(e => e.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; }));
-    state.current = sess; ui.checkin = null; state.undoSkip = null;
+    state.current = sess; ui.checkin = null; state.undo = null;
     if (c && c.result && c.result.color === 'red') {
       const redsThisWeek = sessionsOfWeek().filter(s => s.readiness && s.readiness.color === 'red').length + 1;
       if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.isRest && P.dayIdx < 3) { P.lightRestOfWeek = true; addLog('Second red check-in this week: remaining sessions switched to light (the book: light sessions, not an unplanned deload).'); }
@@ -1099,26 +1098,30 @@ canvas { width: 100%; height: auto; display: block; }
     unlockAudio(); keepAwake(); save(); render(); window.scrollTo(0, 0);
   }
   function restToday() { ui.checkin = null; addLog('Rested instead of training; the session stays queued.'); save(); render(); }
-  function skipSession() {
-    const P = state.program, pos = E.positionLabel(state);
-    // Snapshot everything a skip can change, so it can be undone even across a week boundary.
-    const snap = JSON.stringify({ program: state.program, lifts: state.lifts, learned: state.learned, lastReport: state.lastReport || null, logLen: state.log.length });
-    const s = { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), skipped: true, dayId: pos.day.id, dayName: pos.day.name, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, week: P.week, isRest: pos.isRest, isDeload: pos.isDeload, exercises: [] };
-    state.sessions.push(s); Store.pushSession(s);
-    addLog(`Skipped ${pos.day.name}.`);
-    afterSession();
-    state.undoSkip = { snap, id: s.id, dayName: pos.day.name };
-    save(); render();
+  // General undo: snapshot everything a program-level action can change (position, maxes, learned
+  // set counts, the report and log) before the action, and offer one Undo until the next session.
+  function snapshot(label, extra) {
+    state.undo = Object.assign({ label, snap: JSON.stringify({ program: state.program, lifts: state.lifts, learned: state.learned, lastReport: state.lastReport || null, logLen: state.log.length }) }, extra || {});
   }
-  function undoSkip() {
-    const u = state.undoSkip; if (!u) return;
+  function undoLast() {
+    const u = state.undo; if (!u) return;
     const snap = JSON.parse(u.snap);
     state.program = snap.program; state.lifts = snap.lifts; state.learned = snap.learned; state.lastReport = snap.lastReport;
     state.log.splice(0, Math.max(0, state.log.length - snap.logLen));
-    const i = state.sessions.findIndex(x => x.id === u.id);
-    if (i >= 0) { state.sessions.splice(i, 1); Store.deleteSession(u.id); }
-    state.undoSkip = null;
-    save(); render(); toast(`${u.dayName} is back on`);
+    if (u.removeSessionId) { const i = state.sessions.findIndex(x => x.id === u.removeSessionId); if (i >= 0) { state.sessions.splice(i, 1); Store.deleteSession(u.removeSessionId); } }
+    if (u.restoreSession) { state.sessions.push(u.restoreSession); state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); Store.pushSession(u.restoreSession); }
+    state.undo = null;
+    save(); render(); toast(`Undone: ${u.label}`);
+  }
+  function renderUndo() { return state.undo ? `<div class="callout warn row between"><span>${esc(state.undo.label)}.</span><button class="btn sm" data-action="undo">Undo</button></div>` : ''; }
+  function skipSession() {
+    const P = state.program, pos = E.positionLabel(state);
+    const s = { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), skipped: true, dayId: pos.day.id, dayName: pos.day.name, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, week: P.week, isRest: pos.isRest, isDeload: pos.isDeload, exercises: [] };
+    snapshot(`Skipped ${pos.day.name}`, { removeSessionId: s.id });
+    state.sessions.push(s); Store.pushSession(s);
+    addLog(`Skipped ${pos.day.name}.`);
+    afterSession();
+    save(); render();
   }
 
   // ---------- Session ----------
@@ -1484,7 +1487,7 @@ canvas { width: 100%; height: auto; display: block; }
         <div class="btnrow"><button class="btn" data-action="export">Copy backup</button><button class="btn" data-action="import-toggle">Restore from backup</button></div>
         ${ui.importText != null && ui.showImport ? `<label class="f">Paste a backup<textarea id="import-text" rows="4"></textarea></label><button class="btn primary" data-action="import">Restore</button>` : ''}
         <button class="btn danger block" data-action="reset-confirm">Start over</button>
-        ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every logged session. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}
+        ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every logged session, and it cannot be undone. Tap Copy backup first if there is anything worth keeping. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}
       </div>
       <p class="small muted" style="text-align:center">Readyset · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.</p>`;
   }
@@ -1543,12 +1546,12 @@ canvas { width: 100%; height: auto; display: block; }
       case 'timer-add': if (ui.timer) { ui.timer.end += 30000; ui.timer.fired = false; tickTimer(); } break;
       case 'timer-stop': stopTimer(); break;
       case 'dismiss-report': state.lastReport = null; save(); render(); break;
-      case 'undo-skip': undoSkip(); break;
+      case 'undo': undoLast(); break;
       case 'deload-now-confirm': ui.confirm = 'deload'; render(); break;
       case 'rest-now-confirm': ui.confirm = 'rest'; render(); break;
-      case 'deload-now': E.startDeloadNow(state); state.program.pendingDeload = false; ui.confirm = null; addLog('Deload started early.'); save(); render(); break;
-      case 'deload-later': state.program.pendingDeload = false; addLog('Deload suggestion declined; pushing on.'); save(); render(); break;
-      case 'rest-now': E.startActiveRest(state, 1); ui.confirm = null; addLog('Easy week inserted.'); save(); render(); break;
+      case 'deload-now': snapshot('Deload started early'); E.startDeloadNow(state); state.program.pendingDeload = false; ui.confirm = null; addLog('Deload started early.'); save(); render(); break;
+      case 'deload-later': snapshot('Deload suggestion dismissed'); state.program.pendingDeload = false; addLog('Deload suggestion declined; pushing on.'); save(); render(); break;
+      case 'rest-now': snapshot('Easy week inserted'); E.startActiveRest(state, 1); ui.confirm = null; addLog('Easy week inserted.'); save(); render(); break;
       case 'set-plate': { const s = state.settings, p = Number(d.p); s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); save(); render(); break; }
       case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
       case 'extra-cardio': { const m = Number($('#extra-cardio').value) || 0; if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
@@ -1557,7 +1560,7 @@ canvas { width: 100%; height: auto; display: block; }
       case 'import': { try { const obj = JSON.parse($('#import-text').value); if (!obj.settings || !obj.program) throw new Error('bad'); state = obj; Store.pushAll(state); save(); ui.showImport = false; toast('Restored'); render(); } catch (e) { toast('That does not look like a Readyset backup'); } break; }
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
       case 'reset': { for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; save(); render(); break; }
-      case 'delete-session': { const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
+      case 'delete-session': { const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
     }
   });
   function fallbackCopy(txt) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('Backup copied'); } catch (e) { toast('Copy failed; select and copy manually'); } ta.remove(); }
