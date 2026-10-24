@@ -1039,14 +1039,17 @@ canvas { width: 100%; height: auto; display: block; }
     const seg = (key, labels) => `<div class="seg">${labels.map((t, i) => `<button data-action="ci" data-k="${key}" data-v="${i + 1}" aria-pressed="${(key.includes(':') ? c.groups[key.split(':')[1]] : c[key]) === i + 1}">${i + 1}<small>${t}</small></button>`).join('')}</div>`;
     if (c.result) {
       const r = c.result, pos = E.positionLabel(state);
+      const lightWeek = pos.isDeload || pos.isRest || pos.isTest;
       const plan = E.buildSession(state, c.choice || r.mode);
-      const explain = r.color === 'green' ? 'Good to go. Loads and sets as planned, and the first set of each main lift can take bonus reps if it moves well.'
+      const explain = lightWeek ? `${pos.isRest ? 'Easy week' : pos.isDeload ? 'Deload week' : 'Test week'}: this session is already as light as the program gets, so readiness is recorded for your trend but doesn't change it.${r.color === 'red' ? ' If you feel genuinely wrecked, resting today and keeping the session is fine.' : ''}`
+        : r.color === 'green' ? 'Good to go. Loads and sets as planned, and the first set of each main lift can take bonus reps if it moves well.'
         : r.color === 'yellow' ? 'So-so day. The book\'s rule: most days like this still allow an overload, so loads stay. Bonus reps and any earned extra sets are dropped.'
         : 'Rough day. Grinding a planned overload through this is the fatigue trap. A light session (fewer sets, lighter loads) clears fatigue better than a day off and keeps the week on track.';
       return `<div class="card">
         <div class="row between"><h2>Readiness ${r.score}</h2><span class="pill ${r.color}">${r.color === 'green' ? 'Green' : r.color === 'yellow' ? 'Yellow' : 'Red'}</span></div>
         <p>${explain}</p>
-        ${r.color === 'red' ? `<div class="seg wrap">
+        ${r.color === 'red' && lightWeek ? `<button class="btn block" data-action="ci-rest">Rest today, keep this session for next time</button>` : ''}
+        ${r.color === 'red' && !lightWeek ? `<div class="seg wrap">
             <button data-action="ci-choice" data-v="light" aria-pressed="${c.choice === 'light'}">Light session<small>recommended</small></button>
             <button data-action="ci-choice" data-v="full" aria-pressed="${c.choice === 'full'}">As planned<small>if you know it's not fatigue</small></button>
           </div>
@@ -1074,8 +1077,9 @@ canvas { width: 100%; height: auto; display: block; }
     r.answers = { sleep: c.sleep, energy: c.energy, motivation: c.motivation, groups: Object.assign({}, c.groups) };
     r.mode = state.program.lightRestOfWeek ? 'light' : r.color === 'green' ? 'full' : r.color === 'yellow' ? 'trim' : 'light';
     const pos = E.positionLabel(state);
-    if ((pos.isDeload || pos.isRest) && r.mode !== 'full') r.mode = 'full';
-    c.result = r; c.choice = r.color === 'red' ? 'light' : null;
+    const lightWeek = pos.isDeload || pos.isRest || pos.isTest;
+    if (lightWeek) r.mode = 'full';
+    c.result = r; c.choice = r.color === 'red' && !lightWeek ? 'light' : null;
     const last = lastSession();
     if (last && c.askGroups) { last.soreness = Object.assign({}, c.groups); Store.pushSession(last); }
     save(); render();
