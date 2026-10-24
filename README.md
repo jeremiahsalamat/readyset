@@ -5,16 +5,30 @@ Program logic is explained in [PROGRAM_GUIDE.md](PROGRAM_GUIDE.md).
 
 ## Using it on an iPhone
 
-**Option 1 (zero setup): the published artifact.** Open the claude.ai artifact link in Safari, sign
-in once, then Share → *Add to Home Screen*. Your data is stored in the artifact's own database, so
-it follows your Claude account across devices. Needs a connection to load.
+**The app (installable, works offline):** https://jeremiahsalamat.github.io/readyset/
 
-**Option 2 (true offline app): host the `docs/` folder.** Drag the `docs/` folder onto Netlify Drop
-(app.netlify.com/drop), or push it to a GitHub Pages repo, or any static host. Open the URL in
-Safari and *Add to Home Screen*. It installs as a standalone app with an icon, works offline, and
-stores data in the phone's browser storage. Use *Copy backup* in Settings now and then.
+Open that link in Safari, then Share → *Add to Home Screen*. It installs as a standalone app with
+the barbell icon, works with no connection, and keeps your data in the phone's storage. Use *Copy
+backup* in Settings every few weeks and paste it somewhere safe (Notes works).
 
-Both copies are the same code; only the storage differs.
+**Backup copy:** the same app is also published as a private claude.ai artifact
+(https://claude.ai/artifact/3nBmAmwFdemozpSyvjyNCB). It stores data in your Claude account instead
+of on the phone and needs claude.ai to be up. The two copies do not share data; a backup pastes
+into either.
+
+## Deploying an update
+
+The site is served by GitHub Pages from the `docs/` folder on `main`. To ship a change:
+
+```bash
+python build.py
+git add -A
+git commit -m "describe the change"
+git push
+```
+
+Pages rebuilds in about a minute. The phone picks up the new version the next time the app is
+opened with a connection (the service worker is network-first).
 
 ## Files
 
