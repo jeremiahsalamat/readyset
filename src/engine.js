@@ -112,18 +112,27 @@
     {
       id: 'build', name: 'Build', focus: 'Muscle and work capacity', weeks: 4, deload: true,
       primary:   [{ sets: 3, reps: 8, pct: 0.775 }, { sets: 4, reps: 8, pct: 0.80 }, { sets: 4, reps: 8, pct: 0.825 }, { sets: 4, reps: 7, pct: 0.85 }],
+      // Deadlift reps-at-percentage run about a rep under squat and bench and the erectors pay for 8s,
+      // so the deadlift builds with 5-6s at 72-79% 1RM and the RDL carries the hamstring volume.
+      primaryByLift: { deadlift: [{ sets: 3, reps: 6, pct: 0.80 }, { sets: 4, reps: 6, pct: 0.825 }, { sets: 4, reps: 6, pct: 0.85 }, { sets: 4, reps: 5, pct: 0.875 }] },
       secondary: [{ sets: 3, reps: 8, pct: 0.75 }, { sets: 3, reps: 8, pct: 0.775 }, { sets: 4, reps: 8, pct: 0.80 }, { sets: 4, reps: 8, pct: 0.825 }],
       accessory: [{ sets: 2, reps: 12 }, { sets: 3, reps: 12 }, { sets: 3, reps: 12 }, { sets: 3, reps: 12 }],
       plus: 2, light: { vol: 0.5, int: 0.9 }, deloadA: { vol: 0.5, int: 0.9 }, deloadB: { vol: 0.5, int: 0.5 },
       // Two variation sets, alternating between the two runs of the block in a macro (p.250: rotate
-      // once per mesocycle; p.252: change the force line periodically).
-      variation: { squat_variation: 'belt_squat', bench_variation: 'close_grip', hinge_variation: 'rdl' },
+      // once per mesocycle; p.252: change the force line periodically). The squat variation is a
+      // barbell squat so the squat is grooved twice a week (5-9 weekly sets per lift is where the
+      // strength dose-response sits); the belt squat stays one swap away.
+      variation: { squat_variation: 'paused_squat', bench_variation: 'close_grip', hinge_variation: 'rdl' },
       variationB: { squat_variation: 'high_bar_squat', bench_variation: 'larsen_press', hinge_variation: 'deficit_deadlift' },
     },
     {
       id: 'strength', name: 'Strength', focus: 'Heavier, fewer reps', weeks: 3, deload: true,
-      primary:   [{ sets: 4, reps: 5, pct: 0.85 }, { sets: 4, reps: 4, pct: 0.90 }, { sets: 4, reps: 3, pct: 0.95 }],
-      secondary: [{ sets: 3, reps: 5, pct: 0.80 }, { sets: 3, reps: 5, pct: 0.83 }, { sets: 3, reps: 4, pct: 0.86 }],
+      // Week 3 opens with one single at ~92% 1RM (RPE 8 on the chart) before the triples: the
+      // routine max anchor coaches use instead of a test week, and strong evidence for calibration.
+      // Week 1 keeps the second lift at 2 sets so the Build -> Strength step in counted barbell sets
+      // stays under ~30% (the review adds the third set back once the week goes well).
+      primary:   [{ sets: 4, reps: 5, pct: 0.85 }, { sets: 4, reps: 4, pct: 0.90 }, { sets: 3, reps: 3, pct: 0.95, opener: { pct: 1.02, rpe: 8 } }],
+      secondary: [{ sets: 2, reps: 5, pct: 0.80 }, { sets: 3, reps: 5, pct: 0.83 }, { sets: 3, reps: 4, pct: 0.86 }],
       accessory: [{ sets: 2, reps: 10 }, { sets: 3, reps: 10 }, { sets: 3, reps: 8 }],
       plus: 1, light: { vol: 0.7, int: 0.7 }, deloadA: { vol: 0.7, int: 0.7 }, deloadB: { vol: 0.5, int: 0.5 },
       variation: { squat_variation: 'paused_squat', bench_variation: 'paused_bench', hinge_variation: 'paused_deadlift' },
@@ -134,7 +143,7 @@
       primary:   [{ sets: 3, reps: 3, pct: 0.95 }, { sets: 3, reps: 2, pct: 1.0 }],
       secondary: [{ sets: 3, reps: 4, pct: 0.80 }, { sets: 2, reps: 3, pct: 0.80 }],
       accessory: [{ sets: 2, reps: 10 }, { sets: 1, reps: 10 }],
-      plus: 0, light: { vol: 0.9, int: 0.5 }, deloadA: { vol: 0.9, int: 0.5 }, deloadB: { vol: 0.5, int: 0.5 },
+      plus: 0, light: { vol: 0.5, int: 0.8 }, deloadA: { vol: 0.9, int: 0.5 }, deloadB: { vol: 0.5, int: 0.5 },
       variation: { squat_variation: 'comp_squat', bench_variation: 'comp_bench', hinge_variation: 'comp_deadlift' },
     },
   ];
@@ -150,13 +159,20 @@
 
   // ---------- Tunable thresholds (one place, so simulations can sweep them) ----------
   const TUNE = {
-    readiness: { green: 60, yellow: 40 },
-    correction: { firstSetWeight: 0.5, floor: 0.85, ceil: 1.05, minRpe: 6 },
-    calibrate: { downAt: 0.97, downMax: 0.95, upAt: 1.02, upMax: 1.025, upFastAt: 1.04, allowance: 0.03, blockFloor: 0.90, blockFloorMissed: 0.85, minRpe: 6.5 },
+    // Red needs at least two poor answers (one bad night barely moves maximal strength); yellow is
+    // the common so-so day and gets a small load nudge rather than a volume cut.
+    readiness: { green: 60, yellow: 35 },
+    trim: { load: 0.975 },
+    // In-session: a hard first set counts in full (RPE rises set to set at a fixed load, so a hard
+    // first set predicts harder later sets); an easy day may push the remaining sets up by at most
+    // 2.5% (never in Peak). Stop rules: a miss, a non-first set 2+ over target, or the floor.
+    correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, minRpe: 6, stopOver: 2 },
+    sessionCapMin: 70,
+    calibrate: { downAt: 0.97, downMax: 0.95, downConfHigh: 1.5, downSure: 0.95, upAt: 1.02, upMax: 1.025, upFastAt: 1.04, allowance: 0.03, blockFloor: 0.90, blockFloorMissed: 0.85, minRpe: 6.5 },
     review: { add: 2, cut: -2, bigCut: -4, onTarget: 1 },
     // Deload-now triggers: within the week, and across the block (chronic under-recovery that
     // stays under the weekly triggers: many reds, repeated calibration drops, readiness trend).
-    deload: { flaggedLifts: 2, redsWeek: 2, crushedWeek: 2, redsBlock: 4, calibDropsLift: 2, calibDropPct: 0.06, lightsBlock: 4, readinessDrop: 15, readinessLow: 55, chronicFromWeek: 2 },
+    deload: { flaggedLifts: 2, redsWeek: 2, crushedWeek: 2, redsBlock: 4, calibDropsLift: 2, calibDropPct: 0.06, lightsBlock: 4, readinessDrop: 15, readinessLow: 45, readinessAbs: 55, readinessVeryLow: 40, readinessWeeks: 2, chronicFromWeek: 2, dialStepsPerBlock: 1, readinessMovesDial: true },
     // Volume dial: a lasting, program-wide set offset (-2..+2) that finds the lifter's recoverable
     // volume across blocks. Down one step whenever block-level fatigue forces a deload; up one step
     // after a block that stayed clean while already adding sets.
@@ -180,9 +196,12 @@
       { key: 'hamstrings', role: 'accessory' },
       { key: 'back_vertical', role: 'accessory' },
       { key: 'abs', role: 'accessory', optional: true }] },
+    // The hinge variation sits on bench day: two days before the heavy pull and the day after the
+    // squat, not 24 h after the deadlift (deadlift and hamstring recovery is the slowest, pp.135,
+    // 140, 219-220). Friday is upper body only, so Monday's squat follows three days without a bar.
     { id: 'B', name: 'Bench day', slots: [
       { key: 'bench_primary', role: 'primary', tm: 'bench' },
-      { key: 'press_secondary', role: 'secondary', tm: 'bench' },
+      { key: 'hinge_variation', role: 'secondary', tm: 'deadlift' },
       { key: 'back_horizontal', role: 'accessory' },
       { key: 'triceps', role: 'accessory' },
       { key: 'biceps', role: 'accessory', optional: true }] },
@@ -194,7 +213,7 @@
       { key: 'abs', role: 'accessory', optional: true }] },
     { id: 'D', name: 'Bench variation day', slots: [
       { key: 'bench_variation', role: 'secondary', tm: 'bench' },
-      { key: 'hinge_variation', role: 'secondary', tm: 'deadlift' },
+      { key: 'press_secondary', role: 'secondary', tm: 'bench' },
       { key: 'back_vertical', role: 'accessory' },
       { key: 'delts', role: 'accessory', optional: true },
       { key: 'triceps', role: 'accessory' }] },
@@ -286,8 +305,9 @@
       // exercise and follows the second-lift scheme.
       const lift = slot.tm || (ex.tm ? ex.tm : null);
       const schemeRole = slot.role === 'accessory' && ex.tm ? 'secondary' : slot.role;
+      const heavyBlock = block.id !== 'build' && !rest; // heavy triples and singles earn +60 s on the main lift
       const item = { slotKey: slot.key, ex: exId, name: exerciseName(state, exId), role: slot.role, lift, load: ex.load, optional: !!slot.optional, cue: ex.cue || null, sets: [],
-        rest: slot.role === 'primary' ? S.restPrimary : slot.role === 'secondary' ? S.restSecondary : S.restAccessory };
+        rest: slot.role === 'primary' ? S.restPrimary + (heavyBlock ? 60 : 0) : slot.role === 'secondary' ? S.restSecondary : S.restAccessory };
 
       // --- Test week: primaries work up to a heavy single ---
       if (isTest && slot.role === 'primary') {
@@ -303,25 +323,27 @@
       if (ex.tm) {
         // ----- Barbell lift loaded from a TM -----
         let base, volF = 1, intF = 1;
+        const schemeFor = (w) => (schemeRole === 'primary' && block.primaryByLift && block.primaryByLift[lift]) ? block.primaryByLift[lift][w] : block[schemeRole][w];
         if (rest) { base = REST[schemeRole]; }
         else if (isDeload || isTest) {
-          base = block[schemeRole][lastWk];
+          base = schemeFor(lastWk);
           const d = firstHalf ? block.deloadA : block.deloadB; volF = d.vol; intF = d.int;
           if (isTest) { volF = 0.5; intF = 0.7; }
         } else {
-          base = block[schemeRole][wk];
+          base = schemeFor(wk);
           if (mode === 'light') { volF = block.light.vol; intF = block.light.int; }
+          else if (mode === 'trim') intF = TUNE.trim.load; // yellow day: a one-step load nudge, sets and reps unchanged
         }
         const adj = (!rest && !isDeload && !isTest) ? ((P.loadAdj && P.loadAdj[lift]) || 0) : 0;
+        if (!rest && !isDeload && !isTest && P.layoffPct) intF *= 1 + P.layoffPct; // after a layoff: a flat 5% off every load this week
         let sets = base.sets;
-        // Earned extra sets go only to the competition lift and its close variants (mult >= 0.8), and
-        // only on a green day; a reduction applies on every kind of day.
-        // Earned sets never reach the Peak block (peaking volume is "few or no sets added", p.340).
-        // Positive adjustments land on the competition lift first; variants get a set from the second step.
+        // Earned extra sets go to the competition lift only (coaches add sets to the main movement,
+        // not to each variant), only on a green day; a reduction applies on every kind of day and to
+        // every close variant. Earned sets never reach the Peak block ("few or no sets added", p.340).
         if (!rest && !isDeload && !isTest && ex.mult >= 0.8 && !block.test) {
           const sa = (P.setAdj && P.setAdj[lift]) || 0;
-          const pos = ex.mult === 1 && slot.role === 'primary' ? sa : Math.max(0, sa - 1);
-          sets += mode === 'full' ? (sa > 0 ? pos : sa) : Math.min(0, sa);
+          const isComp = ex.mult === 1 && slot.role === 'primary';
+          sets += sa > 0 ? (mode === 'full' && isComp ? sa : 0) : sa;
         }
         if (!rest && !isDeload && !isTest) sets = Math.max(2, sets + (P.volumeDial || 0));
         sets = Math.max(1, Math.round(sets * volF + 1e-9));
@@ -331,11 +353,18 @@
         const oneRM = state.lifts[lift].oneRM * ex.mult;
         const pct1rm = oneRM > 0 ? w / oneRM : 1;
         const rpe = plannedRPE(pct1rm, base.reps);
-        const plusOk = mode === 'full' && !isDeload && !isTest && !rest && block.plus > 0;
+        // Bonus reps: primary slot only, and never past RPE 9 (no sets to failure, p.97).
+        const plusOk = mode === 'full' && !isDeload && !isTest && !rest && block.plus > 0 && slot.role === 'primary';
+        const plus = plusOk ? Math.max(0, Math.min(block.plus, Math.floor(expectedRIR(pct1rm, base.reps)) - 1)) : 0;
         if (S.warmupSets !== false) for (const st of warmups(w, bar, inc, schemeRole)) item.sets.push({ w: st.w, reps: st.reps, kind: 'warm' });
+        if (base.opener && slot.role === 'primary' && mode !== 'light' && !isDeload && !isTest && !rest) {
+          const ow = Math.max(bar, roundTo(tmOf(state, lift) * ex.mult * base.opener.pct * (mode === 'trim' ? TUNE.trim.load : 1), inc));
+          item.sets.push({ w: ow, reps: 1, pct: base.opener.pct, kind: 'single', rpeTarget: base.opener.rpe });
+          item.note = `Opener: one single at about RPE ${base.opener.rpe} (two clean reps left), then the working sets. Set the safeties.`;
+        }
         for (let i = 0; i < sets; i++) {
-          const ind = i === 0 && plusOk;
-          item.sets.push({ w, reps: base.reps, pct, kind: 'work', ind, plus: ind ? block.plus : 0, rpeTarget: rpe });
+          const ind = i === 0 && plus > 0;
+          item.sets.push({ w, reps: base.reps, pct, kind: 'work', ind, plus: ind ? plus : 0, rpeTarget: rpe });
         }
         item.pctTM = pct; item.rpeTarget = rpe;
       } else {
@@ -384,7 +413,7 @@
   function warmups(target, bar, increment, role) {
     const steps = [{ w: bar, reps: role === 'primary' ? 10 : 8 }];
     if (target <= bar + 20) return steps;
-    const full = target >= 300 ? [[0.35, 8], [0.5, 5], [0.62, 4], [0.72, 3], [0.82, 2], [0.9, 1]]
+    const full = target >= 300 ? [[0.5, 5], [0.65, 3], [0.78, 2], [0.88, 1]]
       : target >= bar * 3 ? [[0.4, 8], [0.55, 5], [0.7, 3], [0.82, 2], [0.9, 1]]
       : [[0.5, 5], [0.7, 3], [0.85, 1]];
     const short = target >= bar * 3 ? [[0.5, 5], [0.7, 3], [0.85, 1]] : [[0.6, 4], [0.8, 2]];
@@ -407,10 +436,14 @@
     const C = TUNE.correction;
     caps = caps || { down: C.floor, up: C.ceil };
     if (!(plannedW > 0) || !(reps > 0) || !(targetRPE >= 1)) return null;
-    const rows = (evidence || []).filter(x => x.w > 0 && x.reps > 0 && x.reps <= MAX_EVIDENCE_REPS && x.rpe != null && x.rpe >= C.minRpe && x.rpe <= 10);
+    const rows = (evidence || []).filter(x => x.w > 0 && x.reps > 0 && x.reps <= MAX_EVIDENCE_REPS && Number.isFinite(x.rpe) && x.rpe >= C.minRpe && x.rpe <= 10);
     if (!rows.length) return null;
     let num = 0, den = 0;
-    for (const x of rows) { const wt = (x.first ? C.firstSetWeight : 1) * (x.rpe < 7 ? 0.5 : 1); num += wt * e1rm(x.w, x.reps, x.rpe); den += wt; }
+    for (const x of rows) {
+      const hard = x.missed || x.rpe >= (x.target != null ? x.target : targetRPE) + 1.5;
+      const wt = (x.first ? (hard ? C.firstSetHardWeight : C.firstSetWeight) : 1) * (x.rpe < 7 ? 0.5 : 1);
+      num += wt * e1rm(x.w, x.reps, x.rpe); den += wt;
+    }
     const est = num / den;
     const ideal = est * pctForRTF(reps + Math.max(0, 10 - targetRPE));
     const conf = Math.min(1, den);
@@ -418,7 +451,10 @@
     const floor = plannedW * caps.down, ceil = plannedW * caps.up;
     const hitFloor = w < floor - 1e-9;
     w = Math.max(floor, Math.min(ceil, w));
-    return { w, est, ideal, conf, hitFloor, delta: w / plannedW - 1 };
+    // RTS-style stop: a miss, a later set still 2+ over target after a correction, or the floor.
+    const last = rows[rows.length - 1];
+    const stop = rows.some(x => x.missed) || (rows.length >= 2 && !last.first && last.rpe >= (last.target != null ? last.target : targetRPE) + C.stopOver) || hitFloor;
+    return { w, est, ideal, conf, hitFloor, stop, delta: w / plannedW - 1 };
   }
 
   // ---------- Between sessions: calibrate the 1RM from what was actually lifted ----------
@@ -428,24 +464,29 @@
   // 1RM follows a low session at once (up to 5% per session) but rises only on the smoothed
   // estimate, by at most 2.5% per session, and never after a session that crushed you.
   // `ref` (the current 1RM) bounds each implied max to 0.7-1.3x so one mistyped set cannot swing it.
+  // Returns the confidence-weighted estimate, plus confHigh (weight from sets near failure: reported
+  // RPE >= 7.5 or planned >= 7), which the drop rule requires so that far-from-failure sets can lower
+  // a max only when the shortfall is large.
   function sessionEstimate(sess, lift, ref) {
-    let num = 0, den = 0, n = 0;
+    let num = 0, den = 0, n = 0, confHigh = 0;
     for (const e of sess.exercises || []) {
       if (e.lift !== lift || !EX[e.ex] || !EX[e.ex].tm || EX[e.ex].mult < 0.8) continue;
       if ((sess.skippedSlots || []).includes(e.slotKey)) continue;
-      const work = (e.sets || []).filter(x => x.kind === 'work' && x.done);
+      const work = (e.sets || []).filter(x => (x.kind === 'work' || x.kind === 'single') && x.done);
       work.forEach((x, i) => {
         const reps = x.actualReps != null ? x.actualReps : x.reps;
         let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
         const w = x.actualW != null ? x.actualW : x.w;
-        if (rpe == null || rpe < TUNE.calibrate.minRpe || rpe > 10 || !(reps > 0) || reps > MAX_EVIDENCE_REPS || !(w > 0)) return;
+        if (!Number.isFinite(rpe) || rpe < TUNE.calibrate.minRpe || rpe > 10 || !(reps > 0) || reps > MAX_EVIDENCE_REPS || !(w > 0)) return;
         let implied = e1rm(w, reps, rpe) / EX[e.ex].mult;
         if (ref > 0) implied = Math.min(ref * 1.3, Math.max(ref * 0.7, implied));
-        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (i === 0 ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
+        const single = x.kind === 'single';
+        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (i === 0 && !single ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
         num += wt * implied; den += wt; n++;
+        if (rpe >= 7.5 || (x.rpeTarget != null && x.rpeTarget >= 7)) confHigh += wt;
       });
     }
-    return den ? { est: num / den, conf: den, n } : null;
+    return den ? { est: num / den, conf: den, confHigh, n } : null;
   }
   // Fatigue allowance: the book expects RPE to climb through a block and the last accumulation
   // week to be a planned overreach, so an implied max late in a block is read a little higher.
@@ -467,19 +508,25 @@
       if (!(cur > 0)) continue;
       const r = sessionEstimate(sess, lift, cur);
       if (!r) continue;
-      const est = r.est * allow;
+      const K = TUNE.calibrate;
+      // The fatigue allowance applies to the rise test only: a late-block decline is still acted on
+      // from the raw estimate (fatigue management is the priority), while the smoothed estimate that
+      // can raise the max reads late-block sets a little higher.
+      const raw = r.est, est = r.est * allow;
       L.est = L.est == null ? est : 0.5 * L.est + 0.5 * est;
       L.est = Math.min(cur * 1.15, Math.max(cur * 0.7, L.est)); L.estDate = sess.date;
       let next = cur, how = '';
       // Only sets that count toward the estimate can count as a miss (OHP or RDL misses do not gate bench or deadlift).
-      const missed = (sess.exercises || []).some(e => e.lift === lift && EX[e.ex] && EX[e.ex].tm && EX[e.ex].mult >= 0.8 && (e.sets || []).some(x => x.kind === 'work' && x.done && x.actualReps != null && x.actualReps < x.reps));
-      const K = TUNE.calibrate;
+      const missed = (sess.exercises || []).some(e => e.lift === lift && EX[e.ex] && EX[e.ex].tm && EX[e.ex].mult >= 0.8 && (e.sets || []).some(x => (x.kind === 'work' || x.kind === 'single') && x.done && x.actualReps != null && x.actualReps < x.reps));
       const start = L.blockStartRM || cur;
       const floor = Math.min(cur, start * (missed ? K.blockFloorMissed : K.blockFloor)); // calibration alone cannot take more than 10% in a block, and the floor never lifts a max
-      if (est < cur * K.downAt && (r.conf >= 1 || L.est < cur * K.downAt)) {
-        next = Math.max(r.conf >= 1 ? est : L.est, cur * K.downMax, floor);
-        how = `today's sets came in at about ${Math.round(est)}`;
-      } else if (!crushed && !missed && ((L.est > cur * K.upAt && r.conf >= 1) || (est > cur * K.upFastAt && r.conf >= 1.5))) {
+      const weekKey = `${sess.mesoCount || 0}-${sess.week || 0}`;
+      const sureDown = r.confHigh >= K.downConfHigh || raw < cur * K.downSure || missed;
+      if (raw < cur * K.downAt && sureDown && (r.conf >= 1 || L.est < cur * K.downAt)) {
+        next = Math.max(r.conf >= 1 ? raw : L.est, cur * K.downMax, floor);
+        how = `today's sets came in at about ${Math.round(raw)}`;
+      } else if (!crushed && !missed && L.upKey !== weekKey && ((L.est > cur * K.upAt && r.conf >= 1) || (est > cur * K.upFastAt && r.conf >= 1.5 && r.confHigh > 0))) {
+        // At most one rise per lift per week, and the fast path needs a set near failure.
         next = Math.min(Math.max(L.est, est > cur * K.upFastAt ? est : 0), cur * K.upMax);
         how = `your sets estimate about ${Math.round(Math.max(L.est, est))}`;
       }
@@ -487,6 +534,7 @@
       if (next !== cur) {
         applyTM(state, lift, next); log.push(`${names[lift]} 1RM ${cur} -> ${next} (${how}).`);
         if (next < cur) { const P = state.program; P.calibDrops = (typeof P.calibDrops === 'object' && P.calibDrops) ? P.calibDrops : {}; P.calibDrops[lift] = (P.calibDrops[lift] || 0) + 1; }
+        else L.upKey = weekKey;
       }
     }
     return log;
@@ -515,7 +563,8 @@
         const work = e.sets.filter(x => x.kind === 'work' && x.done);
         if (!work.length) continue;
         const missed = work.filter(x => (x.actualReps != null ? x.actualReps : x.reps) < x.reps).length;
-        const deltas = work.filter(x => x.rpe != null && x.rpeTarget != null).map(x => x.rpe - x.rpeTarget);
+        // Bonus reps raise the RPE by design: compare after taking the extra reps back out.
+        const deltas = work.filter(x => Number.isFinite(x.rpe) && x.rpeTarget != null).map(x => x.rpe - Math.max(0, (x.actualReps != null ? x.actualReps : x.reps) - x.reps) - x.rpeTarget);
         const rpeDelta = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 0;
         const g = EX[e.ex].group === 'push' ? 'push' : EX[e.ex].group === 'legs' ? 'legs' : 'hinge';
         per[e.lift].push({ role: e.role, missed, rpeDelta, difficulty: s.post ? s.post.difficulty : 2, soreness: s.soreness ? s.soreness[g] : null, light: s.mode === 'light' });
@@ -545,10 +594,16 @@
       if (block.test) { log.push(`${names[lift]}: peaking, sets stay as written.`); continue; }
       if (score >= TUNE.review.add && !lastWeek) {
         // Count next week's sets honestly; each run of a block may climb one step above what the
-        // last run tolerated (the book's slow search for MRV, p.322), never past the phase cap.
+        // last run tolerated (the book's slow search for MRV, p.322), never past the phase cap, and
+        // never into a session longer than the time budget. When "on target" is the only positive,
+        // a set is added at most every second week (add volume slowly after a burnout, p.164).
         const ceil = (P.runCeil && P.runCeil[lift] != null) ? P.runCeil[lift] : 2;
-        const canAdd = setAdj[lift] < ceil && weeklySetsWith(state, lift, { setAdj: setAdj[lift] + 1, week: P.week + 1 }) <= cap;
-        if (canAdd) { setAdj[lift] += 1; log.push(`${names[lift]}: +1 set next week (${why.join(', ')}).`); }
+        const soft = why.includes('every set on target') && !why.includes('session rated easy') && !why.includes('felt easier than planned');
+        const addedLastWeek = P.lastAddWeek && P.lastAddWeek[lift] === P.week - 1;
+        const hypo = { setAdj: setAdj[lift] + 1, week: P.week + 1 };
+        const canAdd = setAdj[lift] < ceil && weeklySetsWith(state, lift, hypo) <= cap && weeklyMaxMinutesWith(state, lift, hypo) <= TUNE.sessionCapMin && !(soft && addedLastWeek);
+        if (canAdd) { setAdj[lift] += 1; P.lastAddWeek = Object.assign({}, P.lastAddWeek || {}, { [lift]: P.week }); log.push(`${names[lift]}: +1 set next week (${why.join(', ')}).`); }
+        else if (soft && addedLastWeek) log.push(`${names[lift]}: on target; a set was added last week, so holding to let it settle.`);
         else if (score >= 3 && !calib && loadAdj[lift] < 0.05) { loadAdj[lift] += 0.025; log.push(`${names[lift]}: at the set cap, so a bigger jump next week (+2.5%).`); }
         else log.push(`${names[lift]}: recovering well, holding at the weekly set cap.`);
         flags[lift] = 0;
@@ -578,7 +633,11 @@
     const lightsBlock = meso.filter(s => s.mode === 'light').length;
     const scored = weekSessions.filter(s => s && !s.skipped && s.readiness && s.readiness.score != null);
     const readinessAvg = scored.length ? scored.reduce((a, s) => a + s.readiness.score, 0) / scored.length : null;
-    if (P.week === 1 && readinessAvg != null) P.readinessBase = readinessAvg; // the lifter's own baseline for this block
+    // The lifter's own readiness baseline: a rolling mean of the last 12 check-ins outside week 1
+    // (week 1 follows a deload and would anchor the baseline to the rebound).
+    P.readinessHist = Array.isArray(P.readinessHist) ? P.readinessHist : [];
+    if (P.week >= 2) { for (const s of scored) P.readinessHist.push(s.readiness.score); P.readinessHist = P.readinessHist.slice(-12); }
+    P.readinessBase = P.readinessHist.length >= 4 ? P.readinessHist.reduce((a, b) => a + b, 0) / P.readinessHist.length : null;
     const drops = (typeof P.calibDrops === 'object' && P.calibDrops) ? P.calibDrops : {};
     const names2 = { squat: 'squat', bench: 'bench', deadlift: 'deadlift' };
     const droppedLift = Object.keys(drops).find(l => drops[l] >= D.calibDropsLift);
@@ -592,15 +651,26 @@
       if (lightsBlock >= D.lightsBlock) chronic.push(`${lightsBlock} light sessions this block`);
       if (droppedLift) chronic.push(`${names2[droppedLift]} max lowered twice this block`);
       else if (sunkLift) chronic.push(`${names2[sunkLift]} max down ${Math.round(D.calibDropPct * 100)}% this block`);
-      if (readinessAvg != null && scored.length >= 3 && P.readinessBase != null && readinessAvg < D.readinessLow && readinessAvg < P.readinessBase - D.readinessDrop) chronic.push(`readiness fell from ${Math.round(P.readinessBase)} to ${Math.round(readinessAvg)}`);
     }
+    // Readiness trend: below the lifter's own baseline by 15+ points and under 45 for two weeks
+    // running (or one week under 40). It suggests a deload but never moves the dial on its own.
+    let readinessOnly = false;
+    // Two ways in: a drop against the lifter's own baseline, or an absolute level under
+    // readinessAbs (the yellow zone) week after week, which a rolling baseline alone would hide.
+    const lowRel = readinessAvg != null && scored.length >= 3 && P.readinessBase != null && readinessAvg < D.readinessLow && readinessAvg < P.readinessBase - D.readinessDrop;
+    const lowAbs = readinessAvg != null && scored.length >= 3 && readinessAvg < D.readinessAbs;
+    if (lowRel || lowAbs) P.readinessLowWeeks = (P.readinessLowWeeks || 0) + 1; else P.readinessLowWeeks = 0;
+    if (P.week >= D.chronicFromWeek && ((P.readinessLowWeeks >= D.readinessWeeks) || (readinessAvg != null && scored.length >= 3 && readinessAvg < D.readinessVeryLow))) { readinessOnly = chronic.length === 0; chronic.push(P.readinessBase != null && lowRel ? `readiness ${Math.round(readinessAvg)} against your usual ${Math.round(P.readinessBase)}` : `readiness has sat at ${Math.round(readinessAvg)} for ${Math.max(1, P.readinessLowWeeks)} week${P.readinessLowWeeks > 1 ? 's' : ''}`); }
     const all = reasons.concat(chronic);
     const suggestDeload = !lastWeek && all.length > 0;
     // Chronic signals mean the volume itself is above what this lifter recovers from: turn the dial
-    // down for the blocks ahead, not just this week.
+    // down for the blocks ahead, not just this week. At most one step per block, and not for a
+    // single signal in the planned-overreach week. A readiness-only signal (two straight weeks in
+    // the yellow zone) moves it too: in simulation that is what keeps a fragile lifter's fatigue
+    // down, and it costs the robust lifter nothing because their readiness never sits that low.
     let volumeDial = P.volumeDial || 0, tmPct = state.settings.tmPct;
-    // The last accumulation week is a planned overreach; one chronic signal there is expected.
-    if (chronic.length && (!lastWeek || chronic.length >= 2)) {
+    if (chronic.length && (!readinessOnly || D.readinessMovesDial) && (P.dialMovesBlock || 0) < D.dialStepsPerBlock && (!lastWeek || chronic.length >= 2)) {
+      P.dialMovesBlock = (P.dialMovesBlock || 0) + 1;
       if (volumeDial > TUNE.dial.min) { volumeDial -= 1; log.push(`Volume dial ${volumeDial > 0 ? '+' : ''}${volumeDial}: one set fewer on every lift from here, until a clean block earns it back.`); }
       else if (tmPct > 0.85) { tmPct = Math.round((tmPct - 0.025) * 1000) / 1000; log.push(`Volume is already at its floor, so the Training Max comes down to ${Math.round(tmPct * 100)}% of 1RM: lighter sessions across the board.`); }
     }
@@ -610,6 +680,15 @@
   }
 
   function weeklySets(state, lift) { return weeklySetsWith(state, lift, null); }
+  // Longest session of the week (minutes) under a hypothetical adjustment: the time budget gate.
+  function weeklyMaxMinutesWith(state, lift, hypo) {
+    const P = JSON.parse(JSON.stringify(state.program));
+    if (hypo) { if (hypo.setAdj != null) P.setAdj = Object.assign({}, P.setAdj, { [lift]: hypo.setAdj }); if (hypo.week != null) P.week = Math.min(hypo.week, BLOCKS[P.blockIdx].weeks); }
+    const probe = Object.assign({}, state, { program: P });
+    let m = 0;
+    for (let d = 0; d < DAYS.length; d++) { P.dayIdx = d; m = Math.max(m, buildSession(probe, 'full').estMinutes); }
+    return m;
+  }
   // Count a week's working sets for a lift pattern, optionally under a hypothetical set adjustment
   // and week. Works on a copy of the program so nothing is left modified, whatever happens.
   function weeklySetsWith(state, lift, hypo) {
@@ -685,12 +764,9 @@
     const P = state.program;
     if (P.nextBlockOverride != null) { const i = P.nextBlockOverride; P.nextBlockOverride = null; if (BLOCKS[i]) { P.variantSet = 'A'; return i; } }
     let pos = (Number.isInteger(P.macroPos) ? P.macroPos : -1) + 1;
-    if (pos >= MACRO.length) {
-      pos = 0;
-      const rough = (P.macroRough || 0) >= 2;
-      P.special = { type: 'rest', weeksLeft: rough ? 2 : 1, resumeDayIdx: 0 }; P.macroRough = 0;
-    }
-    if (MACRO[pos].block === 'peak' && state.settings.includePeak === false) { pos = 0; P.special = { type: 'rest', weeksLeft: (P.macroRough || 0) >= 2 ? 2 : 1, resumeDayIdx: 0 }; P.macroRough = 0; }
+    const endMacro = () => { const rough = (P.macroRough || 0) >= 2 || (P.stallRest || 0) >= 2; P.special = { type: 'rest', weeksLeft: rough ? 2 : 1, resumeDayIdx: 0 }; P.macroRough = 0; P.stallRest = 0; };
+    if (pos >= MACRO.length) { pos = 0; endMacro(); }
+    if (MACRO[pos].block === 'peak' && state.settings.includePeak === false) { pos = 0; endMacro(); }
     P.macroPos = pos; P.variantSet = MACRO[pos].variant;
     return blockIndex(MACRO[pos].block);
   }
@@ -707,9 +783,10 @@
       if (P.special.weeksLeft <= 0) { const back = P.special.resumeDayIdx; P.special = null; res.restDone = true; if (back > 0 && back < DAYS.length) P.dayIdx = back; }
       return res;
     }
-    P.week += 1;
+    P.week += 1; P.layoffPct = 0;
     if (P.week > totalWeeks(block)) {
       res.mesoDone = true;
+      for (const k of ['squat', 'bench', 'deadlift']) if (((P.flags || {})[k] || 0) >= 2) state.lifts[k].macroWasFlagged = true;
       // The volume search, one step per run (p.322): a run that stayed clean and reached its
       // ceiling raises what the next run of this block starts from; a lift flagged twice lowers it.
       state.learned = state.learned || {};
@@ -722,28 +799,99 @@
       }
       if (!block.test && !rest) state.learned[block.id] = l; // the Peak block never learns or inherits set counts
       if (P.blockClean === false) P.macroRough = (P.macroRough || 0) + 1;
-      // A clean block that was already adding sets everywhere earns a lasting step up on the dial.
-      if (P.blockClean !== false && !rest && !block.test && ['squat', 'bench', 'deadlift'].every(k => l[k] >= 2) && (P.volumeDial || 0) < TUNE.dial.max) { P.volumeDial = (P.volumeDial || 0) + 1; for (const k of ['squat', 'bench', 'deadlift']) l[k] = Math.max(-1, l[k] - 1); state.learned[block.id] = l; res.dialUp = true; }
-      P.blockClean = true; P.readinessBase = null;
+      // The dial is two-way: any clean block recovers a step below zero; stepping above zero needs a
+      // clean block that was already adding sets on every lift.
+      const dial = P.volumeDial || 0;
+      if (P.blockClean !== false && !rest && !block.test && dial < TUNE.dial.max && (dial < 0 || ['squat', 'bench', 'deadlift'].every(k => l[k] >= 2))) {
+        P.volumeDial = dial + 1; res.dialUp = true;
+        if (dial >= 0) { for (const k of ['squat', 'bench', 'deadlift']) l[k] = Math.max(-1, l[k] - 1); state.learned[block.id] = l; }
+      }
+      // End of a macro: the silent stall check (same phase to same phase, one change per lift).
+      const endingMacro = (P.macroPos || 0) >= MACRO.length - 1 || (MACRO[(P.macroPos || 0) + 1] && MACRO[(P.macroPos || 0) + 1].block === 'peak' && state.settings.includePeak === false);
+      if (endingMacro && !rest) { res.stall = stallCheck(state); if (res.stall && res.stall.restWeeks) P.stallRest = res.stall.restWeeks; }
+      P.blockClean = true; P.dialMovesBlock = 0; P.lastAddWeek = {}; P.readinessLowWeeks = 0;
       P.week = 1; P.blockIdx = nextBlockIdx(state); P.mesoCount = (P.mesoCount || 0) + 1;
-      for (const k of ['squat', 'bench', 'deadlift']) state.lifts[k].blockStartRM = state.lifts[k].oneRM;
+      for (const k of ['squat', 'bench', 'deadlift']) { state.lifts[k].blockStartRM = state.lifts[k].oneRM; state.lifts[k].estAtBlockStart = state.lifts[k].est == null ? null : state.lifts[k].est; }
       const nb = BLOCKS[P.blockIdx], start = nb.test ? {} : ((state.learned[nb.id]) || {});
       P.setAdj = { squat: start.squat || 0, bench: start.bench || 0, deadlift: start.deadlift || 0, acc: 0 };
       P.runCeil = {}; for (const k of ['squat', 'bench', 'deadlift']) P.runCeil[k] = nb.test ? 0 : Math.min(3, (start[k] || 0) + 1);
-      P.loadAdj = { squat: 0, bench: 0, deadlift: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 }; P.calibDrops = {}; P.chronicSince = 0;
+      P.loadAdj = { squat: 0, bench: 0, deadlift: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 }; P.calibDrops = {}; P.chronicSince = 0; P.layoffPct = 0;
     }
     return res;
+  }
+  // Stall rule, run at the end of each macro: a lift whose smoothed max gained under 1% since the
+  // last macro end, without ever being flagged twice, needs more stimulus (its Build run starts one
+  // set higher); one that stalled while flagged needs less (a set fewer and a 2-week easy block).
+  function stallCheck(state) {
+    const out = { lines: [], restWeeks: 0 };
+    const names = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
+    state.learned = state.learned || {};
+    for (const k of ['squat', 'bench', 'deadlift']) {
+      const L = state.lifts[k], est = L.est != null ? L.est : L.oneRM;
+      const prev = L.macroEst;
+      L.macroEst = est; L.macroFlagged = false;
+      if (prev == null || !(prev > 0)) continue;
+      const gain = est / prev - 1;
+      if (gain >= 0.01) continue;
+      const flagged = !!L.macroWasFlagged;
+      if (flagged) {
+        for (const b of ['build', 'strength']) { state.learned[b] = state.learned[b] || {}; state.learned[b][k] = Math.max(-1, (state.learned[b][k] || 0) - 1); }
+        out.restWeeks = 2;
+        out.lines.push(`${names[k]} did not move this macro and was flagged along the way: one set fewer next macro and a two-week easy block first (recovery, not stimulus, is the limiter).`);
+      } else {
+        state.learned.build = state.learned.build || {};
+        state.learned.build[k] = Math.min(3, (state.learned.build[k] || 0) + 1);
+        out.lines.push(`${names[k]} did not move this macro (${Math.round(prev)} -> ${Math.round(est)}): its Build runs start one set higher next macro.`);
+      }
+    }
+    for (const k of ['squat', 'bench', 'deadlift']) state.lifts[k].macroWasFlagged = false;
+    return out.lines.length ? out : null;
+  }
+  // Layoff: coming back after a gap. 7-13 days: repeat the current week 5% lighter with earned sets
+  // cleared; 14-20: restart the block at week 1 with maxes 5% lower; 21+: restart the macro at Build
+  // week 1 with maxes 10% lower. Returns the log lines.
+  function layoffAdjust(state, days) {
+    const P = clampProgram(state), lines = [];
+    if (!(days >= 7)) return lines;
+    const cut = (f) => { for (const k of ['squat', 'bench', 'deadlift']) if (state.lifts[k].oneRM > 0) { const v = roundTo(state.lifts[k].oneRM * (1 - f), 2.5); applyTM(state, k, v); state.lifts[k].blockStartRM = v; state.lifts[k].est = null; } };
+    P.pendingDeload = false; P.lightRestOfWeek = false; P.special = null;
+    if (days < 14) {
+      for (const k of ['squat', 'bench', 'deadlift']) P.setAdj[k] = Math.min(0, P.setAdj[k] || 0);
+      P.setAdj.acc = Math.min(0, P.setAdj.acc || 0); P.dayIdx = 0; P.layoffPct = -0.05;
+      lines.push(`${days} days off: this week repeats 5% lighter with earned sets cleared.`);
+    } else if (days < 21) {
+      P.week = 1; P.dayIdx = 0; P.setAdj = { squat: 0, bench: 0, deadlift: 0, acc: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 }; P.layoffPct = 0; cut(0.05);
+      lines.push(`${days} days off: the block restarts at week 1 with maxes 5% lower.`);
+    } else {
+      P.week = 1; P.dayIdx = 0; P.macroPos = 0; P.variantSet = 'A'; P.blockIdx = blockIndex('build'); P.setAdj = { squat: 0, bench: 0, deadlift: 0, acc: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 }; P.layoffPct = 0; cut(0.10);
+      lines.push(`${days} days off: starting again from Build week 1 with maxes 10% lower (they recalibrate from your sets).`);
+    }
+    return lines;
   }
   // Named tuning presets for simulation sweeps (and nothing else).
   function applyTune(name) {
     const presets = {
-      strictDeload: { deload: { redsBlock: 3, lightsBlock: 3, calibDropsBlock: 2, readinessAvgWeek: 50 } },
-      laxDeload: { deload: { redsBlock: 99, lightsBlock: 99, calibDropsBlock: 99, readinessAvgWeek: 0 } },
-      gentleCorrection: { correction: { firstSetWeight: 0.35, floor: 0.88 } },
+      strictDeload: { deload: { redsBlock: 3, lightsBlock: 3, calibDropsLift: 2, readinessLow: 50 } },
+      laxDeload: { deload: { redsBlock: 99, lightsBlock: 99, calibDropsLift: 99, calibDropPct: 9, readinessLow: 0 } },
+      gentleCorrection: { correction: { firstSetWeight: 0.35, firstSetHardWeight: 0.35, floor: 0.88 } },
       fullCorrection: { correction: { firstSetWeight: 1.0 } },
+      noStop: { correction: { stopOver: 99 } },
       readyStrict: { readiness: { green: 65, yellow: 45 } },
-      readyLax: { readiness: { green: 55, yellow: 35 } },
+      readyLax: { readiness: { green: 55, yellow: 30 } },
+      noTrim: { trim: { load: 1 } },
+      dialFree: { deload: { dialStepsPerBlock: 9 } },
+      absOff: { deload: { readinessAbs: 0 } },
+      abs45: { deload: { readinessAbs: 45 } },
+      abs55: { deload: { readinessAbs: 55 } },
+      abs50dial: { deload: { readinessAbs: 50, readinessMovesDial: true } },
+      abs55dial: { deload: { readinessAbs: 55, readinessMovesDial: true } },
+      abs50w1: { deload: { readinessAbs: 50, readinessWeeks: 1 } },
+      readyMovesDial: { deload: { readinessMovesDial: true } },
+      readyOld: { deload: { readinessLow: 55, readinessWeeks: 1 } },
+      readyBoth: { deload: { readinessLow: 55, readinessWeeks: 1, readinessMovesDial: true, dialStepsPerBlock: 9 } },
+      dropEasy: { calibrate: { downConfHigh: 0 } },
       noOnTarget: { review: { onTarget: 0 } },
+      allowanceBoth: { calibrate: { allowance: 0 } },
     };
     const p = presets[name]; if (!p) return false;
     for (const k of Object.keys(p)) Object.assign(TUNE[k], p[k]);
@@ -758,8 +906,8 @@
       // Insert a deload week now; the block resumes at the same week afterwards (an unplanned
       // deload should cost a week, not the rest of the block). The chronic-fatigue window restarts.
       P.special = { type: 'deload', weeksLeft: 1, resumeDayIdx: P.dayIdx > 0 ? P.dayIdx : 0 }; P.dayIdx = 0;
-      P.chronicSince = Date.now(); P.calibDrops = {}; P.readinessBase = null;
-      for (const k of ['squat', 'bench', 'deadlift']) state.lifts[k].blockStartRM = state.lifts[k].oneRM;
+      P.chronicSince = Date.now(); P.calibDrops = {}; P.readinessLowWeeks = 0;
+      for (const k of ['squat', 'bench', 'deadlift']) { state.lifts[k].blockStartRM = state.lifts[k].oneRM; state.lifts[k].estAtBlockStart = state.lifts[k].est == null ? null : state.lifts[k].est; }
     }
     else startActiveRest(state, 1); // the Peak block has no deload week; an easy week stands in (never the test week)
     return true;
@@ -801,7 +949,7 @@
   function defaultState() {
     return {
       version: 1,
-      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', squatStyle: 'lowbar', cardioMin: 60, cardioWatts: 110, warmupSets: true, autoCalibrate: true, notify: false, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: true, name: '' },
+      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', squatStyle: 'lowbar', cardioMin: 40, cardioWatts: 110, warmupSets: true, autoCalibrate: true, notify: false, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: false, name: '' },
       lifts: { squat: { oneRM: 0, tm: 0 }, bench: { oneRM: 0, tm: 0 }, deadlift: { oneRM: 0, tm: 0 } },
       acc: {},
       program: { blockIdx: 0, week: 1, dayIdx: 0, mesoCount: 0, macroPos: 0, variantSet: 'A', setAdj: { squat: 0, bench: 0, deadlift: 0, acc: 0 }, runCeil: { squat: 1, bench: 1, deadlift: 1 }, loadAdj: { squat: 0, bench: 0, deadlift: 0 }, flags: { squat: 0, bench: 0, deadlift: 0 }, swaps: {}, special: null, nextBlockOverride: null, pendingDeload: false, lightRestOfWeek: false, startedAt: null, volumeDial: 0, blockClean: true, readinessBase: null, calibDrops: {}, chronicSince: 0, macroRough: 0 },
@@ -815,5 +963,5 @@
 
   root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, plateLoad, EX, SWAPS, BLOCKS, MACRO, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
     readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, liftCorrection, sessionEstimate, calibrate, fatigueAllowance, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
-    positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes, weeklySetsWith, clampProgram, MAX_EVIDENCE_REPS, TUNE, applyTune, CAPS_BY_BLOCK, capFor };
+    positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes, weeklySetsWith, weeklyMaxMinutesWith, clampProgram, MAX_EVIDENCE_REPS, TUNE, applyTune, CAPS_BY_BLOCK, capFor, layoffAdjust, stallCheck };
 })(typeof window !== 'undefined' ? window : globalThis);
