@@ -1804,7 +1804,7 @@ canvas { width: 100%; height: auto; display: block; }
         ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
         <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Keep a backup on, and never delete or re-add the icon without one.</div>
         ${renderCloud()}`}
-        <div class="btnrow"><button class="btn" data-action="share-backup">Save backup file</button><button class="btn" data-action="export">Copy backup</button></div>
+        <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
         <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
         ${ui.showImport ? `<label class="f">Paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn primary" data-action="import">Restore</button>` : ''}
