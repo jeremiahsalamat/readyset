@@ -102,16 +102,55 @@ protocol; this is the common strength-coaching practice, and it exists because a
 feels heavy after a lazy warm-up is the most common reason a good day gets logged as a bad one.
 Warm-up sets never count toward volume, reviews or max estimates. They can be hidden in Settings.
 
-### During a session: RPE adjusts the rest of the exercise
+### During a session: every logged set re-aims the rest of the exercise
 
-When you log a working set's RPE at 1.5 or more above its target, the remaining sets of that
-exercise drop 5% (1.0 above drops 2.5%), to a floor of −10% for the exercise. A set 1.5 or more
-below target raises the remaining sets 2.5%, once per exercise. A hard *first* work set earns only
-half the cut, because the first set often feels heaviest for reasons that have nothing to do with
-fitness (warm-up, nerves); sets 2 onward get the full rule. The note under the exercise says
-what happened and why. Deload, easy and test weeks are exempt because their loads are light on
-purpose. The weekly review then sees the loads you actually lifted and the RPEs you logged, so a
-day where the Training Max was slightly off is corrected on the spot without distorting next week.
+Each done working set with an RPE (a missed set counts as RPE 10 at the reps you got; bonus reps
+count as reps) implies a 1RM through the rep-max table. The app combines the evidence so far and
+sets the remaining sets to the weight that would land the planned reps at the target RPE, from the
+same table. So RPE 8 on a set planned at RPE 5 is three reps closer to failure than intended, and
+the next set drops by what the table says (about 9%), not by a fixed step.
+
+- The first working set counts half: it often feels heaviest for reasons that are not fitness.
+  One hard first set therefore moves the next set about half way; a second hard set confirms it
+  and the full correction lands.
+- Sets logged below RPE 6 are too far from failure to say much and count half.
+- It re-runs from scratch on any edit: tick, untick, an RPE changed later, a rep count or weight
+  corrected. Picking an RPE on a set you have not ticked yet ticks it.
+- A weight you type into an undone set yourself is left alone.
+- Limits per exercise: never below 85% or above 105% of the planned weight. At the floor the
+  exercise offers to cut its remaining sets. Living to lift another day is the point.
+- Deload, easy and test weeks are exempt; their loads are light on purpose.
+- Changing a max in Settings during a session rebases every undone set on the new Training Max.
+
+### After a session: the maxes calibrate themselves
+
+The number you typed at setup is only a starting point. After each training session the app
+reads every working set with an RPE on a competition lift (or a close barbell variation such as
+close-grip bench or paused squat), turns each into an implied 1RM, and takes a confidence-weighted
+average: variations half weight, first sets half weight, RPE 6-6.5 half weight.
+
+- If today's estimate is more than 3% under the current 1RM, the 1RM drops to it at once, at most
+  5% per session. Fatigue management is the priority, so bad news is acted on immediately.
+- The 1RM rises only on a smoothed estimate (half today, half history), by at most 2.5% per
+  session, never after a session rated "crushed me", and never on one set's evidence.
+- The Training Max follows, so the next session is already right-sized. The weekly review then
+  only manages volume (sets); load is handled here.
+- Deload, easy and test weeks don't calibrate. The test week sets the 1RM directly.
+
+The History tab shows the weekly average of those implied maxes per lift against the current
+1RM, which is the honest trend: it moves with how you are lifting and feeling, not with what you
+entered at setup. Calibration can be switched off in Settings; a max you set by hand is respected
+until your sets say otherwise.
+
+### Rest timer, notifications and closing the app
+
+The rest timer is stored, so closing the app mid-rest and reopening shows the right remaining
+time (or how long ago it ended). Every set entry saves as you type. A session in progress reopens
+exactly where it was. A notification when a rest ends can be switched on in Settings; on an
+iPhone it works only from the home-screen app and only while the app is still running, because
+iOS suspends web apps in the background and does not let them run timers or post notifications
+from there. Lock-screen live timers are not available to web apps at all. The screen is kept
+awake during a session, so leaving the app open is the reliable option.
 
 ### After a session: one tap
 
@@ -142,16 +181,14 @@ First half of the week: half the sets at 90% of the overload load (Build) or 70%
 Second half: half the sets at half the load. That is the book's deload table (pp.152-153). The book
 is blunt that "if your deload is tough, you're not dropping the fatigue you should be" (p.174).
 
-### Training Max updates
+### Training Max
 
 Every barbell load is a percentage of a Training Max, 90% of your 1RM by default, so a session is
-always doable on a mediocre day. At the end of each block:
-
-- If your logged sets (weight × reps at RPE 7+) estimate a higher 1RM, the 1RM rises to that, capped
-  at +5% per block (+12% after a test week).
-- A clean block with no flags and no missed reps earns +5 lb (squat, deadlift) or +2.5 lb (bench).
-- A lift flagged twice in a block drops 2.5%.
-- The Peak block's test single sets the 1RM directly.
+always doable on a mediocre day. With calibration on (the default) the 1RM moves after every
+session as described above, and the end of a block changes nothing further. With calibration off,
+the old block-end rules apply: a higher estimate from logged sets raises the 1RM up to 5% per block,
+a clean block earns +5 lb (squat, deadlift) or +2.5 lb (bench), a lift flagged twice drops 2.5%.
+Either way the Peak block's test single sets the 1RM directly.
 
 ### Accessories
 

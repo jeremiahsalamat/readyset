@@ -335,6 +335,88 @@
     return steps;
   }
 
+  // ---------- In-session correction (what a coach does between sets) ----------
+  // evidence: the done working sets so far [{w, reps, rpe, first}]. A missed set is RPE 10 at the
+  // reps achieved; bonus reps count as reps. Each set implies a 1RM via the rep-max table; the
+  // weight that would land the planned reps at the target RPE comes back from the same table.
+  // Confidence: the first set alone counts half (it often feels heaviest for reasons that are not
+  // fitness); sets below RPE 6 are too far from failure to say much and count half too.
+  function liftCorrection(evidence, plannedW, reps, targetRPE, caps) {
+    caps = caps || { down: 0.85, up: 1.05 };
+    const rows = (evidence || []).filter(x => x.w > 0 && x.reps > 0 && x.rpe != null && x.rpe >= 6);
+    if (!rows.length) return null;
+    let num = 0, den = 0;
+    for (const x of rows) { const wt = (x.first ? 0.5 : 1) * (x.rpe < 7 ? 0.5 : 1); num += wt * e1rm(x.w, x.reps, x.rpe); den += wt; }
+    const est = num / den;
+    const ideal = est * pctForRTF(reps + Math.max(0, 10 - targetRPE));
+    const conf = Math.min(1, den);
+    let w = plannedW + (ideal - plannedW) * conf;
+    const floor = plannedW * caps.down, ceil = plannedW * caps.up;
+    const hitFloor = w < floor - 1e-9;
+    w = Math.max(floor, Math.min(ceil, w));
+    return { w, est, ideal, conf, hitFloor, delta: w / plannedW - 1 };
+  }
+
+  // ---------- Between sessions: calibrate the 1RM from what was actually lifted ----------
+  // Every working set with an RPE (or a miss) on a competition lift or a close barbell variant
+  // implies a 1RM. The session estimate is their confidence-weighted mean (variants half weight,
+  // first sets half weight, RPE 6-6.5 half weight). Fatigue management is the priority, so the
+  // 1RM follows a low session at once (up to 5% per session) but rises only on the smoothed
+  // estimate, by at most 2.5% per session, and never after a session that crushed you.
+  function sessionEstimate(sess, lift) {
+    let num = 0, den = 0, n = 0;
+    for (const e of sess.exercises || []) {
+      if (e.lift !== lift || !EX[e.ex] || !EX[e.ex].tm || EX[e.ex].mult < 0.8) continue;
+      if ((sess.skippedSlots || []).includes(e.slotKey)) continue;
+      const work = e.sets.filter(x => x.kind === 'work' && x.done);
+      work.forEach((x, i) => {
+        const reps = x.actualReps != null ? x.actualReps : x.reps;
+        let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
+        const w = x.actualW != null ? x.actualW : x.w;
+        if (rpe == null || rpe < 6 || !reps || !w) return;
+        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (i === 0 ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
+        num += wt * e1rm(w, reps, rpe) / EX[e.ex].mult; den += wt; n++;
+      });
+    }
+    return den ? { est: num / den, conf: den, n } : null;
+  }
+  // Fatigue allowance: the book expects RPE to climb through a block and the last accumulation
+  // week to be a planned overreach, so an implied max late in a block is read a little higher.
+  function fatigueAllowance(sess) {
+    const block = BLOCKS[sess.blockIdx != null ? sess.blockIdx : 0];
+    if (!block || !sess.week || sess.isRest) return 0;
+    const wk = Math.min(sess.week, block.weeks);
+    return block.weeks > 1 ? 0.03 * (wk - 1) / (block.weeks - 1) : 0;
+  }
+  function calibrate(state, sess) {
+    const log = [];
+    if (state.settings.autoCalibrate === false || sess.isTest || sess.isDeload || sess.isRest || sess.skipped) return log;
+    const crushed = sess.post && sess.post.difficulty === 4;
+    const names = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
+    const allow = 1 + fatigueAllowance(sess);
+    for (const lift of ['squat', 'bench', 'deadlift']) {
+      const r = sessionEstimate(sess, lift);
+      if (!r) continue;
+      const L = state.lifts[lift];
+      const est = r.est * allow;
+      L.est = L.est == null ? est : 0.5 * L.est + 0.5 * est; L.estDate = sess.date;
+      const cur = L.oneRM; let next = cur, how = '';
+      const missed = (sess.exercises || []).some(e => e.lift === lift && e.sets.some(x => x.kind === 'work' && x.done && x.actualReps != null && x.actualReps < x.reps));
+      const start = L.blockStartRM || cur;
+      const floor = start * (missed ? 0.85 : 0.90); // calibration alone cannot take more than 10% in a block
+      if (est < cur * 0.97 && (r.conf >= 1 || L.est < cur * 0.97)) {
+        next = Math.max(r.conf >= 1 ? est : L.est, cur * 0.95, floor);
+        how = `today's sets came in at about ${Math.round(est)}`;
+      } else if (!crushed && !missed && ((L.est > cur * 1.02 && r.conf >= 1) || (est > cur * 1.04 && r.conf >= 1.5))) {
+        next = Math.min(Math.max(L.est, est > cur * 1.04 ? est : 0), cur * 1.025);
+        how = `your sets estimate about ${Math.round(Math.max(L.est, est))}`;
+      }
+      next = roundTo(next, 2.5);
+      if (next !== cur) { applyTM(state, lift, next); log.push(`${names[lift]} 1RM ${cur} -> ${next} (${how}).`); }
+    }
+    return log;
+  }
+
   // ---------- Weekly review: this week's sessions -> next week's set / load adjustments ----------
   // Book rules: easy week -> add a set or two / take a bigger jump (pp.159-160); can't match last
   // week's reps -> MRV passed (pp.126, 338-339); too much fatigue -> light sessions, not unplanned
@@ -364,6 +446,7 @@
       }
     }
     const names = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
+    const calib = state.settings.autoCalibrate !== false; // loads are then handled by per-session calibration
     for (const lift of ['squat', 'bench', 'deadlift']) {
       const rows = per[lift].filter(r => !r.light);
       if (!rows.length) { log.push(`${names[lift]}: no overload session logged this week, holding.`); continue; }
@@ -383,15 +466,15 @@
       if (score >= 2 && !lastWeek) {
         const canAdd = setAdj[lift] < 2 && weeklySets(state, lift) + 1 <= cap;
         if (canAdd) { setAdj[lift] += 1; log.push(`${names[lift]}: +1 set next week (${why.join(', ')}).`); }
-        else if (score >= 3 && loadAdj[lift] < 0.05) { loadAdj[lift] += 0.025; log.push(`${names[lift]}: at the set cap, so a bigger jump next week (+2.5%).`); }
+        else if (score >= 3 && !calib && loadAdj[lift] < 0.05) { loadAdj[lift] += 0.025; log.push(`${names[lift]}: at the set cap, so a bigger jump next week (+2.5%).`); }
         else log.push(`${names[lift]}: recovering well, holding at the weekly set cap.`);
         flags[lift] = 0;
       } else if (score <= -4) {
-        setAdj[lift] = Math.max(-2, setAdj[lift] - 1); loadAdj[lift] = Math.max(-0.10, loadAdj[lift] - 0.05); flags[lift] += 1;
-        log.push(`${names[lift]}: -1 set and -5% next week (${why.join(', ')}).`);
+        setAdj[lift] = Math.max(-2, setAdj[lift] - 1); if (!calib) loadAdj[lift] = Math.max(-0.10, loadAdj[lift] - 0.05); flags[lift] += 1;
+        log.push(`${names[lift]}: -1 set${calib ? '' : ' and -5%'} next week (${why.join(', ')}).`);
       } else if (score <= -2) {
-        setAdj[lift] = Math.max(-2, setAdj[lift] - 1); loadAdj[lift] = Math.max(-0.10, loadAdj[lift] - 0.025); flags[lift] += 1;
-        log.push(`${names[lift]}: -1 set and -2.5% next week (${why.join(', ')}).`);
+        setAdj[lift] = Math.max(-2, setAdj[lift] - 1); if (!calib) loadAdj[lift] = Math.max(-0.10, loadAdj[lift] - 0.025); flags[lift] += 1;
+        log.push(`${names[lift]}: -1 set${calib ? '' : ' and -2.5%'} next week (${why.join(', ')}).`);
       } else {
         if (score >= 1) flags[lift] = Math.max(0, flags[lift] - 1);
         log.push(`${names[lift]}: holding (${why.length ? why.join(', ') : 'on target'}).`);
@@ -425,6 +508,10 @@
   function mesoReview(state, mesoSessions, isTestBlock) {
     const log = [], upd = {};
     const names = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
+    if (state.settings.autoCalibrate !== false && !isTestBlock) {
+      log.push(`Maxes are calibrated from your sets every session, so nothing to reset: squat ${state.lifts.squat.oneRM}, bench ${state.lifts.bench.oneRM}, deadlift ${state.lifts.deadlift.oneRM}.`);
+      return { oneRM: upd, log };
+    }
     for (const lift of ['squat', 'bench', 'deadlift']) {
       let best = 0, clean = true, anyData = false;
       for (const s of mesoSessions) {
@@ -460,6 +547,7 @@
   function applyTM(state, lift, oneRM) {
     state.lifts[lift].oneRM = oneRM;
     state.lifts[lift].tm = roundTo(oneRM * state.settings.tmPct, state.settings.increment);
+    if (state.lifts[lift].blockStartRM == null) state.lifts[lift].blockStartRM = oneRM;
   }
 
   // ---------- Program position ----------
@@ -491,6 +579,7 @@
       const l = {}; for (const k of ['squat', 'bench', 'deadlift']) l[k] = Math.max(-1, Math.min(2, (P.setAdj[k] || 0) - ((P.flags[k] || 0) >= 2 ? 1 : 0)));
       state.learned[block.id] = l;
       P.week = 1; P.blockIdx = nextBlockIdx(state); P.mesoCount = (P.mesoCount || 0) + 1;
+      for (const k of ['squat', 'bench', 'deadlift']) state.lifts[k].blockStartRM = state.lifts[k].oneRM;
       const nb = BLOCKS[P.blockIdx], start = (state.learned[nb.id]) || {};
       P.setAdj = { squat: start.squat || 0, bench: start.bench || 0, deadlift: start.deadlift || 0, acc: 0 };
       P.loadAdj = { squat: 0, bench: 0, deadlift: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 };
@@ -534,7 +623,7 @@
   function defaultState() {
     return {
       version: 1,
-      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', squatStyle: 'lowbar', cardioMin: 60, cardioWatts: 110, warmupSets: true, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: true, name: '' },
+      settings: { units: 'lb', barWeight: 45, plates: [45, 35, 25, 10, 5, 2.5], increment: 5, dbIncrement: 5, tmPct: 0.9, deadliftStyle: 'conventional', squatStyle: 'lowbar', cardioMin: 60, cardioWatts: 110, warmupSets: true, autoCalibrate: true, notify: false, days: ['Mon', 'Tue', 'Thu', 'Fri'], restPrimary: 180, restSecondary: 120, restAccessory: 90, age: null, includePeak: true, name: '' },
       lifts: { squat: { oneRM: 0, tm: 0 }, bench: { oneRM: 0, tm: 0 }, deadlift: { oneRM: 0, tm: 0 } },
       acc: {},
       program: { blockIdx: 0, week: 1, dayIdx: 0, mesoCount: 0, setAdj: { squat: 0, bench: 0, deadlift: 0, acc: 0 }, loadAdj: { squat: 0, bench: 0, deadlift: 0 }, flags: { squat: 0, bench: 0, deadlift: 0 }, swaps: {}, special: null, nextBlockOverride: null, pendingDeload: false, lightRestOfWeek: false, startedAt: null },
@@ -547,6 +636,6 @@
   }
 
   root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, plateLoad, EX, SWAPS, BLOCKS, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
-    readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
+    readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, liftCorrection, sessionEstimate, calibrate, fatigueAllowance, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
     positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes };
 })(typeof window !== 'undefined' ? window : globalThis);
