@@ -144,14 +144,24 @@
     p.swaps = {};
     for (const k of Object.keys(SW)) if (SLOT_KEYS.includes(k) && E.SWAPS[k].includes(SW[k])) p.swaps[k] = SW[k];
     const SP = get(P, 'special');
-    p.special = isObj(SP) && get(SP, 'type') === 'rest' ? { type: 'rest', weeksLeft: int(get(SP, 'weeksLeft'), 1, 4, 1) } : null;
+    p.special = isObj(SP) && (get(SP, 'type') === 'rest' || get(SP, 'type') === 'deload') ? { type: get(SP, 'type'), weeksLeft: int(get(SP, 'weeksLeft'), 1, 4, 1), resumeDayIdx: int(get(SP, 'resumeDayIdx'), 0, 3, 0) } : null;
     const nbo = get(P, 'nextBlockOverride'); p.nextBlockOverride = nbo == null ? null : int(nbo, 0, E.BLOCKS.length - 1, null);
     p.pendingDeload = bool(get(P, 'pendingDeload')); p.lightRestOfWeek = bool(get(P, 'lightRestOfWeek'));
+    p.volumeDial = int(get(P, 'volumeDial'), -2, 2, 0); p.blockClean = get(P, 'blockClean') !== false; p.readinessBase = numOrNull(get(P, 'readinessBase'), 0, 100);
+    const CD = isObj(get(P, 'calibDrops')) ? get(P, 'calibDrops') : {};
+    p.calibDrops = {}; for (const k of LIFTS) { const n = int(get(CD, k), 0, 50, 0); if (n) p.calibDrops[k] = n; }
+    p.chronicSince = num(get(P, 'chronicSince'), 0, 4e12, 0);
+    p.macroPos = int(get(P, 'macroPos'), 0, E.MACRO.length - 1, 0);
+    if (E.MACRO[p.macroPos].block !== E.BLOCKS[p.blockIdx].id) { const i = E.MACRO.findIndex(m => m.block === E.BLOCKS[p.blockIdx].id); p.macroPos = i >= 0 ? i : 0; }
+    p.variantSet = oneOf(get(P, 'variantSet'), ['A', 'B'], 'A');
+    const RC = isObj(get(P, 'runCeil')) ? get(P, 'runCeil') : {};
+    p.runCeil = { squat: int(get(RC, 'squat'), 0, 3, 1), bench: int(get(RC, 'bench'), 0, 3, 1), deadlift: int(get(RC, 'deadlift'), 0, 3, 1) };
+    p.macroRough = int(get(P, 'macroRough'), 0, 10, 0);
     p.startedAt = dateStr(get(P, 'startedAt'), null);
 
     const LE = isObj(get(raw, 'learned')) ? get(raw, 'learned') : {};
     d.learned = {};
-    for (const b of E.BLOCKS) if (isObj(get(LE, b.id))) { const o = get(LE, b.id); d.learned[b.id] = { squat: int(get(o, 'squat'), -1, 2, 0), bench: int(get(o, 'bench'), -1, 2, 0), deadlift: int(get(o, 'deadlift'), -1, 2, 0) }; }
+    for (const b of E.BLOCKS) if (isObj(get(LE, b.id))) { const o = get(LE, b.id); d.learned[b.id] = { squat: int(get(o, 'squat'), -1, 3, 0), bench: int(get(o, 'bench'), -1, 3, 0), deadlift: int(get(o, 'deadlift'), -1, 3, 0) }; }
 
     const sessions = Array.isArray(get(raw, 'sessions')) ? get(raw, 'sessions') : [];
     const seen = new Set();

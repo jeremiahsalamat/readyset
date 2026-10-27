@@ -397,7 +397,7 @@
     let html = '';
     if (!Store.db && sessionsSinceBackup() >= 1 && !(state.settings.gistToken && !state.cloudError)) html += `<div class="callout bad row between"><span>${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} not backed up.${state.settings.gistToken ? ' Cloud backup failed.' : ''}</span><button class="btn sm" data-action="share-backup">Save backup</button></div>`;
     if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
-    if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Two signals of stacking fatigue showed up this week. The book's rule is to take the deload now rather than grind into it. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
+    if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up this week (the review on the Program tab says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
     if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
     const nameHi = state.settings.name ? `, ${esc(state.settings.name)}` : '';
     html += `<div class="card accent">
@@ -860,8 +860,10 @@
       P.lightRestOfWeek = false;
       const willEndMeso = !pos.rest && P.week >= E.totalWeeks(pos.block);
       if (!pos.rest && !pos.isDeload && !pos.isTest) {
-        const r = E.weeklyReview(state, sessionsOfWeek());
+        const r = E.weeklyReview(state, sessionsOfWeek(), sessionsOfMeso());
         P.setAdj = r.setAdj; P.loadAdj = r.loadAdj; P.flags = r.flags;
+        if (r.volumeDial != null) P.volumeDial = r.volumeDial;
+        if (r.tmPct != null && r.tmPct !== state.settings.tmPct) { state.settings.tmPct = r.tmPct; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); }
         r.log.forEach(l => { addLog(l); lines.push(l); });
         if (r.suggestDeload) P.pendingDeload = true;
         title = `Week ${P.week} review`;
@@ -875,31 +877,44 @@
       }
     }
     const res = E.advanceDay(state);
-    if (res.restDone) { lines.push('Easy week done. The Build block starts next session.'); addLog('Easy week complete.'); title = title || 'Easy week complete'; }
-    if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(`Next up: ${nb.name} block (${nb.focus.toLowerCase()}).`); }
+    if (res.restDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(`${pos.inserted ? 'Deload' : 'Easy'} week done. ${nb.name} picks up next session.`); addLog(`${pos.inserted ? 'Deload' : 'Easy'} week complete.`); title = title || 'Light week complete'; }
+    if (res.dialUp) { lines.push(`Volume dial up to +${P.volumeDial}: a clean block while adding sets everywhere earns one more set per lift from here.`); addLog(`Volume dial up to +${P.volumeDial}.`); }
+    if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(P.special ? `Macro complete: ${P.special.weeksLeft}-week easy ${P.special.weeksLeft > 1 ? 'break' : 'week'} first, then ${nb.name} starts again.` : `Next up: ${nb.name} block (${nb.focus.toLowerCase()}), variation set ${P.variantSet || 'A'}.`); }
     if (lines.length) state.lastReport = { title: title || 'Update', lines };
   }
 
   // ---------- Program ----------
   function renderProgram() {
     const P = state.program, pos = E.positionLabel(state);
-    const seq = E.BLOCKS.filter(b => !(b.test && state.settings.includePeak === false));
-    let cells = '', wkIdx = 0;
-    for (const b of seq) for (let w = 1; w <= E.totalWeeks(b); w++) { const isD = w > b.weeks; const now = !pos.isRest && b.id === pos.block.id && w === P.week; cells += `<div class="w ${isD ? 'deload' : b.id} ${now ? 'now' : ''}" title="${b.name} week ${w}">${isD ? (b.test ? 'T' : 'D') : b.id[0].toUpperCase() + w}</div>`; wkIdx++; }
+    const macro = E.MACRO.filter(m => !(m.block === 'peak' && state.settings.includePeak === false));
+    let cells = '';
+    macro.forEach((m, mi) => {
+      const b = E.BLOCKS.find(x => x.id === m.block);
+      for (let w = 1; w <= E.totalWeeks(b); w++) {
+        const isD = w > b.weeks;
+        const now = !pos.isRest && mi === (P.macroPos || 0) && w === P.week;
+        cells += `<div class="w ${isD ? 'deload' : b.id} ${now ? 'now' : ''}" title="${b.name} ${m.variant} week ${w}">${isD ? (b.test ? 'T' : 'D') : b.id[0].toUpperCase() + w}</div>`;
+      }
+    });
+    cells += `<div class="w deload ${pos.isRest ? 'now' : ''}" title="Easy week">E</div>`;
+    const macroWeeks = macro.reduce((n, m) => n + E.totalWeeks(E.BLOCKS.find(x => x.id === m.block)), 0) + 1;
     const week = [0, 1, 2, 3].map(d => { const saved = P.dayIdx; P.dayIdx = d; const s = E.buildSession(state, 'full'); P.dayIdx = saved; return s; });
-    const sets = LIFTS.map(l => { const n = E.weeklySets(state, l); return `<div class="stack"><div class="row between small"><span>${LIFTNAME[l]} pattern</span><span class="num"><b>${n}</b> / ${E.CAPS[l]} sets</span></div><div class="bar"><i style="width:${Math.min(100, n / E.CAPS[l] * 100)}%"></i></div></div>`; }).join('');
+    const sets = LIFTS.map(l => { const n = E.weeklySets(state, l), cap = E.capFor(state, l); return `<div class="stack"><div class="row between small"><span>${LIFTNAME[l]} pattern</span><span class="num"><b>${n}</b> / ${cap} sets</span></div><div class="bar"><i style="width:${Math.min(100, n / cap * 100)}%"></i></div></div>`; }).join('');
     const adj = LIFTS.map(l => `<tr><td>${LIFTNAME[l]}</td><td class="num">${state.lifts[l].oneRM}</td><td class="num">${state.lifts[l].tm}</td><td class="num">${P.setAdj[l] > 0 ? '+' : ''}${P.setAdj[l]}</td><td class="num">${P.loadAdj[l] ? (P.loadAdj[l] > 0 ? '+' : '') + Math.round(P.loadAdj[l] * 1000) / 10 + '%' : '—'}</td><td>${P.flags[l] ? '⚑'.repeat(P.flags[l]) : ''}</td></tr>`).join('');
     const slotKeys = Object.keys(E.SWAPS).filter(k => E.SWAPS[k].length > 1);
     const blk = pos.isRest ? null : pos.block;
     const blockText = {
-      build: 'Sets of 7-8 at 70-77% of your 1RM. Each week adds about 3% and, if you are recovering, a set. Belt squat, close-grip bench and RDLs rotate in as the variations.',
-      strength: 'Sets of 3-5 from 76% up to about 86% of 1RM over three weeks, same set count, then a deload. Paused squat, long-pause bench and paused deadlift keep the technique honest.',
-      peak: 'Two weeks of heavy triples and doubles at 85-90%, low volume, then a test week: work up to a single at RPE 9 on each lift. New maxes come from that.',
+      build: 'Sets of 7-8 at 70-77% of your 1RM. Each week adds about 3% and, when you are recovering and hitting the numbers, a set. Two runs per macro with different variations (A: belt squat, close-grip, RDL; B: the other bar position, Larsen press, deficit deadlift).',
+      strength: 'Sets of 3-5 from 76% up to about 86% of 1RM over three weeks, then a deload. Two runs per macro (A: paused squat, long-pause bench, paused deadlift; B: the other bar position, Spoto press, block pull).',
+      peak: 'Two weeks of heavy triples and doubles at 85-90% at the volume written, then a test week: work up to a single at RPE 9 on each lift. New maxes come from that.',
     };
+    const dial = P.volumeDial || 0;
     return `
-      <div class="card"><h3>12-week cycle</h3><div class="timeline">${cells}</div>
-        <div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--good)"></span> Build 4+1</span><span><span class="dot" style="background:var(--accent)"></span> Strength 3+1</span>${state.settings.includePeak !== false ? '<span><span class="dot" style="background:var(--bad)"></span> Peak 2+test</span>' : ''}<span>D = deload</span></div>
-        ${blk ? `<p><b>${esc(blk.name)}:</b> ${blockText[blk.id]}</p>` : '<p><b>Easy week:</b> half the sets at half the loads on variations, to shake off fatigue before Build starts.</p>'}
+      <div class="card"><h3>${macroWeeks}-week macro</h3><div class="timeline" style="grid-template-columns:repeat(${Math.min(12, macroWeeks)},1fr)">${cells}</div>
+        <div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--good)"></span> Build ×2</span><span><span class="dot" style="background:var(--accent)"></span> Strength ×2</span>${state.settings.includePeak !== false ? '<span><span class="dot" style="background:var(--bad)"></span> Peak + test</span>' : ''}<span>D deload · E easy week</span></div>
+        ${blk ? `<p><b>${esc(blk.name)} ${esc(P.variantSet || 'A')}:</b> ${blockText[blk.id]}</p>` : `<p><b>${pos.inserted ? 'Deload week' : 'Easy week'}:</b> ${pos.inserted ? 'half the sets at reduced loads; the block resumes afterwards.' : 'half the sets at half the loads on variations, to clear what deloads do not.'}</p>`}
+        <div class="row between small"><span>Volume dial <b class="num">${dial > 0 ? '+' : ''}${dial}</b> <span class="muted">(lasting set offset on every lift; down on chronic fatigue, up after a clean block that was adding sets)</span></span></div>
+        <label class="f">Set the dial by hand<select id="dial" data-action="dial"><option value="-2" ${dial === -2 ? 'selected' : ''}>−2 (two sets fewer)</option><option value="-1" ${dial === -1 ? 'selected' : ''}>−1</option><option value="0" ${dial === 0 ? 'selected' : ''}>0 (as written)</option><option value="1" ${dial === 1 ? 'selected' : ''}>+1</option><option value="2" ${dial === 2 ? 'selected' : ''}>+2 (two sets more)</option></select></label>
       </div>
       <div class="card"><h3>This week's plan</h3>
         ${week.map(s => `<details ${s.dayIdx === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 0"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
@@ -910,7 +925,7 @@
         <div class="tablewrap"><table><tr><th>Lift</th><th class="num">1RM</th><th class="num">TM</th><th class="num">Sets</th><th class="num">Load</th><th>Flags</th></tr>${adj}</table></div>
         <p class="small muted">Sets and load are the adaptive offsets in effect this week. A flag means a week where you missed reps, got crushed or stayed sore; two flags on two lifts suggests a deload.</p>
         <div class="btnrow">${pos.isRest || pos.isDeload || pos.isTest ? '' : '<button class="btn" data-action="deload-now-confirm">Deload now</button>'}<button class="btn" data-action="rest-now-confirm">Easy week</button></div>
-        ${ui.confirm === 'deload' ? `<div class="callout warn">Jump to this block's deload week now? Next session becomes deload day A.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="deload-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
+        ${ui.confirm === 'deload' ? `<div class="callout warn">Take a deload week now? The block picks up where it left off afterwards.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="deload-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
         ${ui.confirm === 'rest' ? `<div class="callout warn">Insert one easy week (half sets, half loads, variations) before continuing? Use it once or twice a year or when life gets heavy.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="rest-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
         <label class="f">After this block, run<select id="next-block" data-action="next-block"><option value="">the normal sequence</option>${E.BLOCKS.map((b, i) => `<option value="${i}" ${P.nextBlockOverride === i ? 'selected' : ''}>${b.name}</option>`).join('')}</select></label>
       </div>
@@ -1170,6 +1185,7 @@
     if (t.dataset.action === 'swap') { swapExercise(Number(t.dataset.ei), t.value); return; }
     if (t.dataset.action === 'notes') { state.current.notes = t.value; save(); return; }
     if (t.dataset.action === 'next-block') { state.program.nextBlockOverride = t.value === '' ? null : Number(t.value); save(); return; }
+    if (t.dataset.action === 'dial') { const v = Math.max(-2, Math.min(2, Math.round(Number(t.value)) || 0)); if (v !== (state.program.volumeDial || 0)) { state.program.volumeDial = v; addLog(`Volume dial set to ${v > 0 ? '+' : ''}${v} by hand.`); save(); render(); } return; }
     if (t.dataset.action === 'pin-swap') { if (t.value === '') delete state.program.swaps[t.dataset.k]; else state.program.swaps[t.dataset.k] = t.value; save(); render(); return; }
   });
   let typeTimer = null;
