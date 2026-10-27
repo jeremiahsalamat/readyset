@@ -12,10 +12,10 @@ DIST = os.path.join(ROOT, 'docs')
 os.makedirs(DIST, exist_ok=True)
 
 def read(name):
-    with open(os.path.join(SRC, name), encoding='utf-8') as f:
-        return f.read()
+    with open(os.path.join(SRC, name), encoding='utf-8', newline='') as f:
+        return f.read().replace('\r\n', '\n')
 
-css, body, engine, app = read('styles.css'), read('body.html'), read('engine.js'), read('app.js')
+css, body, engine, sanitize, app = read('styles.css'), read('body.html'), read('engine.js'), read('sanitize.js'), read('app.js')
 FONTS = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">'
 
 head_common = (
@@ -23,7 +23,8 @@ head_common = (
     '<meta name="claude:viewport-fit-sides" content="cover">\n'
     + FONTS + '\n<style>\n' + css + '\n</style>\n'
 )
-scripts = '<script>\n' + engine + '\n</script>\n<script>\n' + app + '\n</script>\n'
+inline_scripts = ['\n' + engine + '\n', '\n' + sanitize + '\n', '\n' + app + '\n']
+scripts = ''.join('<script>' + x + '</script>\n' for x in inline_scripts)
 
 # 1) Artifact page: content only; the publisher wraps it in its own skeleton. The home-screen
 #    icon is published next to the page (icon-180.png) and the link tags are hoisted into <head>
@@ -36,18 +37,29 @@ icon_tags = (
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n'
     '<script>(function(){try{var h=document.head;["link[rel=apple-touch-icon]","link[rel=icon]","meta[name=apple-mobile-web-app-title]","meta[name=apple-mobile-web-app-capable]","meta[name=apple-mobile-web-app-status-bar-style]"].forEach(function(s){var e=document.querySelector("body "+s);if(e&&h)h.appendChild(e);});}catch(e){}})();</script>\n'
 )
-with open(os.path.join(ROOT, 'readyset.html'), 'w', encoding='utf-8') as f:
+with open(os.path.join(ROOT, 'readyset.html'), 'w', encoding='utf-8', newline='\n') as f:
     f.write(head_common + icon_tags + body + scripts)
 
 # 2) Standalone PWA.
-sw_reg = """<script>
+sw_reg_js = """
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => {}); });
 }
-</script>
 """
+sw_reg = '<script>' + sw_reg_js + '</script>\n'
+import hashlib, base64
+def sha(x): return "'sha256-" + base64.b64encode(hashlib.sha256(x.encode('utf-8')).digest()).decode() + "'"
+script_hashes = ' '.join(sha(x) for x in inline_scripts + [sw_reg_js])
+# Every inline script is hashed, so an injected <script> or on* attribute cannot run. Styles keep
+# 'unsafe-inline' for the few style="" attributes (no script risk). Network: only GitHub for the
+# gist backup, Google Fonts for type.
+csp = ("default-src 'self'; script-src " + script_hashes + "; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+       "font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; "
+       "manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'")
+
 index = (
     '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
+    '<meta http-equiv="Content-Security-Policy" content="' + csp + '">\n'
     '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
     '<meta name="apple-mobile-web-app-capable" content="yes">\n'
     '<meta name="mobile-web-app-capable" content="yes">\n'
@@ -62,22 +74,31 @@ index = (
     '<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>\n'
     '</head>\n<body>\n' + body + scripts + sw_reg + '</body>\n</html>\n'
 )
-with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8') as f:
+with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
     f.write(index)
 
-with open(os.path.join(DIST, 'manifest.webmanifest'), 'w', encoding='utf-8') as f:
+with open(os.path.join(DIST, 'manifest.webmanifest'), 'w', encoding='utf-8', newline='\n') as f:
     f.write('{"name":"Readyset","short_name":"Readyset","start_url":"./index.html","scope":"./","display":"standalone",'
             '"background_color":"#0f1216","theme_color":"#d9530e",'
             '"icons":[{"src":"icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icon-512.png","sizes":"512x512","type":"image/png"}]}')
 
-with open(os.path.join(DIST, 'sw.js'), 'w', encoding='utf-8') as f:
-    f.write("""const CACHE = 'readyset-v1';
+with open(os.path.join(DIST, 'sw.js'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write("""const CACHE = 'readyset-v2';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
+const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(fetch(e.request).then(r => { if (new URL(e.request.url).origin === location.origin) { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); } return r; }).catch(() => caches.match(e.request).then(m => m || caches.match('./index.html'))));
+  const url = new URL(e.request.url);
+  if (FONT_HOSTS.includes(url.host)) {
+    // Fonts: cache first, so the app keeps its type offline; fetch to refresh in the background.
+    e.respondWith(caches.open(CACHE).then(c => c.match(e.request).then(m => { const net = fetch(e.request).then(r => { if (r && (r.ok || r.type === 'opaque')) c.put(e.request, r.clone()); return r; }).catch(() => m); return m || net; })));
+    return;
+  }
+  if (url.origin !== location.origin) return; // never cache or serve other origins (GitHub API etc.)
+  // App files: network first, cache fallback, so updates arrive at once and offline still works.
+  e.respondWith(fetch(e.request).then(r => { if (r && r.ok) { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); } return r; }).catch(() => caches.match(e.request).then(m => m || (e.request.mode === 'navigate' ? caches.match('./index.html') : undefined))));
 });
 """)
 
@@ -132,5 +153,15 @@ def png(size, path):
 
 for s in (180, 192, 512):
     png(s, os.path.join(DIST, f'icon-{s}.png'))
+
+
+# Self-check: every inline script in the written file must hash to a value in its CSP, byte for byte.
+import re as _re
+_html = open(os.path.join(DIST, 'index.html'), 'rb').read()
+_csp = _re.search(rb'Content-Security-Policy" content="([^"]*)"', _html).group(1).decode()
+for _m in _re.finditer(rb'<script>(.*?)</script>', _html, _re.S):
+    _h = "'sha256-" + base64.b64encode(hashlib.sha256(_m.group(1)).digest()).decode() + "'"
+    assert _h in _csp, 'CSP hash mismatch for an inline script (line endings?)'
+assert b'\r' not in _html, 'CRLF found in docs/index.html'
 
 print('built readyset.html (%d KB) and docs/index.html (%d KB)' % (os.path.getsize(os.path.join(ROOT, 'readyset.html')) // 1024, os.path.getsize(os.path.join(DIST, 'index.html')) // 1024))

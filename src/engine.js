@@ -23,9 +23,11 @@
     return 40;
   }
   function e1rm(weight, reps, rpe) {
+    if (!(weight > 0) || !(reps > 0) || !(rpe >= 0)) return 0;
     const rir = Math.max(0, Math.min(6, 10 - rpe));
-    return weight / pctForRTF(reps + rir);
+    return weight / pctForRTF(Math.min(reps, 30) + rir);
   }
+  const MAX_EVIDENCE_REPS = 20; // a set logged with more reps than this is a typo, not evidence
   function expectedRIR(pctOf1RM, reps) { return Math.max(0, rtfForPct(pctOf1RM) - reps); }
   function plannedRPE(pctOf1RM, reps) { return Math.min(10, Math.max(5, Math.round((10 - expectedRIR(pctOf1RM, reps)) * 2) / 2)); }
 
@@ -33,8 +35,8 @@
   function roundTo(x, inc) { return Math.round(x / inc) * inc; }
   function plateLoad(total, bar, plates) {
     let perSide = (total - bar) / 2, out = [];
-    if (perSide < 0) return { plates: [], exact: total === bar, short: 0 };
-    const sorted = plates.slice().sort((a, b) => b - a);
+    if (!(perSide >= 0)) return { plates: [], exact: total === bar, short: 0 };
+    const sorted = (plates || []).filter(p => typeof p === 'number' && p > 0).sort((a, b) => b - a);
     for (const p of sorted) { while (perSide >= p - 1e-9) { out.push(p); perSide -= p; } }
     return { plates: out, exact: perSide < 1e-9, short: perSide };
   }
@@ -174,7 +176,8 @@
   // ---------- Readiness ----------
   // sleep, energy, motivation: 1 (worst) .. 5 (best). soreness: 1 (fresh) .. 5 (wrecked).
   function readinessScore(r) {
-    const s = (v) => (v - 1) / 4;
+    r = r || {};
+    const s = (v) => { const n = Number(v); return (Number.isFinite(n) ? Math.min(5, Math.max(1, n)) - 1 : 2) / 4; };
     const score = 100 * (0.30 * s(r.sleep) + 0.25 * s(r.energy) + 0.25 * (1 - s(r.soreness)) + 0.20 * s(r.motivation));
     const color = score >= 60 ? 'green' : score >= 40 ? 'yellow' : 'red';
     return { score: Math.round(score), color };
@@ -197,12 +200,25 @@
   function resolveExercise(state, slot, block, rest) {
     const sw = state.program.swaps || {};
     let id;
-    if (sw[slot.key]) id = sw[slot.key];
+    if (sw[slot.key] && EX[sw[slot.key]] && SWAPS[slot.key].includes(sw[slot.key])) id = sw[slot.key];
     else if (rest && REST.variation[slot.key]) id = REST.variation[slot.key];
     else if (block.variation && block.variation[slot.key]) id = block.variation[slot.key];
     else id = SWAPS[slot.key][0];
     if (id === 'high_bar_squat' || id === 'low_bar_squat') id = otherSquat(state);
+    if (!EX[id]) id = SWAPS[slot.key][0];
     return id;
+  }
+  function clampProgram(state) {
+    const P = state.program;
+    if (!(P.blockIdx >= 0 && P.blockIdx < BLOCKS.length)) P.blockIdx = 0;
+    const tw = totalWeeks(BLOCKS[P.blockIdx]);
+    if (!(P.week >= 1 && P.week <= tw)) P.week = Math.min(Math.max(1, Math.round(P.week) || 1), tw);
+    if (!(P.dayIdx >= 0 && P.dayIdx < DAYS.length)) P.dayIdx = 0;
+    if (P.special && !(P.special.weeksLeft > 0)) P.special.weeksLeft = 1;
+    P.setAdj = Object.assign({ squat: 0, bench: 0, deadlift: 0, acc: 0 }, P.setAdj || {});
+    P.loadAdj = Object.assign({ squat: 0, bench: 0, deadlift: 0 }, P.loadAdj || {});
+    P.flags = Object.assign({ squat: 0, bench: 0, deadlift: 0 }, P.flags || {});
+    return P;
   }
   function exerciseName(state, exId) {
     if (exId === 'comp_squat') return `Competition Squat (${state.settings.squatStyle === 'highbar' ? 'high-bar' : 'low-bar'})`;
@@ -216,7 +232,7 @@
   }
   function accWeight(state, ex) { const a = (state.acc || {})[ex]; return a && a.weight != null ? a.weight : null; }
   function position(state) {
-    const P = state.program, block = BLOCKS[P.blockIdx];
+    const P = clampProgram(state), block = BLOCKS[P.blockIdx];
     const rest = P.special && P.special.type === 'rest';
     const isDeload = !rest && block.deload && P.week > block.weeks;
     const isTest = !rest && block.test && P.week > block.weeks;
@@ -231,18 +247,23 @@
     const firstHalf = P.dayIdx < 2;
     const lastWk = block.weeks - 1;
 
+    const inc = S.increment > 0 ? S.increment : 5, bar = S.barWeight > 0 ? S.barWeight : 45;
     for (const slot of day.slots) {
       const exId = resolveExercise(state, slot, block, rest);
-      const ex = EX[exId], lift = slot.tm || null;
+      const ex = EX[exId];
+      // A TM-loaded exercise in an accessory slot (RDL for hamstrings) takes its lift from the
+      // exercise and follows the second-lift scheme.
+      const lift = slot.tm || (ex.tm ? ex.tm : null);
+      const schemeRole = slot.role === 'accessory' && ex.tm ? 'secondary' : slot.role;
       const item = { slotKey: slot.key, ex: exId, name: exerciseName(state, exId), role: slot.role, lift, load: ex.load, optional: !!slot.optional, cue: ex.cue || null, sets: [],
         rest: slot.role === 'primary' ? S.restPrimary : slot.role === 'secondary' ? S.restSecondary : S.restAccessory };
 
       // --- Test week: primaries work up to a heavy single ---
       if (isTest && slot.role === 'primary') {
         const tm = tmOf(state, lift);
-        for (const w of TEST.warmups) item.sets.push({ w: roundTo(tm * w.pct, S.increment), reps: w.reps, pct: w.pct, kind: w.pct >= 0.97 ? 'test' : 'warm', rpeTarget: w.pct >= 1.03 ? 9 : w.pct >= 0.97 ? 8 : null });
+        for (const w of TEST.warmups) item.sets.push({ w: Math.max(bar, roundTo(tm * w.pct, inc)), reps: w.reps, pct: w.pct, kind: w.pct >= 0.97 ? 'test' : 'warm', rpeTarget: w.pct >= 1.03 ? 9 : w.pct >= 0.97 ? 8 : null });
         item.sets.push({ w: null, reps: 1, pct: null, kind: 'test', rpeTarget: 9, open: true });
-        for (let i = 0; i < TEST.backoff.sets; i++) item.sets.push({ w: roundTo(tm * TEST.backoff.pct, S.increment), reps: TEST.backoff.reps, pct: TEST.backoff.pct, kind: 'work', rpeTarget: 7 });
+        for (let i = 0; i < TEST.backoff.sets; i++) item.sets.push({ w: Math.max(bar, roundTo(tm * TEST.backoff.pct, inc)), reps: TEST.backoff.reps, pct: TEST.backoff.pct, kind: 'work', rpeTarget: 7 });
         item.note = 'Work up to one single at RPE 9 (one clean rep left). Add 2-5% to the last line if the single before it was RPE 8 or less. Stop there, then do the back-off sets.';
         out.exercises.push(item);
         continue;
@@ -250,33 +271,35 @@
 
       if (ex.tm) {
         // ----- Barbell lift loaded from a TM -----
-        let base, volF = 1, intF = 1, why = null;
-        if (rest) { base = REST[slot.role]; }
+        let base, volF = 1, intF = 1;
+        if (rest) { base = REST[schemeRole]; }
         else if (isDeload || isTest) {
-          base = block[slot.role][lastWk];
+          base = block[schemeRole][lastWk];
           const d = firstHalf ? block.deloadA : block.deloadB; volF = d.vol; intF = d.int;
           if (isTest) { volF = 0.5; intF = 0.7; }
         } else {
-          base = block[slot.role][wk];
+          base = block[schemeRole][wk];
           if (mode === 'light') { volF = block.light.vol; intF = block.light.int; }
         }
         const adj = (!rest && !isDeload && !isTest) ? ((P.loadAdj && P.loadAdj[lift]) || 0) : 0;
         let sets = base.sets;
-        if (!rest && !isDeload && !isTest && mode === 'full') sets += ((P.setAdj && P.setAdj[lift]) || 0);
+        // Earned extra sets go only to the competition lift and its close variants (mult >= 0.8), and
+        // only on a green day; a reduction applies on every kind of day.
+        if (!rest && !isDeload && !isTest && ex.mult >= 0.8) { const sa = (P.setAdj && P.setAdj[lift]) || 0; sets += mode === 'full' ? sa : Math.min(0, sa); }
         sets = Math.max(1, Math.round(sets * volF + 1e-9));
         if (volF < 1 && sets < 2 && base.sets >= 3) sets = 2;
         const pct = (base.pct + adj) * intF;
-        const w = roundTo(tmOf(state, lift) * ex.mult * pct, S.increment);
-        const pct1rm = w / (state.lifts[lift].oneRM * ex.mult);
+        const w = Math.max(bar, roundTo(tmOf(state, lift) * ex.mult * pct, inc));
+        const oneRM = state.lifts[lift].oneRM * ex.mult;
+        const pct1rm = oneRM > 0 ? w / oneRM : 1;
         const rpe = plannedRPE(pct1rm, base.reps);
         const plusOk = mode === 'full' && !isDeload && !isTest && !rest && block.plus > 0;
-        if (S.warmupSets !== false) for (const st of warmups(Math.max(w, S.barWeight), S.barWeight, S.increment, slot.role)) item.sets.push({ w: st.w, reps: st.reps, kind: 'warm' });
+        if (S.warmupSets !== false) for (const st of warmups(w, bar, inc, schemeRole)) item.sets.push({ w: st.w, reps: st.reps, kind: 'warm' });
         for (let i = 0; i < sets; i++) {
           const ind = i === 0 && plusOk;
           item.sets.push({ w, reps: base.reps, pct, kind: 'work', ind, plus: ind ? block.plus : 0, rpeTarget: rpe });
         }
         item.pctTM = pct; item.rpeTarget = rpe;
-        if (w < S.barWeight) item.sets.forEach(x => x.w = S.barWeight);
       } else {
         // ----- Self-loaded (belt squat, dumbbells, machines): double progression -----
         let sch, volF = 1, intF = 1;
@@ -287,10 +310,11 @@
           sch = slot.role === 'accessory' ? s : { sets: s.sets, reps: Math.max(8, s.reps + 2) };
           if (mode === 'light') { volF = block.light.vol; intF = Math.max(0.7, block.light.int); }
         }
-        let sets = sch.sets + ((!rest && !isDeload && !isTest && mode === 'full' && P.setAdj && P.setAdj.acc) || 0);
+        let sets = sch.sets;
+        if (!rest && !isDeload && !isTest) { const sa = (P.setAdj && P.setAdj.acc) || 0; sets += mode === 'full' ? sa : Math.min(0, sa); }
         sets = Math.max(1, Math.min(ACC_CAP, Math.round(sets * volF + 1e-9)));
         const w0 = accWeight(state, exId);
-        const w = w0 == null ? null : ex.load === 'bw' ? null : roundTo(w0 * intF, ex.load === 'db' ? S.dbIncrement : 5);
+        const w = w0 == null ? null : ex.load === 'bw' ? null : roundTo(w0 * intF, ex.load === 'db' ? (S.dbIncrement > 0 ? S.dbIncrement : 5) : 5);
         for (let i = 0; i < sets; i++) item.sets.push({ w, reps: sch.reps, kind: 'work', rpeTarget: 8 });
         item.repRange = [sch.reps, sch.reps + 3];
         item.needsWeight = w0 == null && ex.load !== 'bw';
@@ -343,7 +367,8 @@
   // fitness); sets below RPE 6 are too far from failure to say much and count half too.
   function liftCorrection(evidence, plannedW, reps, targetRPE, caps) {
     caps = caps || { down: 0.85, up: 1.05 };
-    const rows = (evidence || []).filter(x => x.w > 0 && x.reps > 0 && x.rpe != null && x.rpe >= 6);
+    if (!(plannedW > 0) || !(reps > 0) || !(targetRPE >= 1)) return null;
+    const rows = (evidence || []).filter(x => x.w > 0 && x.reps > 0 && x.reps <= MAX_EVIDENCE_REPS && x.rpe != null && x.rpe >= 6 && x.rpe <= 10);
     if (!rows.length) return null;
     let num = 0, den = 0;
     for (const x of rows) { const wt = (x.first ? 0.5 : 1) * (x.rpe < 7 ? 0.5 : 1); num += wt * e1rm(x.w, x.reps, x.rpe); den += wt; }
@@ -363,19 +388,22 @@
   // first sets half weight, RPE 6-6.5 half weight). Fatigue management is the priority, so the
   // 1RM follows a low session at once (up to 5% per session) but rises only on the smoothed
   // estimate, by at most 2.5% per session, and never after a session that crushed you.
-  function sessionEstimate(sess, lift) {
+  // `ref` (the current 1RM) bounds each implied max to 0.7-1.3x so one mistyped set cannot swing it.
+  function sessionEstimate(sess, lift, ref) {
     let num = 0, den = 0, n = 0;
     for (const e of sess.exercises || []) {
       if (e.lift !== lift || !EX[e.ex] || !EX[e.ex].tm || EX[e.ex].mult < 0.8) continue;
       if ((sess.skippedSlots || []).includes(e.slotKey)) continue;
-      const work = e.sets.filter(x => x.kind === 'work' && x.done);
+      const work = (e.sets || []).filter(x => x.kind === 'work' && x.done);
       work.forEach((x, i) => {
         const reps = x.actualReps != null ? x.actualReps : x.reps;
         let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
         const w = x.actualW != null ? x.actualW : x.w;
-        if (rpe == null || rpe < 6 || !reps || !w) return;
+        if (rpe == null || rpe < 6 || rpe > 10 || !(reps > 0) || reps > MAX_EVIDENCE_REPS || !(w > 0)) return;
+        let implied = e1rm(w, reps, rpe) / EX[e.ex].mult;
+        if (ref > 0) implied = Math.min(ref * 1.3, Math.max(ref * 0.7, implied));
         const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (i === 0 ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
-        num += wt * e1rm(w, reps, rpe) / EX[e.ex].mult; den += wt; n++;
+        num += wt * implied; den += wt; n++;
       });
     }
     return den ? { est: num / den, conf: den, n } : null;
@@ -395,15 +423,19 @@
     const names = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
     const allow = 1 + fatigueAllowance(sess);
     for (const lift of ['squat', 'bench', 'deadlift']) {
-      const r = sessionEstimate(sess, lift);
-      if (!r) continue;
       const L = state.lifts[lift];
+      const cur = L.oneRM;
+      if (!(cur > 0)) continue;
+      const r = sessionEstimate(sess, lift, cur);
+      if (!r) continue;
       const est = r.est * allow;
-      L.est = L.est == null ? est : 0.5 * L.est + 0.5 * est; L.estDate = sess.date;
-      const cur = L.oneRM; let next = cur, how = '';
-      const missed = (sess.exercises || []).some(e => e.lift === lift && e.sets.some(x => x.kind === 'work' && x.done && x.actualReps != null && x.actualReps < x.reps));
+      L.est = L.est == null ? est : 0.5 * L.est + 0.5 * est;
+      L.est = Math.min(cur * 1.15, Math.max(cur * 0.7, L.est)); L.estDate = sess.date;
+      let next = cur, how = '';
+      // Only sets that count toward the estimate can count as a miss (OHP or RDL misses do not gate bench or deadlift).
+      const missed = (sess.exercises || []).some(e => e.lift === lift && EX[e.ex] && EX[e.ex].tm && EX[e.ex].mult >= 0.8 && (e.sets || []).some(x => x.kind === 'work' && x.done && x.actualReps != null && x.actualReps < x.reps));
       const start = L.blockStartRM || cur;
-      const floor = start * (missed ? 0.85 : 0.90); // calibration alone cannot take more than 10% in a block
+      const floor = Math.min(cur, start * (missed ? 0.85 : 0.90)); // calibration alone cannot take more than 10% in a block, and the floor never lifts a max
       if (est < cur * 0.97 && (r.conf >= 1 || L.est < cur * 0.97)) {
         next = Math.max(r.conf >= 1 ? est : L.est, cur * 0.95, floor);
         how = `today's sets came in at about ${Math.round(est)}`;
@@ -464,7 +496,8 @@
 
       const cap = CAPS[lift];
       if (score >= 2 && !lastWeek) {
-        const canAdd = setAdj[lift] < 2 && weeklySets(state, lift) + 1 <= cap;
+        // Count next week's sets honestly: one more earned set lands on every counted exercise of the lift.
+        const canAdd = setAdj[lift] < 2 && weeklySetsWith(state, lift, { setAdj: setAdj[lift] + 1, week: P.week + 1 }) <= cap;
         if (canAdd) { setAdj[lift] += 1; log.push(`${names[lift]}: +1 set next week (${why.join(', ')}).`); }
         else if (score >= 3 && !calib && loadAdj[lift] < 0.05) { loadAdj[lift] += 0.025; log.push(`${names[lift]}: at the set cap, so a bigger jump next week (+2.5%).`); }
         else log.push(`${names[lift]}: recovering well, holding at the weekly set cap.`);
@@ -481,7 +514,8 @@
       }
     }
     const anyFlag = Object.values(flags).some(f => f > 0);
-    if (block.id === 'build' && !anyFlag && crushed === 0 && !lastWeek && setAdj.acc < 1) { setAdj.acc += 1; log.push('Accessories: +1 set next week.'); }
+    const trained = weekSessions.some(s => s && !s.skipped && s.mode !== 'light');
+    if (block.id === 'build' && trained && !anyFlag && crushed === 0 && !lastWeek && setAdj.acc < 1) { setAdj.acc += 1; log.push('Accessories: +1 set next week.'); }
     if (anyFlag && setAdj.acc > 0) { setAdj.acc -= 1; log.push('Accessories: -1 set to free up recovery.'); }
 
     const flaggedLifts = Object.keys(flags).filter(l => flags[l] >= 2);
@@ -490,15 +524,23 @@
     return { setAdj, loadAdj, flags, log, suggestDeload };
   }
 
-  function weeklySets(state, lift) {
-    const saved = state.program.dayIdx;
+  function weeklySets(state, lift) { return weeklySetsWith(state, lift, null); }
+  // Count a week's working sets for a lift pattern, optionally under a hypothetical set adjustment
+  // and week. Works on a copy of the program so nothing is left modified, whatever happens.
+  function weeklySetsWith(state, lift, hypo) {
+    const P0 = state.program;
+    const P = JSON.parse(JSON.stringify(P0));
+    if (hypo) {
+      if (hypo.setAdj != null) P.setAdj = Object.assign({}, P.setAdj, { [lift]: hypo.setAdj });
+      if (hypo.week != null) P.week = Math.min(hypo.week, BLOCKS[P.blockIdx].weeks);
+    }
+    const probe = Object.assign({}, state, { program: P });
     let n = 0;
     for (let d = 0; d < DAYS.length; d++) {
-      state.program.dayIdx = d;
-      const s = buildSession(state, 'full');
-      for (const e of s.exercises) if (e.lift === lift && e.role !== 'accessory' && EX[e.ex].mult >= 0.8) n += e.sets.filter(x => x.kind === 'work').length;
+      P.dayIdx = d;
+      const s = buildSession(probe, 'full');
+      for (const e of s.exercises) if (e.lift === lift && EX[e.ex].mult >= 0.8) n += e.sets.filter(x => x.kind === 'work').length;
     }
-    state.program.dayIdx = saved;
     return n;
   }
 
@@ -518,13 +560,13 @@
         if (!s || s.skipped || s.isDeload || s.isRest || s.mode === 'light') continue;
         for (const e of s.exercises) {
           if (e.lift !== lift || EX[e.ex].mult !== 1 || e.role !== 'primary') continue;
-          for (const x of e.sets) {
+          for (const x of e.sets || []) {
             if (!x.done || x.kind === 'warm') continue;
             anyData = true;
             const reps = x.actualReps != null ? x.actualReps : x.reps;
             if (reps < x.reps) clean = false;
             const w = x.actualW != null ? x.actualW : x.w;
-            if (x.rpe != null && x.rpe >= 7 && reps > 0 && w) best = Math.max(best, e1rm(w, reps, x.rpe));
+            if (x.rpe != null && x.rpe >= 7 && x.rpe <= 10 && reps > 0 && reps <= MAX_EVIDENCE_REPS && w > 0) best = Math.max(best, e1rm(w, reps, x.rpe));
           }
         }
       }
@@ -554,21 +596,21 @@
   function totalWeeks(block) { return block.weeks + (block.deload || block.test ? 1 : 0); }
   function nextBlockIdx(state) {
     const P = state.program;
-    if (P.nextBlockOverride != null) { const i = P.nextBlockOverride; P.nextBlockOverride = null; return i; }
+    if (P.nextBlockOverride != null) { const i = P.nextBlockOverride; P.nextBlockOverride = null; if (BLOCKS[i]) return i; }
     let i = (P.blockIdx + 1) % BLOCKS.length;
     if (BLOCKS[i].test && state.settings.includePeak === false) i = (i + 1) % BLOCKS.length;
     return i;
   }
   // Returns {weekDone, mesoDone} so the app can run reviews.
   function advanceDay(state) {
-    const P = state.program, block = BLOCKS[P.blockIdx];
+    const P = clampProgram(state), block = BLOCKS[P.blockIdx];
     const res = { weekDone: false, mesoDone: false, restDone: false };
     P.dayIdx += 1;
     if (P.dayIdx < DAYS.length) return res;
     P.dayIdx = 0; res.weekDone = true;
     if (P.special && P.special.type === 'rest') {
-      P.special.weeksLeft -= 1;
-      if (P.special.weeksLeft <= 0) { P.special = null; res.restDone = true; }
+      P.special.weeksLeft = (P.special.weeksLeft > 0 ? P.special.weeksLeft : 1) - 1;
+      if (P.special.weeksLeft <= 0) { const back = P.special.resumeDayIdx; P.special = null; res.restDone = true; if (back > 0 && back < DAYS.length) P.dayIdx = back; }
       return res;
     }
     P.week += 1;
@@ -576,7 +618,7 @@
       res.mesoDone = true;
       // Remember the set counts this block tolerated, to start from next time (p.322).
       state.learned = state.learned || {};
-      const l = {}; for (const k of ['squat', 'bench', 'deadlift']) l[k] = Math.max(-1, Math.min(2, (P.setAdj[k] || 0) - ((P.flags[k] || 0) >= 2 ? 1 : 0)));
+      const l = {}; for (const k of ['squat', 'bench', 'deadlift']) l[k] = Math.max(-1, Math.min(2, ((P.setAdj || {})[k] || 0) - (((P.flags || {})[k] || 0) >= 2 ? 1 : 0)));
       state.learned[block.id] = l;
       P.week = 1; P.blockIdx = nextBlockIdx(state); P.mesoCount = (P.mesoCount || 0) + 1;
       for (const k of ['squat', 'bench', 'deadlift']) state.lifts[k].blockStartRM = state.lifts[k].oneRM;
@@ -587,12 +629,20 @@
     return res;
   }
   function startDeloadNow(state) {
-    const P = state.program, block = BLOCKS[P.blockIdx];
-    P.dayIdx = 0;
-    if (block.deload || block.test) P.week = block.weeks + 1;
-    else { P.special = { type: 'rest', weeksLeft: 1 }; }
+    const P = clampProgram(state), block = BLOCKS[P.blockIdx];
+    if (P.special) return false; // already in an easy week
+    P.pendingDeload = false; P.lightRestOfWeek = false;
+    if (block.deload) { if (P.week > block.weeks) return false; P.week = block.weeks + 1; P.dayIdx = 0; }
+    else startActiveRest(state, 1); // the Peak block has no deload week; an easy week stands in (never the test week)
+    return true;
   }
-  function startActiveRest(state, weeks) { state.program.special = { type: 'rest', weeksLeft: weeks || 2 }; state.program.dayIdx = 0; }
+  // An easy week inserted mid-week resumes the interrupted week at the same day afterwards.
+  function startActiveRest(state, weeks) {
+    const P = clampProgram(state);
+    P.pendingDeload = false; P.lightRestOfWeek = false;
+    P.special = { type: 'rest', weeksLeft: weeks > 0 ? Math.min(4, Math.round(weeks)) : 1, resumeDayIdx: P.dayIdx > 0 ? P.dayIdx : 0 };
+    P.dayIdx = 0;
+  }
   function positionLabel(state) {
     const { block, rest, isDeload, isTest } = position(state), P = state.program;
     const label = rest ? `${P.special.weeksLeft} wk left` : isDeload ? 'Deload' : isTest ? 'Test week' : `Week ${P.week} of ${block.weeks}`;
@@ -637,5 +687,5 @@
 
   root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, plateLoad, EX, SWAPS, BLOCKS, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
     readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, liftCorrection, sessionEstimate, calibrate, fatigueAllowance, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
-    positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes };
+    positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes, weeklySetsWith, clampProgram, MAX_EVIDENCE_REPS };
 })(typeof window !== 'undefined' ? window : globalThis);

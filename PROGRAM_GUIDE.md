@@ -62,7 +62,7 @@ book accepts that as "quite sound" (p.268); the variation lives in the second sl
 
 | Pattern | Build wk 1 | Build wk 4 | Strength | Ceiling the app can climb to |
 |---|---|---|---|---|
-| Squat (comp + barbell variants) | 6 | 8 | 7 | 12 |
+| Squat (comp + barbell variants) | 3 (+3 belt squat) | 4 (+4 belt squat) | 7 | 12 |
 | Bench (comp + barbell variants) | 9 | 12 | 10 | 16 |
 | Deadlift (comp + paused/deficit) | 3 | 4 | 7 | 9 |
 

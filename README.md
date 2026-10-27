@@ -70,6 +70,40 @@ deletes the data.** Never delete or re-add the icon without a backup. Three back
 Today shows a red banner whenever there are sessions newer than the last backup. *Start over*
 erases everything and cannot be undone.
 
+## Tests
+
+```bash
+node tests/engine_fuzz.js
+```
+
+Fuzzes the engine and the state sanitizer: random settings, maxes and program positions through
+session generation (loads finite, at or above the bar, rounded to the plates; set and rep counts
+sane), rep-max math properties, in-session correction caps, readiness ranges, a 240-session walk
+through the state machine with random early deloads and easy weeks, degenerate review inputs, and
+a hostile backup (prototype keys, markup in names, out-of-range values, unknown exercise ids). A
+26-week simulation against a hidden "true max" lives in the development scratchpad.
+
+## Security
+
+- No server, no accounts, no analytics, no third-party scripts. Network use: GitHub's API for the
+  optional gist backup, Google Fonts for type (cached by the service worker for offline use).
+- Every state object from outside the running page (storage, a pasted backup, the cloud backup)
+  is rebuilt through `src/sanitize.js`: whitelisted fields, typed and clamped values, enumerations
+  coerced, unknown exercise ids and prototype keys dropped. Rendering escapes all text.
+- `docs/index.html` carries a Content Security Policy that allows only the page's own scripts by
+  hash, so injected markup cannot execute, and only the GitHub hosts for network calls.
+- The GitHub token is a fine-grained token limited to Gists, stored only in the app's storage on
+  the device, sent only to api.github.com over HTTPS, and never written into any backup.
+- The service worker caches same-origin GET responses and font files only.
+- A backup pasted or fetched from the cloud is never allowed to carry a cloud token or gist id,
+  so a tampered backup cannot redirect future backups elsewhere. Backups themselves omit both.
+- If the saved data ever fails to load, the app shows a recovery card (copy the stored data,
+  start over) instead of a dead page.
+- Known limits: `username.github.io` is one origin for every GitHub Pages project under that
+  account, so do not host other projects there (they would share this app's storage); a meta
+  CSP cannot stop framing, so the app blanks itself when framed; the Gists permission covers all
+  gists in the account, so use a token with a short expiry and revoke it if a phone is lost.
+
 ## Changing the program
 
 - Block schemes (sets, reps, % of Training Max per week) are the `BLOCKS` table in `src/engine.js`.
