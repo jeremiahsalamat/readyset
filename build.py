@@ -81,28 +81,49 @@ self.addEventListener('fetch', e => {
 });
 """)
 
-# 3) Icons: orange tile with a dark barbell glyph, written as raw PNG (no image libraries needed).
+# 3) Icons: a loaded barbell (sleeves, collars, three plates a side) in cream on a warm orange
+#    ground, full-bleed (iOS and Android apply their own corner masks). Rendered with 3x
+#    supersampling so the edges are smooth, written as a raw PNG (no image libraries needed).
 def png(size, path):
-    bg = (217, 83, 14); fg = (20, 17, 14)
+    SS = 3
+    N = size * SS
+    bg_top, bg_bot = (237, 104, 46), (206, 74, 14)
+    cream, shade = (255, 245, 233), (246, 220, 196)
+    def rrect(x0, y0, x1, y1, r):
+        return (x0 * N, y0 * N, x1 * N, y1 * N, r * N)
+    # Geometry in unit coordinates (mirrored for the right side).
+    bar_h = 0.040
+    shapes = []  # (rect, color), painted in order
+    shapes.append((rrect(0.055, 0.5 - 0.028, 0.945, 0.5 + 0.028, 0.02), shade))   # sleeves (slightly thicker)
+    shapes.append((rrect(0.30, 0.5 - bar_h / 2, 0.70, 0.5 + bar_h / 2, 0.015), cream))  # shaft
+    plates = [(0.240, 0.312, 0.235), (0.168, 0.228, 0.185), (0.112, 0.156, 0.135)]  # (x0, x1, half-height)
+    for x0, x1, hh in plates:
+        shapes.append((rrect(x0, 0.5 - hh, x1, 0.5 + hh, 0.012), cream))
+        shapes.append((rrect(1 - x1, 0.5 - hh, 1 - x0, 0.5 + hh, 0.012), cream))
+    shapes.append((rrect(0.318, 0.5 - 0.055, 0.342, 0.5 + 0.055, 0.008), shade))  # collars
+    shapes.append((rrect(0.658, 0.5 - 0.055, 0.682, 0.5 + 0.055, 0.008), shade))
+    def inside(px, py, rect):
+        x0, y0, x1, y1, r = rect
+        if px < x0 or px > x1 or py < y0 or py > y1: return False
+        cx = min(max(px, x0 + r), x1 - r); cy = min(max(py, y0 + r), y1 - r)
+        return (px - cx) ** 2 + (py - cy) ** 2 <= r * r
     rows = []
-    cx = cy = size / 2
-    bar_h = size * 0.07; bar_w = size * 0.70
-    plate_w = size * 0.10; plate_h = size * 0.34; inner_w = size * 0.07; inner_h = size * 0.26
     for y in range(size):
+        acc = [[0, 0, 0] for _ in range(size)]
+        for sy in range(SS):
+            py = y * SS + sy + 0.5
+            t = py / N
+            bg = tuple(int(bg_top[i] + (bg_bot[i] - bg_top[i]) * t) for i in range(3))
+            for x in range(size):
+                for sx in range(SS):
+                    px = x * SS + sx + 0.5
+                    c = bg
+                    for rect, col in shapes:
+                        if inside(px, py, rect): c = col
+                    a = acc[x]; a[0] += c[0]; a[1] += c[1]; a[2] += c[2]
         row = bytearray([0])
         for x in range(size):
-            dx, dy = x - cx, y - cy
-            # rounded square mask
-            r = size * 0.22
-            ax, ay = abs(dx) - (cx - r), abs(dy) - (cy - r)
-            inside = (ax <= 0 or ay <= 0 or ax * ax + ay * ay <= r * r) and abs(dx) <= cx and abs(dy) <= cy
-            if not inside:
-                row += bytes((0, 0, 0)); continue
-            c = bg
-            if abs(dy) <= bar_h / 2 and abs(dx) <= bar_w / 2: c = fg
-            if abs(dy) <= plate_h / 2 and bar_w / 2 - plate_w * 1.6 <= abs(dx) <= bar_w / 2 - plate_w * 0.6: c = fg
-            if abs(dy) <= inner_h / 2 and bar_w / 2 - plate_w * 2.7 <= abs(dx) <= bar_w / 2 - plate_w * 2.0: c = fg
-            row += bytes(c)
+            a = acc[x]; row += bytes((a[0] // (SS * SS), a[1] // (SS * SS), a[2] // (SS * SS)))
         rows.append(bytes(row))
     raw = b''.join(rows)
     def chunk(t, d): return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)

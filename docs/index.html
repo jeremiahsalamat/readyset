@@ -1287,6 +1287,8 @@ canvas { width: 100%; height: auto; display: block; }
     s.exercises.forEach((e, ei) => {
       const skipped = s.skippedSlots.includes(e.slotKey);
       const first = e.sets.find(x => x.kind === 'work' || x.kind === 'test') || e.sets[0];
+      const nextSet = e.sets.find(x => !x.done && x.kind !== 'warm' && (x.actualW != null || x.w != null));
+      const nextW = nextSet ? (nextSet.actualW != null ? nextSet.actualW : nextSet.w) : null;
       const swaps = E.swapOptions(state, e.slotKey).filter(x => x !== e.ex);
       html += `<section class="ex" data-ei="${ei}">
         <div class="ex-head"><div><div class="name">${esc(e.name)}</div>
@@ -1298,7 +1300,7 @@ canvas { width: 100%; height: auto; display: block; }
         ${!skipped && e.cut ? `<div class="ex-note"><button class="btn sm quiet" data-action="restore-sets" data-ei="${ei}">Restore ${e.cut} cut set${e.cut > 1 ? 's' : ''}</button></div>` : ''}
         ${skipped ? '' : renderSets(e, ei)}
         ${skipped ? '' : `<div class="ex-foot">
-          ${e.load === 'bar' && first && first.w ? `<span class="plates"><b>${first.w}</b> = ${esc(plateText(first.w))}</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
+          ${e.load === 'bar' && nextW ? `<span class="plates">Next work set <b>${nextW}</b> = ${esc(plateText(nextW))}</span>` : e.load === 'bar' && first && first.w ? `<span class="plates">All work sets done</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
           ${swaps.length ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}
         </div>`}
         ${!skipped && e.load === 'bar' && first && first.w && !s.isTest && e.role !== 'accessory' && !e.sets.some(x => x.kind === 'warm') ? `<details class="warm"><summary class="tiny">Warm-up ramp</summary>${E.warmups(first.w, state.settings.barWeight, state.settings.increment, e.role).map(w => `<span class="num">${w.w} × ${w.reps}</span>`).join('')}</details>` : ''}
@@ -1320,7 +1322,7 @@ canvas { width: 100%; height: auto; display: block; }
       const kind = x.kind === 'warm' ? 'warm-up' : x.kind === 'test' ? (x.open ? 'top single' : 'single') : x.ind ? `top set` : '';
       return `<div class="set ${x.done ? 'done' : ''}" data-si="${si}">
         <span class="n">${x.kind === 'warm' ? 'W' : si + 1 - e.sets.filter((y, j) => j < si && y.kind === 'warm').length}</span>
-        <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${x.kind === 'warm' && e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
+        <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
         <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" value="${reps}" placeholder="${x.reps}${x.plus ? '+' : ''}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
         ${x.kind === 'warm' ? '<span></span>' : `<button class="rpe ${x.rpe == null ? 'empty' : ''}" data-action="rpe" data-ei="${ei}" data-si="${si}" aria-label="RPE">${x.rpe == null ? (x.rpeTarget != null ? `~${x.rpeTarget}` : 'RPE') : x.rpe}</button>`}
         <button class="ok" data-action="done" data-ei="${ei}" data-si="${si}" aria-label="${x.done ? 'Undo set' : 'Set done'}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></button>
@@ -1343,7 +1345,8 @@ canvas { width: 100%; height: auto; display: block; }
     } else x.actualReps = v;
     if (x.done) recalcExercise(ei, fromTyping);
     save();
-    if (x.done && !fromTyping) render();
+    if (!fromTyping) render(); // plate readouts follow the typed weight
+    else if (which === 'w') { const u = $(`#w-${ei}-${si}`); if (u && u.nextElementSibling && e.load === 'bar') u.nextElementSibling.textContent = v != null ? platesShort(v) : 'lb'; }
   }
   function markDone(ei, si) {
     const e = state.current.exercises[ei], x = e.sets[si];
