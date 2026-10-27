@@ -938,7 +938,83 @@ canvas { width: 100%; height: auto; display: block; }
     pushAll(s) { this.pushState(s); for (const x of s.sessions || []) this.pushSession(x); },
     deleteSession(id) { if (this.db) this.chain = this.chain.then(() => this.db.doc('sessions/' + id).delete()).catch(() => {}); },
   };
-  function save() { Store.save(state); }
+  function save() { Store.save(state); Cloud.schedule(); }
+
+  // ---------- Backups ----------
+  // The phone's storage is the only copy of the data, and on iOS deleting the home-screen icon
+  // deletes it. So: an automatic off-device copy in a private GitHub Gist (the user's own account,
+  // written after every change), a share-sheet file, and a clipboard copy.
+  function backupJSON() { const copy = Object.assign({}, state); copy.settings = Object.assign({}, state.settings); delete copy.settings.gistToken; delete copy.current; return JSON.stringify(copy); }
+  function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; Store.saveLocal(state); }
+  function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.ts || 0) > t).length; }
+  async function shareBackup() {
+    const json = backupJSON(), name = `readyset-backup-${todayISO()}.json`;
+    try {
+      const file = new File([json], name, { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Readyset backup' }); noteBackup('file'); toast('Backup shared'); render(); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    try {
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      noteBackup('file'); toast('Backup file saved'); render();
+    } catch (e) { copyBackup(); }
+  }
+  function copyBackup() { const txt = backupJSON(); const ok = () => { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); }; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt)); else fallbackCopy(txt); }
+  const Cloud = {
+    timer: null, busy: false,
+    available() { return !!(state && state.settings.gistToken) && !(window.claude && window.claude.use); },
+    headers(token) { return { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' }; },
+    async req(path, method, body, token) {
+      const r = await fetch('https://api.github.com' + path, { method: method || 'GET', headers: this.headers(token || state.settings.gistToken), body: body ? JSON.stringify(body) : undefined });
+      if (!r.ok) { const e = new Error(r.status === 401 ? 'GitHub rejected the token' : r.status === 404 ? 'not found' : 'GitHub error ' + r.status); e.status = r.status; throw e; }
+      return r.json();
+    },
+    schedule() { if (!this.available()) return; clearTimeout(this.timer); this.timer = setTimeout(() => this.backup(), 15000); },
+    async backup() {
+      if (!this.available() || this.busy) return; this.busy = true;
+      try {
+        const content = backupJSON();
+        if (state.settings.gistId) {
+          try { await this.req('/gists/' + state.settings.gistId, 'PATCH', { files: { 'readyset-backup.json': { content } } }); }
+          catch (e) { if (e.status === 404) { state.settings.gistId = null; this.busy = false; return this.backup(); } throw e; }
+        } else {
+          const g = await this.req('/gists', 'POST', { description: 'Readyset backup', public: false, files: { 'readyset-backup.json': { content } } });
+          state.settings.gistId = g.id;
+        }
+        state.lastCloudBackup = Date.now(); state.cloudError = null; noteBackup('cloud');
+      } catch (e) { state.cloudError = (e && e.message) || 'backup failed'; Store.saveLocal(state); }
+      this.busy = false;
+      if (view === 'settings' || view === 'today') render();
+    },
+    async restore(token) {
+      const list = await this.req('/gists?per_page=100', 'GET', null, token);
+      const g = list.find(x => x.description === 'Readyset backup' && x.files && x.files['readyset-backup.json']);
+      if (!g) throw new Error('No Readyset backup found in this account');
+      const full = await this.req('/gists/' + g.id, 'GET', null, token);
+      const f = full.files['readyset-backup.json'];
+      let content = f.content;
+      if (f.truncated) content = await (await fetch(f.raw_url)).text();
+      const obj = JSON.parse(content);
+      if (!obj.settings || !obj.program) throw new Error('That backup is not readable');
+      return { obj, gistId: g.id };
+    },
+  };
+  async function connectCloud(token, restoreFirst) {
+    token = (token || '').trim(); if (!token) { toast('Paste a token first'); return; }
+    ui.cloudBusy = true; render();
+    try {
+      if (restoreFirst) {
+        const r = await Cloud.restore(token);
+        const obj = r.obj; obj.settings.gistToken = token; obj.settings.gistId = r.gistId; obj.current = null;
+        state = Object.assign(E.defaultState(), obj); state.setupDone = true; migrate(); Store.pushAll(state); Store.saveLocal(state);
+        noteBackup('cloud'); state.lastCloudBackup = Date.now(); ui.cloudBusy = false; ui.setupRestore = false; save(); toast('Restored from your cloud backup'); render(); return;
+      }
+      state.settings.gistToken = token; state.cloudError = null; save();
+      await Cloud.backup();
+      ui.cloudBusy = false;
+      if (state.cloudError) toast(state.cloudError); else toast('Cloud backup on');
+      render();
+    } catch (e) { ui.cloudBusy = false; toast((e && e.message) || 'Could not reach GitHub'); render(); }
+  }
   function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
 
   // ---------- Toast / confirm ----------
@@ -1067,7 +1143,12 @@ canvas { width: 100%; height: auto; display: block; }
       <p class="muted small">Setup takes about two minutes: your current maxes, your equipment, your training days.</p>
       ${steps}
       <label class="f">Your name (optional)<input id="d-name" data-draft="name" value="${esc(d.name)}" placeholder="Jerm"></label>
-      <button class="btn primary block" data-action="setup-next">Start</button></div>`;
+      <button class="btn primary block" data-action="setup-next">Start</button>
+      <button class="btn quiet block" data-action="setup-restore">Already have a backup? Restore it</button>
+      ${ui.setupRestore ? `<div class="stack">
+        <label class="f">Paste backup text<textarea id="import-text" rows="3"></textarea></label><button class="btn" data-action="import">Restore from text</button>
+        ${!(window.claude && window.claude.use) ? `<label class="f">Or your GitHub token for cloud backup<input id="gist-token" type="password" autocomplete="off" placeholder="github_pat_…"></label><button class="btn" data-action="cloud-restore" ${ui.cloudBusy ? 'disabled' : ''}>Restore from cloud</button>` : ''}
+      </div>` : ''}</div>`;
     if (step === 1) return `
       <div class="card"><h2>Current maxes</h2>
       <p class="small muted">Enter a recent 1RM, or tap "from a set" and enter a recent hard set. Use a clean set with a rep or two left, not a grinder; grinders overestimate. The program works off a Training Max of ${Math.round(d.tmPct * 100)}% of these numbers and then calibrates them from your sets after every session, so a rough, conservative start is fine.</p>
@@ -1141,6 +1222,7 @@ canvas { width: 100%; height: auto; display: block; }
     const plan = E.buildSession(state, 'full');
     const last = lastSession();
     let html = '';
+    if (!Store.db && sessionsSinceBackup() >= 1 && !(state.settings.gistToken && !state.cloudError)) html += `<div class="callout bad row between"><span>${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} not backed up.${state.settings.gistToken ? ' Cloud backup failed.' : ''}</span><button class="btn sm" data-action="share-backup">Save backup</button></div>`;
     if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
     if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Two signals of stacking fatigue showed up this week. The book's rule is to take the deload now rather than grind into it. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
     if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
@@ -1718,14 +1800,36 @@ canvas { width: 100%; height: auto; display: block; }
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> Notify me when a rest ends <span class="muted small" style="font-weight:500">(iPhone: only from the home-screen app, and only while it is still running)</span></label>
         <label class="f">Extra easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
       </div>
-      <div class="card"><h3>Data</h3>
-        <p class="small muted">${Store.db ? 'Synced to your Claude account, so it follows you across devices.' : 'Stored in this browser only. Export now and then as a backup.'}</p>
-        <div class="btnrow"><button class="btn" data-action="export">Copy backup</button><button class="btn" data-action="import-toggle">Restore from backup</button></div>
-        ${ui.importText != null && ui.showImport ? `<label class="f">Paste a backup<textarea id="import-text" rows="4"></textarea></label><button class="btn primary" data-action="import">Restore</button>` : ''}
+      <div class="card"><h3>Data and backups</h3>
+        ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
+        <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Keep a backup on, and never delete or re-add the icon without one.</div>
+        ${renderCloud()}`}
+        <div class="btnrow"><button class="btn" data-action="share-backup">Save backup file</button><button class="btn" data-action="export">Copy backup</button></div>
+        <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
+        <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
+        ${ui.showImport ? `<label class="f">Paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn primary" data-action="import">Restore</button>` : ''}
         <button class="btn danger block" data-action="reset-confirm">Start over</button>
         ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every logged session, and it cannot be undone. Tap Copy backup first if there is anything worth keeping. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}
       </div>
       <p class="small muted" style="text-align:center">Readyset · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.</p>`;
+  }
+  function renderCloud() {
+    const s = state.settings;
+    if (s.gistToken) return `<div class="stack"><div class="row between"><b>Cloud backup: on</b><span class="pill ${state.cloudError ? 'red' : 'green'}">${state.cloudError ? 'error' : 'GitHub Gist'}</span></div>
+      <p class="small muted">${state.cloudError ? esc(state.cloudError) + '. It will retry after the next change.' : state.lastCloudBackup ? `Written ${new Date(state.lastCloudBackup).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}, about 15 s after every change, to a private gist in your GitHub account.` : 'Writing the first copy…'}</p>
+      <div class="btnrow"><button class="btn sm" data-action="cloud-backup-now">Back up now</button><button class="btn sm quiet" data-action="cloud-off">Turn off</button></div></div>`;
+    return `<details><summary class="btn block" style="display:flex">Turn on automatic cloud backup</summary>
+      <div class="stack" style="margin-top:10px">
+      <p class="small">Backs up to a private gist in your own GitHub account about 15 seconds after every change, and restores from it in one tap on a new phone. Create a token once:</p>
+      <ol class="small muted" style="margin:0;padding-left:18px">
+        <li>On github.com: profile photo → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
+        <li>Name it "Readyset", set expiration to the longest option, and under <b>Account permissions</b> set <b>Gists</b> to <b>Read and write</b>. Nothing else.</li>
+        <li>Generate, copy the token (it starts with github_pat_), paste it here.</li>
+      </ol>
+      <label class="f">GitHub token<input id="gist-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+      <div class="btnrow"><button class="btn primary" data-action="cloud-connect" ${ui.cloudBusy ? 'disabled' : ''}>Turn on</button><button class="btn" data-action="cloud-restore" ${ui.cloudBusy ? 'disabled' : ''}>Restore from cloud</button></div>
+      <p class="small muted">The token stays in this app only and is never written into the backup itself. It can only read and write gists.</p>
+      </div></details>`;
   }
   function applySetting(key, val) {
     const s = state.settings;
@@ -1796,15 +1900,21 @@ canvas { width: 100%; height: auto; display: block; }
       case 'set-plate': { const s = state.settings, p = Number(d.p); s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); save(); render(); break; }
       case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
       case 'extra-cardio': { const m = Number($('#extra-cardio').value) || 0; if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
-      case 'export': { const txt = JSON.stringify(state); const ok = () => toast('Backup copied. Paste it somewhere safe.'); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt)); else fallbackCopy(txt); break; }
+      case 'export': copyBackup(); break;
+      case 'share-backup': shareBackup(); break;
       case 'import-toggle': ui.showImport = !ui.showImport; render(); break;
-      case 'import': { try { const obj = JSON.parse($('#import-text').value); if (!obj.settings || !obj.program) throw new Error('bad'); state = obj; Store.pushAll(state); save(); ui.showImport = false; toast('Restored'); render(); } catch (e) { toast('That does not look like a Readyset backup'); } break; }
+      case 'import': { try { const obj = JSON.parse($('#import-text').value); if (!obj.settings || !obj.program) throw new Error('bad'); const keepToken = state.settings.gistToken, keepGist = state.settings.gistId; state = Object.assign(E.defaultState(), obj); state.setupDone = true; state.current = null; if (keepToken) { state.settings.gistToken = keepToken; state.settings.gistId = keepGist; } migrate(); Store.pushAll(state); save(); ui.showImport = false; ui.setupRestore = false; toast('Restored'); render(); } catch (e) { toast('That does not look like a Readyset backup'); } break; }
+      case 'cloud-connect': connectCloud($('#gist-token').value, false); break;
+      case 'cloud-restore': connectCloud($('#gist-token').value, true); break;
+      case 'cloud-backup-now': Cloud.backup().then(() => toast(state.cloudError ? state.cloudError : 'Backed up')); break;
+      case 'cloud-off': state.settings.gistToken = null; state.settings.gistId = null; state.cloudError = null; save(); render(); break;
+      case 'setup-restore': ui.setupRestore = !ui.setupRestore; render(); break;
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
       case 'reset': { for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; save(); render(); break; }
       case 'delete-session': { const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
     }
   });
-  function fallbackCopy(txt) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('Backup copied'); } catch (e) { toast('Copy failed; select and copy manually'); } ta.remove(); }
+  function fallbackCopy(txt) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } ta.remove(); if (ok) { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); } else toast('Copy failed. Use Save backup file instead.'); }
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.dataset.draft) { const dr = draft(); dr[t.dataset.draft] = t.type === 'checkbox' ? t.checked : t.value; return; }
@@ -1837,6 +1947,7 @@ canvas { width: 100%; height: auto; display: block; }
     migrate();
     render();
     if (state.current && state.current.phase === 'lift') { resumeTimer(); keepAwake(); }
+    if (Cloud.available() && (state.cloudError || sessionsSinceBackup())) Cloud.schedule();
   }
   // One-time upgrade steps for data saved by earlier versions.
   function migrate() {

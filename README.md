@@ -54,10 +54,21 @@ Preview locally (the `.claude/launch.json` entry serves `docs/` on port 8765):
 python -m http.server 8765 --directory docs
 ```
 
-## Data
+## Data and backups
 
-Everything is one JSON state object plus one document per session. *Copy backup* in Settings puts
-the whole thing on the clipboard; *Restore from backup* reads it back. *Start over* erases it.
+Everything is one JSON state object plus one document per session, stored in the browser.
+
+**On an iPhone, the home-screen app has its own storage, separate from Safari. Deleting the icon
+deletes the data.** Never delete or re-add the icon without a backup. Three backups exist:
+
+- **Cloud (recommended):** Settings → *Turn on automatic cloud backup*. It writes a private gist
+  in your GitHub account about 15 s after every change, and *Restore from cloud* brings it back on
+  a new phone or a re-added icon. Needs a fine-grained GitHub token with only the Gists permission.
+- **Save backup file:** opens the share sheet (Files, Notes, AirDrop).
+- **Copy backup:** the same JSON on the clipboard.
+
+Today shows a red banner whenever there are sessions newer than the last backup. *Start over*
+erases everything and cannot be undone.
 
 ## Changing the program
 

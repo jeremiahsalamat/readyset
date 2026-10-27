@@ -142,6 +142,14 @@ The History tab shows the weekly average of those implied maxes per lift against
 entered at setup. Calibration can be switched off in Settings; a max you set by hand is respected
 until your sets say otherwise.
 
+### Your data
+
+On an iPhone the home-screen app keeps its own storage, separate from Safari, and iOS deletes it
+when the icon is deleted. The app therefore keeps an off-device copy: an automatic backup to a
+private gist in your GitHub account after every change (Settings), plus a share-sheet file and a
+clipboard copy, and it shows a red banner on Today whenever a session has not been backed up.
+Restore is one tap on a new phone.
+
 ### Rest timer, notifications and closing the app
 
 The rest timer is stored, so closing the app mid-rest and reopening shows the right remaining
