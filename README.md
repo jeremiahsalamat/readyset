@@ -80,8 +80,22 @@ Fuzzes the engine and the state sanitizer: random settings, maxes and program po
 session generation (loads finite, at or above the bar, rounded to the plates; set and rep counts
 sane), rep-max math properties, in-session correction caps, readiness ranges, a 240-session walk
 through the state machine with random early deloads and easy weeks, degenerate review inputs, and
-a hostile backup (prototype keys, markup in names, out-of-range values, unknown exercise ids). A
-26-week simulation against a hidden "true max" lives in the development scratchpad.
+a hostile backup (prototype keys, markup in names, out-of-range values, unknown exercise ids), and
+regression checks for every rule in the guide (openers, bonus-rep caps, earned sets, the stop
+rule, calibration guards, the layoff and stall rules, the dial, the readiness triggers).
+
+The training rules were tuned with the simulators in `dev/sim/`: `sim2.js` fits the calibration
+against a hidden true max; `sim3.js` is a fitness-fatigue model of four lifter types (normal,
+fragile, robust, noisy) that scores a rule change by true strength gained at equal or lower
+fatigue, never by the app's own numbers. Run one with
+
+```bash
+node dev/sim/run3.js fragile baseline 36 7
+```
+
+(profile, variant from `dev/sim/variants.js` or a preset name from `applyTune`, weeks, seed; add
+`verbose` for the week-by-week log). `jt2like` is the high-volume program that buried the owner,
+kept as the yardstick. The three review reports the rules came from are in `dev/reviews/`.
 
 ## Security
 
@@ -106,7 +120,11 @@ a hostile backup (prototype keys, markup in names, out-of-range values, unknown 
 
 ## Changing the program
 
-- Block schemes (sets, reps, % of Training Max per week) are the `BLOCKS` table in `src/engine.js`.
-- Weekly set ceilings are `CAPS`. The four-day layout is `DAYS`. Exercises and swap lists are
-  `EX` and `SWAPS`.
-- Readiness thresholds are in `readinessScore`; the weekly review scoring is `weeklyReview`.
+- Block schemes (sets, reps, % of Training Max per week, the opener, per-lift overrides) are the
+  `BLOCKS` table in `src/engine.js`; the 22-week sequence and variation sets are `MACRO`.
+- Weekly set ceilings per phase are `CAPS_BY_BLOCK`. The four-day layout is `DAYS`. Exercises and
+  swap lists are `EX` and `SWAPS`.
+- Every threshold (readiness bands, correction caps and the stop rule, calibration guards, deload
+  triggers, the dial, the session time budget) is in `TUNE`; `applyTune(name)` holds the presets
+  the simulator sweeps. The weekly review scoring is `weeklyReview`; the layoff and stall rules
+  are `layoffAdjust` and `stallCheck`.

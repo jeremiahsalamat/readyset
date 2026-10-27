@@ -23,7 +23,7 @@
 
   function sanitizeSet(x) {
     if (!isObj(x)) return null;
-    const kind = oneOf(get(x, 'kind'), ['warm', 'work', 'backoff', 'test'], 'work');
+    const kind = oneOf(get(x, 'kind'), ['warm', 'work', 'backoff', 'test', 'single'], 'work');
     const reps = int(get(x, 'reps'), 0, 50, 5);
     return {
       w: numOrNull(get(x, 'w'), 0, 2000), reps, pct: numOrNull(get(x, 'pct'), 0, 2), kind,
@@ -49,6 +49,7 @@
       target: numOrNull(get(e, 'target'), 0, 2000), est: numOrNull(get(e, 'est'), 0, 3000), hitFloor: bool(get(e, 'hitFloor')), cut: int(get(e, 'cut'), 0, 20, 0),
       repRange: Array.isArray(rr) && rr.length === 2 ? [int(rr[0], 1, 50, 10), int(rr[1], 1, 50, 13)] : null,
       needsWeight: bool(get(e, 'needsWeight')), startHint: ex.startHint || null, adjNote: str(get(e, 'adjNote'), 240, null) || null, note: str(get(e, 'note'), 240, null) || null,
+      autoStopped: bool(get(e, 'autoStopped')),
     };
     return out;
   }
@@ -75,11 +76,14 @@
     delete out.notesList;
     const pn = get(s, 'planNotes');
     out.planNotes = Array.isArray(pn) ? pn.slice(0, 4).map(x => str(x, 200)).filter(Boolean) : [];
-    const phase = oneOf(get(s, 'phase'), ['lift', 'post', 'cardio'], null);
+    if (get(s, 'backfill') === true) out.backfill = true;
+    if (get(s, 'edited') === true) out.edited = true;
+    const phase = oneOf(get(s, 'phase'), ['lift', 'post', 'cardio', 'edit'], null);
     if (phase) {
       out.phase = phase; out.startedAt = num(get(s, 'startedAt'), 0, 4e12, Date.now()); out.finishedAt = numOrNull(get(s, 'finishedAt'), 0, 4e12);
       out.cardioMin = int(get(s, 'cardioMin'), 0, 600, 0); out.estMinutes = int(get(s, 'estMinutes'), 0, 600, 0);
       out.setLightRest = bool(get(s, 'setLightRest'));
+      if (phase === 'edit') { out.editOf = idStr(get(s, 'editOf'), null); out.editDate = dateStr(get(s, 'editDate'), out.date); if (!out.editOf) return null; }
       const cr = get(s, 'cardioRun');
       out.cardioRun = isObj(cr) ? { start: num(get(cr, 'start'), 0, 4e12, 0), pausedTotal: num(get(cr, 'pausedTotal'), 0, 4e12, 0), paused: bool(get(cr, 'paused')), pausedAt: numOrNull(get(cr, 'pausedAt'), 0, 4e12) } : null;
     }
@@ -108,7 +112,7 @@
     s.warmupSets = get(S, 'warmupSets') !== false;
     s.autoCalibrate = get(S, 'autoCalibrate') !== false;
     s.notify = bool(get(S, 'notify'));
-    s.includePeak = get(S, 'includePeak') !== false;
+    s.includePeak = get(S, 'includePeak') === true;
     const DAYS7 = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const days = Array.isArray(get(S, 'days')) ? get(S, 'days').filter(x => DAYS7.includes(x)) : [];
     s.days = days.length ? Array.from(new Set(days)) : ['Mon', 'Tue', 'Thu', 'Fri'];
@@ -122,7 +126,8 @@
     for (const k of LIFTS) {
       const src = isObj(get(L, k)) ? get(L, k) : {};
       const oneRM = num(get(src, 'oneRM'), 0, 2000, 0);
-      d.lifts[k] = { oneRM, tm: oneRM ? E.roundTo(oneRM * s.tmPct, s.increment) : 0, est: numOrNull(get(src, 'est'), 0, 3000), estDate: dateStr(get(src, 'estDate'), null), blockStartRM: numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null };
+      d.lifts[k] = { oneRM, tm: oneRM ? E.roundTo(oneRM * s.tmPct, s.increment) : 0, est: numOrNull(get(src, 'est'), 0, 3000), estDate: dateStr(get(src, 'estDate'), null), blockStartRM: numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null,
+        estAtBlockStart: numOrNull(get(src, 'estAtBlockStart'), 0, 3000), upKey: str(get(src, 'upKey'), 20, null) || null, macroEst: numOrNull(get(src, 'macroEst'), 0, 3000), macroWasFlagged: bool(get(src, 'macroWasFlagged')) };
     }
     const A = isObj(get(raw, 'acc')) ? get(raw, 'acc') : {};
     d.acc = {};
@@ -144,14 +149,29 @@
     p.swaps = {};
     for (const k of Object.keys(SW)) if (SLOT_KEYS.includes(k) && E.SWAPS[k].includes(SW[k])) p.swaps[k] = SW[k];
     const SP = get(P, 'special');
-    p.special = isObj(SP) && get(SP, 'type') === 'rest' ? { type: 'rest', weeksLeft: int(get(SP, 'weeksLeft'), 1, 4, 1) } : null;
+    p.special = isObj(SP) && (get(SP, 'type') === 'rest' || get(SP, 'type') === 'deload') ? { type: get(SP, 'type'), weeksLeft: int(get(SP, 'weeksLeft'), 1, 4, 1), resumeDayIdx: int(get(SP, 'resumeDayIdx'), 0, 3, 0) } : null;
     const nbo = get(P, 'nextBlockOverride'); p.nextBlockOverride = nbo == null ? null : int(nbo, 0, E.BLOCKS.length - 1, null);
-    p.pendingDeload = bool(get(P, 'pendingDeload')); p.lightRestOfWeek = bool(get(P, 'lightRestOfWeek'));
+    p.pendingDeload = bool(get(P, 'pendingDeload')); p.lightRestOfWeek = bool(get(P, 'lightRestOfWeek')); p.pushOn = bool(get(P, 'pushOn'));
+    p.volumeDial = int(get(P, 'volumeDial'), -2, 2, 0); p.blockClean = get(P, 'blockClean') !== false; p.readinessBase = numOrNull(get(P, 'readinessBase'), 0, 100);
+    const CD = isObj(get(P, 'calibDrops')) ? get(P, 'calibDrops') : {};
+    p.calibDrops = {}; for (const k of LIFTS) { const n = int(get(CD, k), 0, 50, 0); if (n) p.calibDrops[k] = n; }
+    p.chronicSince = num(get(P, 'chronicSince'), 0, 4e12, 0);
+    p.macroPos = int(get(P, 'macroPos'), 0, E.MACRO.length - 1, 0);
+    if (E.MACRO[p.macroPos].block !== E.BLOCKS[p.blockIdx].id) { const i = E.MACRO.findIndex(m => m.block === E.BLOCKS[p.blockIdx].id); p.macroPos = i >= 0 ? i : 0; }
+    p.variantSet = oneOf(get(P, 'variantSet'), ['A', 'B'], 'A');
+    const RC = isObj(get(P, 'runCeil')) ? get(P, 'runCeil') : {};
+    p.runCeil = { squat: int(get(RC, 'squat'), 0, 3, 1), bench: int(get(RC, 'bench'), 0, 3, 1), deadlift: int(get(RC, 'deadlift'), 0, 3, 1) };
+    p.macroRough = int(get(P, 'macroRough'), 0, 10, 0);
+    p.stallRest = int(get(P, 'stallRest'), 0, 2, 0); p.dialMovesBlock = int(get(P, 'dialMovesBlock'), 0, 20, 0); p.readinessLowWeeks = int(get(P, 'readinessLowWeeks'), 0, 20, 0);
+    p.readinessHist = (Array.isArray(get(P, 'readinessHist')) ? get(P, 'readinessHist') : []).map(x => num(x, 0, 100, null)).filter(x => x != null).slice(-12);
+    const LAW = isObj(get(P, 'lastAddWeek')) ? get(P, 'lastAddWeek') : {};
+    p.lastAddWeek = {}; for (const k of LIFTS) { const n = int(get(LAW, k), 0, 12, null); if (n != null) p.lastAddWeek[k] = n; }
+    p.layoffPct = num(get(P, 'layoffPct'), -0.1, 0, 0); p.layoffHandled = str(get(P, 'layoffHandled'), 64, null) || null;
     p.startedAt = dateStr(get(P, 'startedAt'), null);
 
     const LE = isObj(get(raw, 'learned')) ? get(raw, 'learned') : {};
     d.learned = {};
-    for (const b of E.BLOCKS) if (isObj(get(LE, b.id))) { const o = get(LE, b.id); d.learned[b.id] = { squat: int(get(o, 'squat'), -1, 2, 0), bench: int(get(o, 'bench'), -1, 2, 0), deadlift: int(get(o, 'deadlift'), -1, 2, 0) }; }
+    for (const b of E.BLOCKS) if (isObj(get(LE, b.id))) { const o = get(LE, b.id); d.learned[b.id] = { squat: int(get(o, 'squat'), -1, 3, 0), bench: int(get(o, 'bench'), -1, 3, 0), deadlift: int(get(o, 'deadlift'), -1, 3, 0) }; }
 
     const sessions = Array.isArray(get(raw, 'sessions')) ? get(raw, 'sessions') : [];
     const seen = new Set();
