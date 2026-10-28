@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-06DYvBSBTHm0pfzct5t0Pr9s3eTI+Mnz1AoBF0nw4kM=' 'sha256-IUigNeBvfmu5heXePZ/RvugP3Qxk3PgW2LnViiYhcfk=' 'sha256-UZAjnpFxp1G1yP+amIUqCJRGjJZ4b3onxebU8tuIOzw=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-06DYvBSBTHm0pfzct5t0Pr9s3eTI+Mnz1AoBF0nw4kM=' 'sha256-IUigNeBvfmu5heXePZ/RvugP3Qxk3PgW2LnViiYhcfk=' 'sha256-GLmQ+oWbzXhOXJZMZS4bJftlqIaDGiMmuPtfCTmnUv8=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -82,7 +82,10 @@ button { cursor: pointer; }
 
 /* App frame */
 /* Only the status-bar strip stays fixed at the top (the header scrolls away with the content). */
-#app { height: 100%; display: flex; flex-direction: column; overflow: hidden; padding-top: env(safe-area-inset-top, 0px); background: var(--bg); }
+/* #app is pinned to the screen and sized by fitHeight() in app.js (--app-h), so it reaches the
+   true bottom edge even where iOS under-reports the page height. The rest timer and the RPE sheet
+   are positioned inside it, so they follow the real bottom too. */
+#app { position: fixed; top: 0; left: 0; right: 0; height: 100%; height: var(--app-h, 100%); display: flex; flex-direction: column; overflow: hidden; padding-top: env(safe-area-inset-top, 0px); background: var(--bg); }
 #scroller { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; display: flex; flex-direction: column; }
 .topbar { flex: none; padding-top: 10px; padding-bottom: 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; max-width: 680px; width: 100%; margin: 0 auto; }
 .topbar .brand { font-family: var(--display); font-weight: 700; font-size: 1.35rem; letter-spacing: .02em; }
@@ -195,7 +198,7 @@ details > summary { cursor: pointer; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 
 /* RPE picker sheet */
-.sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 20; display: flex; align-items: flex-end; justify-content: center; overscroll-behavior: contain; touch-action: none; }
+.sheet-bg { position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 20; display: flex; align-items: flex-end; justify-content: center; overscroll-behavior: contain; touch-action: none; }
 .sheet { background: var(--surface); width: 100%; max-width: 680px; border-radius: 16px 16px 0 0; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 12px; max-height: 85vh; max-height: 85dvh; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; }
 .rpegrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .rpegrid button { border: 1px solid var(--line); border-radius: 8px; padding: 10px 0; font-weight: 700; font-size: 1.1rem; background: var(--surface-2); display: flex; flex-direction: column; gap: 2px; align-items: center; }
@@ -203,7 +206,7 @@ details > summary::-webkit-details-marker { display: none; }
 .rpegrid button.target { border-color: var(--accent); }
 
 /* Rest timer bar */
-.timer { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--sab) + 10px); z-index: 8; max-width: calc(100vw - 2 * var(--gutter)); white-space: nowrap; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 8px 10px 8px 16px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); font-family: var(--display); font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.timer { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--sab) + 10px); z-index: 8; max-width: calc(100vw - 2 * var(--gutter)); white-space: nowrap; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 8px 10px 8px 16px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); font-family: var(--display); font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .timer button { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 999px; padding: 8px 12px; min-height: 40px; font-size: .9rem; font-family: var(--body); font-weight: 600; }
 td input[type=number] { font-size: 1rem; min-height: 40px; }
 .timer.over { background: var(--good); color: #fff; }
@@ -1668,6 +1671,30 @@ canvas { width: 100%; height: auto; display: block; }
   function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
 
   // ---------- Toast / confirm ----------
+  // Full-screen height, iOS home-screen apps only. With the status bar drawn over the page, iOS can
+  // report the page height as the screen minus the status bar, leaving a strip of that height empty
+  // under the tab bar. Only when all of these hold is the app sized to the screen itself: it runs
+  // from the iOS home screen (navigator.standalone exists only there), it fills the screen's width
+  // (not an iPad split view), and the shortfall is about a status bar (80px at most). Everywhere
+  // else (Android, Safari, desktop, the artifact page) no height is set and the layout follows the
+  // window natively, so no other device can be pushed off-screen by a wrong number.
+  function fitHeight() {
+    let h = 0;
+    try {
+      if (navigator.standalone === true && screen.width > 0 && screen.height > 0) {
+        const portrait = window.innerHeight >= window.innerWidth;
+        const long = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
+        const full = portrait ? long : short, gap = full - window.innerHeight;
+        if (Math.abs(window.innerWidth - (portrait ? short : long)) <= 2 && gap > 0 && gap <= 80) h = full;
+      }
+    } catch (e) { h = 0; }
+    if (h) document.documentElement.style.setProperty('--app-h', h + 'px');
+    else document.documentElement.style.removeProperty('--app-h');
+  }
+  fitHeight();
+  window.addEventListener('resize', fitHeight);
+  window.addEventListener('orientationchange', () => setTimeout(fitHeight, 250));
+  try { if (window.ResizeObserver) new ResizeObserver(() => fitHeight()).observe(document.documentElement); } catch (e) { /* events above still cover it */ }
   function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
   // ---------- Audio / vibration for the rest timer ----------
@@ -1702,7 +1729,7 @@ canvas { width: 100%; height: auto; display: block; }
   function tickTimer() {
     if (!ui.timer) return;
     let el = $('#timer');
-    if (!el) { el = document.createElement('div'); el.id = 'timer'; el.className = 'timer'; document.body.appendChild(el); }
+    if (!el) { el = document.createElement('div'); el.id = 'timer'; el.className = 'timer'; ($('#app') || document.body).appendChild(el); }
     const left = Math.ceil((ui.timer.end - Date.now()) / 1000);
     if (left <= 0 && !ui.timer.fired) { ui.timer.fired = true; beep(); notifyRestDone(); }
     el.classList.toggle('over', left <= 0);
