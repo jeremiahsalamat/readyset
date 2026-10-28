@@ -292,6 +292,10 @@
   function hr(v) { const h = Math.floor(v / 60), m = v % 60; return h ? `${h}h ${m ? m + 'm' : ''}`.trim() : `${m}m`; }
 
   // ---------- Views ----------
+  // The content area between the header and the tab bar is the only thing that scrolls (see
+  // styles.css): the tab bar sits outside it, so iOS delivers taps on it even mid-glide.
+  function scroller() { return document.getElementById('scroller') || document.scrollingElement || document.documentElement; }
+  function scrollToY(y) { const sc = scroller(); sc.scrollTop = Math.max(0, y || 0); }
   let anchor = null; // { sel, fallback, top }: the element a tap came from, held still across a re-render
   function anchorFor(t, a) {
     let ei, si = null;
@@ -313,7 +317,7 @@
     // shrank or folded away (iOS Safari has no scroll anchoring of its own).
     if (anchor) {
       const el = document.querySelector(anchor.sel) || document.querySelector(anchor.fallback);
-      if (el) { const dy = el.getBoundingClientRect().top - anchor.top; if (Math.abs(dy) >= 1) window.scrollBy(0, dy); anchor.top = el.getBoundingClientRect().top; }
+      if (el) { const dy = el.getBoundingClientRect().top - anchor.top; if (Math.abs(dy) >= 1) scroller().scrollTop += dy; anchor.top = el.getBoundingClientRect().top; }
     }
     if (view === 'history') requestAnimationFrame(drawCharts);
     if (view === 'today' && state.current && state.current.phase === 'cardio' && ui.cardioRun) requestAnimationFrame(tickCardio);
@@ -559,7 +563,7 @@
       const redsThisWeek = sessionsOfWeek().filter(s => s.readiness && s.readiness.color === 'red').length + 1;
       if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.isRest && P.dayIdx < 3) { P.lightRestOfWeek = true; sess.setLightRest = true; addLog('Second red check-in this week: remaining sessions switched to light (the book: light sessions, not an unplanned deload).'); }
     }
-    unlockAudio(); keepAwake(); save(); render(); window.scrollTo(0, 0);
+    unlockAudio(); keepAwake(); save(); render(); scrollToY(0);
   }
   function restToday() { ui.checkin = null; addLog('Rested instead of training; the session stays queued.'); save(); render(); }
   // General undo: snapshot everything a program-level action can change (position, maxes, learned
@@ -850,7 +854,7 @@
     ui.confirm = null; stopTimer();
     s.phase = 'post'; s.finishedAt = Date.now(); s.durationMin = s.backfill ? 0 : Math.max(1, Math.round((s.finishedAt - s.startedAt) / 60000));
     s.post = { difficulty: 0 };
-    save(); render(); window.scrollTo(0, 0);
+    save(); render(); scrollToY(0);
   }
   function abandon() {
     const s = state.current; stopTimer();
@@ -943,7 +947,7 @@
     afterSession();
     if (cal.length) { const rep = state.lastReport || { title: 'After today', lines: [] }; rep.lines = cal.concat(rep.lines); rep.title = state.lastReport ? rep.title : 'Maxes calibrated from today'; state.lastReport = rep; }
     try { if (wakeLock) wakeLock.release(); } catch (e) { /* ignore */ }
-    save(); render(); window.scrollTo(0, 0);
+    save(); render(); scrollToY(0);
   }
   function afterSession() {
     const P = state.program, pos = E.position(state);
@@ -1053,7 +1057,7 @@
     copy.skippedSlots = Array.isArray(copy.skippedSlots) ? copy.skippedSlots : [];
     copy.post = copy.post || { difficulty: 0 }; copy.notes = copy.notes || '';
     state.current = copy; ui.confirm = null; view = 'today'; ui.lastEi = null; ui.openEx = {}; ui.openWarm = {};
-    save(); render(); window.scrollTo(0, 0);
+    save(); render(); scrollToY(0);
   }
   function cancelEdit() { state.current = null; view = 'history'; save(); render(); }
   function saveEdit() {
@@ -1237,9 +1241,9 @@
     if (!t) return;
     if (t.dataset.view) {
       // Leaving a session for another tab and coming back returns you to the same spot.
-      if (view === 'today' && state.current) ui.todayScroll = window.scrollY;
+      if (view === 'today' && state.current) ui.todayScroll = scroller().scrollTop;
       view = t.dataset.view; ui.confirm = null; render();
-      window.scrollTo(0, view === 'today' && state.current ? (ui.todayScroll || 0) : 0); return;
+      scrollToY(view === 'today' && state.current ? (ui.todayScroll || 0) : 0); return;
     }
     const a = t.dataset.action, d = t.dataset;
     if (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') return;
@@ -1248,7 +1252,7 @@
     switch (a) {
       case 'ex-open': ui.openEx = ui.openEx || {}; ui.openEx[Number(d.ei)] = true; render(); break;
       case 'warm-open': ui.openWarm = ui.openWarm || {}; ui.openWarm[Number(d.ei)] = true; render(); break;
-      case 'setup-next': if (ui.setupStep === 1) { const bad = LIFTS.filter(l => !(Number(draft()[l]) > 0)); if (bad.length) { toast(`Enter a ${LIFTNAME[bad[0]]} max`); return; } } ui.setupStep++; render(); window.scrollTo(0, 0); break;
+      case 'setup-next': if (ui.setupStep === 1) { const bad = LIFTS.filter(l => !(Number(draft()[l]) > 0)); if (bad.length) { toast(`Enter a ${LIFTNAME[bad[0]]} max`); return; } } ui.setupStep++; render(); scrollToY(0); break;
       case 'setup-back': ui.setupStep = Math.max(0, ui.setupStep - 1); render(); break;
       case 'setup-calc': { const dr = draft(); dr.calc[d.lift] = dr.calc[d.lift] ? null : {}; render(); break; }
       case 'setup-apply-calc': { const dr = draft(), c = dr.calc[d.lift] || {}; const w = Number(c.w), r = Number(c.r), e = Number(c.e) || 8; if (w > 0 && r > 0) { dr[d.lift] = Math.round(E.e1rm(w, r, e) / 2.5) * 2.5; dr.calc[d.lift] = null; render(); } else toast('Enter weight and reps'); break; }
@@ -1411,6 +1415,13 @@
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   window.addEventListener('pagehide', saveNow);
+  // The page itself never scrolls, but iOS can nudge it up to make room for the keyboard and leave
+  // it there; put it back once no field has focus.
+  document.addEventListener('focusout', () => setTimeout(() => {
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+    if (window.scrollY || document.documentElement.scrollTop) window.scrollTo(0, 0);
+  }, 120));
 
   // ---------- Boot ----------
   async function boot() {

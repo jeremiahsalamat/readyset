@@ -38,14 +38,17 @@
 /* Touch: no double-tap zoom on quick repeated taps, no grey tap flash (buttons press instead),
    and taps never select text or pop the iOS callout. Pinch zoom stays available. */
 html { height: 100%; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
-body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.4; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overflow-x: hidden; }
+/* App shell: the page itself never scrolls. Header, content area and tab bar stack in a column
+   and only the content area (#scroller) scrolls. On iOS a tap on anything inside a gliding
+   scroller only stops the glide; keeping the tab bar outside it means one tap always switches. */
+html, body { overflow: hidden; overscroll-behavior: none; }
+body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.4; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 button, .tabbar, .pill, .set .n, .timer, .seg, .chips { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 /* iOS zooms the page into any form control whose text is under 16px, and often stays zoomed,
    which is what makes scrolling drift sideways. No control here goes below 16px. */
 input, select, textarea { font-size: max(16px, 1em); }
-/* While the RPE sheet is up the page behind it must not scroll under your thumb. */
-body:has(.sheet-bg) { overflow: hidden; }
-body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+/* While the RPE sheet is up the content behind it must not scroll under your thumb. */
+body:has(.sheet-bg) #scroller { overflow: hidden; }
 h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; margin: 0; text-wrap: balance; letter-spacing: .01em; }
 h1 { font-size: 2rem; } h2 { font-size: 1.45rem; } h3 { font-size: 1.15rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
 p { margin: 0; }
@@ -59,18 +62,21 @@ button { cursor: pointer; }
 .display { font-family: var(--display); }
 
 /* App frame */
-#app { min-height: 100%; display: flex; flex-direction: column; }
-.topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 9; background: var(--bg); padding-block: 10px 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
+#app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+#scroller { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; display: flex; flex-direction: column; }
+.topbar { flex: none; position: relative; z-index: 9; background: var(--bg); padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
 .topbar .brand { font-family: var(--display); font-weight: 700; font-size: 1.35rem; letter-spacing: .02em; }
 .topbar .brand span { color: var(--accent); }
 .topbar .pos { font-family: var(--display); font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; text-align: right; }
 /* --tabbar-h is the bar's height above the home indicator; content, the rest timer and the sheet
    all clear it plus the device's own safe area, whatever the phone. */
 :root { --tabbar-h: 58px; --gutter: 16px; }
-main { flex: 1; padding-top: 14px; padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 28px); padding-left: max(var(--gutter), env(safe-area-inset-left, 0px)); padding-right: max(var(--gutter), env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; max-width: 680px; width: 100%; margin: 0 auto; }
-body:has(#timer) main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 96px); }
+main { flex: 1 0 auto; padding-top: 14px; padding-bottom: 28px; padding-left: max(var(--gutter), env(safe-area-inset-left, 0px)); padding-right: max(var(--gutter), env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; max-width: 680px; width: 100%; margin: 0 auto; }
+body:has(#timer) main { padding-bottom: 96px; }
+/* Setup and the recovery screen hide the tab bar, so the content reaches the home indicator. */
+body:has(#tabbar[hidden]) main { padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
 main > * { min-width: 0; }
-.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9; display: flex; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); }
+.tabbar { flex: none; position: relative; z-index: 9; display: flex; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); }
 .tabbar button { flex: 1; background: none; border: 0; height: var(--tabbar-h); padding: 6px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-family: var(--display); font-size: .95rem; text-transform: uppercase; letter-spacing: .06em; }
 .tabbar button svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tabbar button[aria-current="page"] { color: var(--accent); }
@@ -242,7 +248,7 @@ canvas { width: 100%; height: auto; display: block; }
 @media (orientation: landscape) and (max-height: 500px) {
   :root { --tabbar-h: 48px; }
   .tabbar button { flex-direction: row; gap: 6px; }
-  .topbar { padding-block: 6px 5px; }
+  .topbar { padding-top: calc(6px + env(safe-area-inset-top, 0px)); padding-bottom: 5px; }
   .sheet { max-height: 92dvh; }
   .rpegrid button { padding: 6px 0; }
 }
