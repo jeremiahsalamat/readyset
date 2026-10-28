@@ -208,7 +208,7 @@
         endsShort = fillsWidth && top > 0 && gap > 0 && Math.abs(gap - top) <= 4;
       }
     } catch (e) { endsShort = false; }
-    if (endsShort) document.documentElement.style.setProperty('--sab', '0px');
+    if (endsShort) document.documentElement.style.setProperty('--sab', '8px'); // a small gap, so the bar does not sit flush on the edge
     else document.documentElement.style.removeProperty('--sab');
   }
   fitBottom();
