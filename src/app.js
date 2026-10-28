@@ -1355,6 +1355,31 @@
     if (t.dataset.action === 'dial') { const v = Math.max(-2, Math.min(2, Math.round(Number(t.value)) || 0)); if (v !== (state.program.volumeDial || 0)) { state.program.volumeDial = v; addLog(`Volume dial set to ${v > 0 ? '+' : ''}${v} by hand.`); save(); render(); } return; }
     if (t.dataset.action === 'pin-swap') { if (t.value === '') delete state.program.swaps[t.dataset.k]; else state.program.swaps[t.dataset.k] = t.value; save(); render(); return; }
   });
+  // iOS swallows a tap made while the page is still gliding after a flick: it only stops the glide,
+  // and no click follows. That is right for page content, but the tab bar and the rest timer are
+  // fixed controls, so they act on the touch itself: a touch that lifts within 10px of where it
+  // started, on the same button, is a tap. preventDefault stops the browser's own click from
+  // following, so it never fires twice.
+  const FAST = '#tabbar button, #timer button';
+  let fastTap = null;
+  document.addEventListener('touchstart', (ev) => {
+    const el = ev.target.closest && ev.target.closest(FAST);
+    fastTap = el && ev.touches.length === 1 ? { el, x: ev.touches[0].clientX, y: ev.touches[0].clientY } : null;
+  }, { passive: true });
+  document.addEventListener('touchmove', (ev) => {
+    if (!fastTap) return; const p = ev.touches[0];
+    if (Math.abs(p.clientX - fastTap.x) > 10 || Math.abs(p.clientY - fastTap.y) > 10) fastTap = null;
+  }, { passive: true });
+  document.addEventListener('touchcancel', () => { fastTap = null; }, { passive: true });
+  document.addEventListener('touchend', (ev) => {
+    const f = fastTap; fastTap = null; if (!f) return;
+    const p = ev.changedTouches[0];
+    if (Math.abs(p.clientX - f.x) > 10 || Math.abs(p.clientY - f.y) > 10) return;
+    const hit = document.elementFromPoint(p.clientX, p.clientY);
+    if (!hit || hit.closest(FAST) !== f.el) return;
+    ev.preventDefault();
+    f.el.click();
+  }, { passive: false });
   let typeTimer = null, pendingType = null, notesTimer = null;
   function applyPendingType() {
     clearTimeout(typeTimer); typeTimer = null;
