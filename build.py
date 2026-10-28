@@ -71,7 +71,6 @@ index = (
     '<link rel="apple-touch-icon" href="./icon-180.png">\n'
     '<link rel="icon" href="./icon-192.png">\n'
     + head_common +
-    '<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>\n'
     '</head>\n<body>\n' + body + scripts + sw_reg + '</body>\n</html>\n'
 )
 with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:

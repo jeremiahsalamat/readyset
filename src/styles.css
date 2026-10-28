@@ -62,22 +62,25 @@ button { cursor: pointer; }
 .display { font-family: var(--display); }
 
 /* App frame */
-#app { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+/* Only the status-bar strip stays fixed at the top (the header scrolls away with the content). */
+#app { height: 100%; display: flex; flex-direction: column; overflow: hidden; padding-top: env(safe-area-inset-top, 0px); background: var(--bg); }
 #scroller { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; display: flex; flex-direction: column; }
-.topbar { flex: none; position: relative; z-index: 9; background: var(--bg); padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: 8px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
+.topbar { flex: none; padding-top: 10px; padding-bottom: 0; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; max-width: 680px; width: 100%; margin: 0 auto; }
 .topbar .brand { font-family: var(--display); font-weight: 700; font-size: 1.35rem; letter-spacing: .02em; }
 .topbar .brand span { color: var(--accent); }
 .topbar .pos { font-family: var(--display); font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; text-align: right; }
 /* --tabbar-h is the bar's height above the home indicator; content, the rest timer and the sheet
    all clear it plus the device's own safe area, whatever the phone. */
-:root { --tabbar-h: 58px; --gutter: 16px; }
-main { flex: 1 0 auto; padding-top: 14px; padding-bottom: 28px; padding-left: max(var(--gutter), env(safe-area-inset-left, 0px)); padding-right: max(var(--gutter), env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; max-width: 680px; width: 100%; margin: 0 auto; }
+/* --sab: the home-indicator gap under the tab bar. The full inset (34px on Face ID iPhones) is
+   more than the thin indicator needs, so the bar sits 14px into it, like most iOS apps. */
+:root { --tabbar-h: 50px; --gutter: 16px; --sab: max(0px, calc(env(safe-area-inset-bottom, 0px) - 14px)); }
+main { flex: 1 0 auto; padding-top: 10px; padding-bottom: 28px; padding-left: max(var(--gutter), env(safe-area-inset-left, 0px)); padding-right: max(var(--gutter), env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; max-width: 680px; width: 100%; margin: 0 auto; }
 body:has(#timer) main { padding-bottom: 96px; }
 /* Setup and the recovery screen hide the tab bar, so the content reaches the home indicator. */
 body:has(#tabbar[hidden]) main { padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
 main > * { min-width: 0; }
-.tabbar { flex: none; position: relative; z-index: 9; display: flex; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); }
-.tabbar button { flex: 1; background: none; border: 0; height: var(--tabbar-h); padding: 6px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-family: var(--display); font-size: .95rem; text-transform: uppercase; letter-spacing: .06em; }
+.tabbar { flex: none; position: relative; z-index: 9; display: flex; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: var(--sab); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); }
+.tabbar button { flex: 1; background: none; border: 0; height: var(--tabbar-h); padding: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--muted); font-family: var(--display); font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; }
 .tabbar button svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tabbar button[aria-current="page"] { color: var(--accent); }
 
@@ -181,7 +184,7 @@ details > summary::-webkit-details-marker { display: none; }
 .rpegrid button.target { border-color: var(--accent); }
 
 /* Rest timer bar */
-.timer { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 10px); z-index: 8; max-width: calc(100vw - 2 * var(--gutter)); white-space: nowrap; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 8px 10px 8px 16px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); font-family: var(--display); font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.timer { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + var(--sab) + 10px); z-index: 8; max-width: calc(100vw - 2 * var(--gutter)); white-space: nowrap; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 8px 10px 8px 16px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); font-family: var(--display); font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .timer button { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 999px; padding: 8px 12px; min-height: 40px; font-size: .9rem; font-family: var(--body); font-weight: 600; }
 td input[type=number] { font-size: 1rem; min-height: 40px; }
 .timer.over { background: var(--good); color: #fff; }
@@ -239,16 +242,16 @@ canvas { width: 100%; height: auto; display: block; }
   .ex-head, .ex-note, .ex-foot { padding-left: 10px; padding-right: 10px; }
   .topbar .pos { font-size: .85rem; }
   .seg button small { font-size: .62rem; letter-spacing: .02em; }
-  .tabbar button { font-size: .85rem; letter-spacing: .03em; }
+  .tabbar button { font-size: .78rem; letter-spacing: .03em; }
   .timeline { gap: 2px; }
 }
 /* Large phones and tablets: roomier set rows. */
 @media (min-width: 560px) { .set { grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) 80px 52px; } .set .field input { max-width: 120px; } }
 /* Phone on its side: little height, so trim the chrome. */
 @media (orientation: landscape) and (max-height: 500px) {
-  :root { --tabbar-h: 48px; }
+  :root { --tabbar-h: 44px; }
   .tabbar button { flex-direction: row; gap: 6px; }
-  .topbar { padding-top: calc(6px + env(safe-area-inset-top, 0px)); padding-bottom: 5px; }
+  .topbar { padding-top: 6px; }
   .sheet { max-height: 92dvh; }
   .rpegrid button { padding: 6px 0; }
 }
