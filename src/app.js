@@ -368,7 +368,8 @@
       <button class="btn primary block" data-action="setup-next">Start</button>
       <button class="btn quiet block" data-action="setup-restore">Already have a backup? Restore it</button>
       ${ui.setupRestore ? `<div class="stack">
-        <label class="f">Paste backup text<textarea id="import-text" rows="3"></textarea></label><button class="btn" data-action="import">Restore from text</button>
+        ${filePick('Restore from a backup file', 'primary')}
+        <label class="f">Or paste backup text<textarea id="import-text" rows="3"></textarea></label><button class="btn" data-action="import">Restore from text</button>
         ${!(window.claude && window.claude.use) ? `<label class="f">Or your GitHub token for cloud backup<input id="gist-token" type="password" autocomplete="off" placeholder="github_pat_…"></label><button class="btn" data-action="cloud-restore" ${ui.cloudBusy ? 'disabled' : ''}>Restore from cloud</button>` : ''}
       </div>` : ''}</div>`;
     if (step === 1) return `
@@ -1214,7 +1215,7 @@
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
         <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
-        ${ui.showImport ? `<label class="f">Paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn primary" data-action="import">Restore</button>` : ''}
+        ${ui.showImport ? `${filePick('Choose a backup file', 'primary block')}<label class="f">Or paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn" data-action="import">Restore from text</button>` : ''}
         <button class="btn danger block" data-action="reset-confirm">Start over</button>
         ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every logged session, and it cannot be undone. Tap Copy backup first if there is anything worth keeping. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}
       </div>
@@ -1335,24 +1336,7 @@
       case 'export': copyBackup(); break;
       case 'share-backup': shareBackup(); break;
       case 'import-toggle': ui.showImport = !ui.showImport; render(); break;
-      case 'import': {
-        try {
-          const txt = $('#import-text').value || '';
-          if (txt.length > 20e6) throw new Error('too large');
-          const obj = JSON.parse(txt);
-          if (!obj || typeof obj !== 'object' || !obj.settings || !obj.program) throw new Error('bad');
-          const fresh = cleanState(obj, false); // untrusted: no token, gist id or undo can come in with it
-          if (!fresh.setupDone) throw new Error('no maxes');
-          const keepToken = state.settings.gistToken, keepGist = state.settings.gistId; // only this device's own token survives
-          const oldIds = state.sessions.map(x => x.id);
-          stopTimer(); state = fresh; state.current = null;
-          if (keepToken) { state.settings.gistToken = keepToken; state.settings.gistId = keepGist; }
-          migrate(); Store.pushAll(state);
-          for (const id of oldIds) if (!state.sessions.some(x => x.id === id)) Store.deleteSession(id);
-          save(); ui.showImport = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null; toast('Restored'); render();
-        } catch (e) { toast('That does not look like a Readyset backup'); }
-        break;
-      }
+      case 'import': restoreFromText(($('#import-text') || {}).value || ''); break;
       case 'cloud-connect': connectCloud($('#gist-token').value, false); break;
       case 'cloud-restore': connectCloud($('#gist-token').value, true); break;
       case 'cloud-backup-now': Cloud.backup().then(ok => toast(ok ? 'Backed up' : (state.cloudError || 'A backup is already running'))); break;
@@ -1363,6 +1347,39 @@
       case 'delete-session': { const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
     }
   });
+  // Restore a backup (pasted text or a chosen file). Untrusted: it goes through the sanitizer and can
+  // never carry a cloud token, a gist id or an undo snapshot; only this device's own token survives.
+  function restoreFromText(txt) {
+    try {
+      if (txt.length > 20e6) throw new Error('too large');
+      const obj = JSON.parse(String(txt).replace(/^\uFEFF/, ''));
+      if (!obj || typeof obj !== 'object' || !obj.settings || !obj.program) throw new Error('bad');
+      const fresh = cleanState(obj, false);
+      if (!fresh.setupDone) throw new Error('no maxes');
+      const keepToken = state.settings.gistToken, keepGist = state.settings.gistId;
+      const oldIds = state.sessions.map(x => x.id);
+      stopTimer(); state = fresh; state.current = null;
+      if (keepToken) { state.settings.gistToken = keepToken; state.settings.gistId = keepGist; }
+      migrate(); Store.pushAll(state);
+      for (const id of oldIds) if (!state.sessions.some(x => x.id === id)) Store.deleteSession(id);
+      save(); ui.showImport = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null;
+      { const n = state.sessions.filter(x => !x.skipped).length; toast(`Restored: ${n} session${n === 1 ? "" : "s"}`); } render();
+      return true;
+    } catch (e) { toast('That does not look like a Readyset backup'); return false; }
+  }
+  function restoreFromFile(input) {
+    const f = input.files && input.files[0]; input.value = '';
+    if (!f) return;
+    if (f.size > 20e6) { toast('That file is too large to be a Readyset backup'); return; }
+    const r = new FileReader();
+    r.onload = () => restoreFromText(String(r.result || ''));
+    r.onerror = () => toast('Could not read that file');
+    r.readAsText(f);
+  }
+  // A real file input inside a button-styled label: tapping it opens the Files picker on iPhone.
+  function filePick(label, extraClass) {
+    return `<label class="btn file-pick ${extraClass || ''}">${label}<input type="file" accept=".json,application/json,text/json,text/plain" data-action="import-file" aria-label="${label}"></label>`;
+  }
   function fallbackCopy(txt) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } ta.remove(); if (ok) { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); } else toast('Copy failed. Use Save backup file instead.'); }
   document.addEventListener('change', (ev) => {
     const t = ev.target;
@@ -1377,6 +1394,7 @@
       else { const el = $('#tm-line'); if (el) el.textContent = tmLine(); }
       return;
     }
+    if (t.dataset.action === 'import-file') { restoreFromFile(t); return; }
     if (t.dataset.backfill && ui.backfill) { ui.backfill[t.dataset.backfill] = t.value; return; }
     if (t.dataset.action === 'swap') { swapExercise(Number(t.dataset.ei), t.value); return; }
     if (t.dataset.action === 'notes') { state.current.notes = t.value; save(); return; }
