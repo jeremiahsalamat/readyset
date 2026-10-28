@@ -190,6 +190,31 @@
   function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
 
   // ---------- Toast / confirm ----------
+  // Unused home-bar padding. Where an iPhone home-screen app ends above the screen's bottom edge
+  // (iOS sized it as screen minus status bar), the home indicator is outside the app, so the gap kept
+  // for it under the tab labels is wasted and comes out. This only ever removes padding: nothing is
+  // sized or placed beyond the height iOS reports, so the tab bar cannot leave the screen.
+  function fitBottom() {
+    let endsShort = false;
+    try {
+      if (navigator.standalone === true && screen.width > 0 && screen.height > 0 && document.body) {
+        const probe = document.createElement('div');
+        probe.style.cssText = 'position:absolute;visibility:hidden;height:0;padding-top:env(safe-area-inset-top,0px)';
+        document.body.appendChild(probe); const top = probe.offsetHeight; probe.remove();
+        const portrait = window.innerHeight >= window.innerWidth;
+        const long = Math.max(screen.width, screen.height), shortSide = Math.min(screen.width, screen.height);
+        const fillsWidth = Math.abs(window.innerWidth - (portrait ? shortSide : long)) <= 2;
+        const gap = (portrait ? long : shortSide) - window.innerHeight;
+        endsShort = fillsWidth && top > 0 && gap > 0 && Math.abs(gap - top) <= 4;
+      }
+    } catch (e) { endsShort = false; }
+    if (endsShort) document.documentElement.style.setProperty('--sab', '0px');
+    else document.documentElement.style.removeProperty('--sab');
+  }
+  fitBottom();
+  window.addEventListener('resize', fitBottom);
+  window.addEventListener('orientationchange', () => setTimeout(fitBottom, 250));
+  try { if (window.ResizeObserver) new ResizeObserver(() => fitBottom()).observe(document.documentElement); } catch (e) { /* events above still cover it */ }
   function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
   // ---------- Audio / vibration for the rest timer ----------

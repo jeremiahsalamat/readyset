@@ -34,7 +34,7 @@ icon_tags = (
     '<link rel="icon" type="image/png" href="icon-180.png">\n'
     '<meta name="apple-mobile-web-app-title" content="Readyset">\n'
     '<meta name="apple-mobile-web-app-capable" content="yes">\n'
-    '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n'
+    '<meta name="apple-mobile-web-app-status-bar-style" content="black">\n'
     '<script>(function(){try{var h=document.head;["link[rel=apple-touch-icon]","link[rel=icon]","meta[name=apple-mobile-web-app-title]","meta[name=apple-mobile-web-app-capable]","meta[name=apple-mobile-web-app-status-bar-style]"].forEach(function(s){var e=document.querySelector("body "+s);if(e&&h)h.appendChild(e);});}catch(e){}})();</script>\n'
 )
 with open(os.path.join(ROOT, 'readyset.html'), 'w', encoding='utf-8', newline='\n') as f:
@@ -63,7 +63,10 @@ index = (
     '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n'
     '<meta name="apple-mobile-web-app-capable" content="yes">\n'
     '<meta name="mobile-web-app-capable" content="yes">\n'
-    '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">\n'
+    # Solid status bar: iOS places the app below it. With 'black-translucent' some iOS versions size
+    # the app as screen minus status bar but draw it from the top edge, leaving that much unusable
+    # space under the tab bar. Either way the layout only ever uses the height iOS reports.
+    '<meta name="apple-mobile-web-app-status-bar-style" content="black">\n'
     '<meta name="apple-mobile-web-app-title" content="Readyset">\n'
     '<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">\n'
     '<meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">\n'

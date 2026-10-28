@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-06DYvBSBTHm0pfzct5t0Pr9s3eTI+Mnz1AoBF0nw4kM=' 'sha256-IUigNeBvfmu5heXePZ/RvugP3Qxk3PgW2LnViiYhcfk=' 'sha256-UZAjnpFxp1G1yP+amIUqCJRGjJZ4b3onxebU8tuIOzw=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-06DYvBSBTHm0pfzct5t0Pr9s3eTI+Mnz1AoBF0nw4kM=' 'sha256-IUigNeBvfmu5heXePZ/RvugP3Qxk3PgW2LnViiYhcfk=' 'sha256-n4wup9CDhkWEGrnDiaJIBjldxqYBVkDkQuHYEEsLD7g=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Readyset">
 <meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">
@@ -1668,6 +1668,31 @@ canvas { width: 100%; height: auto; display: block; }
   function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
 
   // ---------- Toast / confirm ----------
+  // Unused home-bar padding. Where an iPhone home-screen app ends above the screen's bottom edge
+  // (iOS sized it as screen minus status bar), the home indicator is outside the app, so the gap kept
+  // for it under the tab labels is wasted and comes out. This only ever removes padding: nothing is
+  // sized or placed beyond the height iOS reports, so the tab bar cannot leave the screen.
+  function fitBottom() {
+    let endsShort = false;
+    try {
+      if (navigator.standalone === true && screen.width > 0 && screen.height > 0 && document.body) {
+        const probe = document.createElement('div');
+        probe.style.cssText = 'position:absolute;visibility:hidden;height:0;padding-top:env(safe-area-inset-top,0px)';
+        document.body.appendChild(probe); const top = probe.offsetHeight; probe.remove();
+        const portrait = window.innerHeight >= window.innerWidth;
+        const long = Math.max(screen.width, screen.height), shortSide = Math.min(screen.width, screen.height);
+        const fillsWidth = Math.abs(window.innerWidth - (portrait ? shortSide : long)) <= 2;
+        const gap = (portrait ? long : shortSide) - window.innerHeight;
+        endsShort = fillsWidth && top > 0 && gap > 0 && Math.abs(gap - top) <= 4;
+      }
+    } catch (e) { endsShort = false; }
+    if (endsShort) document.documentElement.style.setProperty('--sab', '0px');
+    else document.documentElement.style.removeProperty('--sab');
+  }
+  fitBottom();
+  window.addEventListener('resize', fitBottom);
+  window.addEventListener('orientationchange', () => setTimeout(fitBottom, 250));
+  try { if (window.ResizeObserver) new ResizeObserver(() => fitBottom()).observe(document.documentElement); } catch (e) { /* events above still cover it */ }
   function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
   // ---------- Audio / vibration for the rest timer ----------

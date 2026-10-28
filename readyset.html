@@ -266,7 +266,7 @@ canvas { width: 100%; height: auto; display: block; }
 <link rel="icon" type="image/png" href="icon-180.png">
 <meta name="apple-mobile-web-app-title" content="Readyset">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <script>(function(){try{var h=document.head;["link[rel=apple-touch-icon]","link[rel=icon]","meta[name=apple-mobile-web-app-title]","meta[name=apple-mobile-web-app-capable]","meta[name=apple-mobile-web-app-status-bar-style]"].forEach(function(s){var e=document.querySelector("body "+s);if(e&&h)h.appendChild(e);});}catch(e){}})();</script>
 <div id="app">
   <div id="scroller">
@@ -1657,6 +1657,31 @@ canvas { width: 100%; height: auto; display: block; }
   function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
 
   // ---------- Toast / confirm ----------
+  // Unused home-bar padding. Where an iPhone home-screen app ends above the screen's bottom edge
+  // (iOS sized it as screen minus status bar), the home indicator is outside the app, so the gap kept
+  // for it under the tab labels is wasted and comes out. This only ever removes padding: nothing is
+  // sized or placed beyond the height iOS reports, so the tab bar cannot leave the screen.
+  function fitBottom() {
+    let endsShort = false;
+    try {
+      if (navigator.standalone === true && screen.width > 0 && screen.height > 0 && document.body) {
+        const probe = document.createElement('div');
+        probe.style.cssText = 'position:absolute;visibility:hidden;height:0;padding-top:env(safe-area-inset-top,0px)';
+        document.body.appendChild(probe); const top = probe.offsetHeight; probe.remove();
+        const portrait = window.innerHeight >= window.innerWidth;
+        const long = Math.max(screen.width, screen.height), shortSide = Math.min(screen.width, screen.height);
+        const fillsWidth = Math.abs(window.innerWidth - (portrait ? shortSide : long)) <= 2;
+        const gap = (portrait ? long : shortSide) - window.innerHeight;
+        endsShort = fillsWidth && top > 0 && gap > 0 && Math.abs(gap - top) <= 4;
+      }
+    } catch (e) { endsShort = false; }
+    if (endsShort) document.documentElement.style.setProperty('--sab', '0px');
+    else document.documentElement.style.removeProperty('--sab');
+  }
+  fitBottom();
+  window.addEventListener('resize', fitBottom);
+  window.addEventListener('orientationchange', () => setTimeout(fitBottom, 250));
+  try { if (window.ResizeObserver) new ResizeObserver(() => fitBottom()).observe(document.documentElement); } catch (e) { /* events above still cover it */ }
   function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
   // ---------- Audio / vibration for the rest timer ----------
