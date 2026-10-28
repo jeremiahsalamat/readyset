@@ -1314,14 +1314,34 @@
     if (t.dataset.action === 'dial') { const v = Math.max(-2, Math.min(2, Math.round(Number(t.value)) || 0)); if (v !== (state.program.volumeDial || 0)) { state.program.volumeDial = v; addLog(`Volume dial set to ${v > 0 ? '+' : ''}${v} by hand.`); save(); render(); } return; }
     if (t.dataset.action === 'pin-swap') { if (t.value === '') delete state.program.swaps[t.dataset.k]; else state.program.swaps[t.dataset.k] = t.value; save(); render(); return; }
   });
-  let typeTimer = null;
+  let typeTimer = null, pendingType = null, notesTimer = null;
+  function applyPendingType() {
+    clearTimeout(typeTimer); typeTimer = null;
+    const p = pendingType; pendingType = null;
+    if (p && state.current && state.current.exercises[p.ei]) setField(p.ei, p.si, p.which, p.val, true);
+  }
   document.addEventListener('input', (ev) => {
     const t = ev.target;
     if (t.dataset.draft && t.type !== 'checkbox') draft()[t.dataset.draft] = t.value;
     if (t.dataset.calc) { const [l, k] = t.dataset.calc.split(':'); const dr = draft(); dr.calc[l] = dr.calc[l] || {}; dr.calc[l][k] = t.value; }
     // Save set inputs as you type, so a closed app mid-entry loses nothing.
-    if (t.dataset.set && state.current) { clearTimeout(typeTimer); const ei = Number(t.dataset.ei), si = Number(t.dataset.si), which = t.dataset.set, val = t.value; typeTimer = setTimeout(() => { if (state.current && state.current.exercises[ei]) setField(ei, si, which, val, true); }, 350); }
+    if (t.dataset.set && state.current) { clearTimeout(typeTimer); pendingType = { ei: Number(t.dataset.ei), si: Number(t.dataset.si), which: t.dataset.set, val: t.value }; typeTimer = setTimeout(applyPendingType, 350); }
+    // Notes save as you type too (they used to wait for the box to lose focus).
+    if (t.dataset.action === 'notes' && state.current) { state.current.notes = t.value.slice(0, 1000); clearTimeout(notesTimer); notesTimer = setTimeout(() => Store.saveLocal(state), 400); }
   });
+  // Closing or switching away from the app: write whatever is half-typed right now. iOS can kill a
+  // backgrounded web app without warning, and these events are the last chance to save.
+  function saveNow() {
+    if (!state) return;
+    try {
+      applyPendingType();
+      clearTimeout(notesTimer); notesTimer = null;
+      const n = $('#sess-notes'); if (n && state.current) state.current.notes = n.value.slice(0, 1000);
+      Store.saveLocal(state); Store.flush();
+    } catch (e) { /* never block closing */ }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
+  window.addEventListener('pagehide', saveNow);
 
   // ---------- Boot ----------
   async function boot() {
