@@ -190,30 +190,6 @@
   function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
 
   // ---------- Toast / confirm ----------
-  // Full-screen height, iOS home-screen apps only. With the status bar drawn over the page, iOS can
-  // report the page height as the screen minus the status bar, leaving a strip of that height empty
-  // under the tab bar. Only when all of these hold is the app sized to the screen itself: it runs
-  // from the iOS home screen (navigator.standalone exists only there), it fills the screen's width
-  // (not an iPad split view), and the shortfall is about a status bar (80px at most). Everywhere
-  // else (Android, Safari, desktop, the artifact page) no height is set and the layout follows the
-  // window natively, so no other device can be pushed off-screen by a wrong number.
-  function fitHeight() {
-    let h = 0;
-    try {
-      if (navigator.standalone === true && screen.width > 0 && screen.height > 0) {
-        const portrait = window.innerHeight >= window.innerWidth;
-        const long = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
-        const full = portrait ? long : short, gap = full - window.innerHeight;
-        if (Math.abs(window.innerWidth - (portrait ? short : long)) <= 2 && gap > 0 && gap <= 80) h = full;
-      }
-    } catch (e) { h = 0; }
-    if (h) document.documentElement.style.setProperty('--app-h', h + 'px');
-    else document.documentElement.style.removeProperty('--app-h');
-  }
-  fitHeight();
-  window.addEventListener('resize', fitHeight);
-  window.addEventListener('orientationchange', () => setTimeout(fitHeight, 250));
-  try { if (window.ResizeObserver) new ResizeObserver(() => fitHeight()).observe(document.documentElement); } catch (e) { /* events above still cover it */ }
   function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
   // ---------- Audio / vibration for the rest timer ----------
@@ -248,7 +224,7 @@
   function tickTimer() {
     if (!ui.timer) return;
     let el = $('#timer');
-    if (!el) { el = document.createElement('div'); el.id = 'timer'; el.className = 'timer'; ($('#app') || document.body).appendChild(el); }
+    if (!el) { el = document.createElement('div'); el.id = 'timer'; el.className = 'timer'; document.body.appendChild(el); }
     const left = Math.ceil((ui.timer.end - Date.now()) / 1000);
     if (left <= 0 && !ui.timer.fired) { ui.timer.fired = true; beep(); notifyRestDone(); }
     el.classList.toggle('over', left <= 0);
