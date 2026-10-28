@@ -292,6 +292,15 @@
   function hr(v) { const h = Math.floor(v / 60), m = v % 60; return h ? `${h}h ${m ? m + 'm' : ''}`.trim() : `${m}m`; }
 
   // ---------- Views ----------
+  let anchor = null; // { sel, fallback, top }: the element a tap came from, held still across a re-render
+  function anchorFor(t, a) {
+    let ei, si = null;
+    if (a === 'rpe-pick' && ui.sheet) { ei = ui.sheet.ei; si = ui.sheet.si; }
+    else { const ex = t.closest('.ex[data-ei]'); if (!ex) return null; ei = ex.dataset.ei; const row = t.closest('.set[data-si]'); if (row) si = row.dataset.si; }
+    const fallback = `.ex[data-ei="${ei}"]`, sel = si != null ? `${fallback} .set[data-si="${si}"]` : fallback;
+    const el = document.querySelector(sel); if (!el) return null;
+    return { sel, fallback, top: el.getBoundingClientRect().top };
+  }
   function render() {
     const main = $('#main');
     if (!state.setupDone) { $('#tabbar').hidden = true; $('#pos').textContent = 'Setup'; main.innerHTML = renderSetup(); return; }
@@ -300,6 +309,12 @@
     const pos = E.positionLabel(state);
     $('#pos').textContent = `${pos.block.name} · ${pos.label}`;
     main.innerHTML = (state.current ? '' : renderUndo()) + (view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings());
+    // Keep whatever you just tapped exactly where it was on screen, even when text above it grew,
+    // shrank or folded away (iOS Safari has no scroll anchoring of its own).
+    if (anchor) {
+      const el = document.querySelector(anchor.sel) || document.querySelector(anchor.fallback);
+      if (el) { const dy = el.getBoundingClientRect().top - anchor.top; if (Math.abs(dy) >= 1) window.scrollBy(0, dy); anchor.top = el.getBoundingClientRect().top; }
+    }
     if (view === 'history') requestAnimationFrame(drawCharts);
     if (view === 'today' && state.current && state.current.phase === 'cardio' && ui.cardioRun) requestAnimationFrame(tickCardio);
   }
@@ -539,7 +554,7 @@
     if (back) { sess.backfill = true; sess.date = back.date; sess.ts = noonTs(back.date); }
     if (c && c.result) { delete sess.readiness.mode; }
     sess.exercises.forEach(e => { e.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; }); const w0 = e.sets.find(x => x.kind === 'work'); if (w0 && e.lift) e.plannedW = w0.w; });
-    state.current = sess; ui.checkin = null;
+    state.current = sess; ui.checkin = null; ui.lastEi = null; ui.openEx = {}; ui.openWarm = {}; ui.todayScroll = 0;
     if (c && c.result && c.result.color === 'red') {
       const redsThisWeek = sessionsOfWeek().filter(s => s.readiness && s.readiness.color === 'red').length + 1;
       if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.isRest && P.dayIdx < 3) { P.lightRestOfWeek = true; sess.setLightRest = true; addLog('Second red check-in this week: remaining sessions switched to light (the book: light sessions, not an unplanned deload).'); }
@@ -588,8 +603,20 @@
       <div class="q"><span class="label">Overall, that session was</span><div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${!!s.post && s.post.difficulty === v}">${DIFF[v]}</button>`).join('')}</div></div>
       <p class="small muted">Tick, untick or retype any set below. Saving replaces the stored session; if it belongs to the current block, the maxes are re-read from the whole block's sessions.</p></div>`;
     for (const n of (Array.isArray(s.planNotes) ? s.planNotes : [])) html += `<div class="callout">${esc(n)}</div>`;
+    // The exercise you are on: the one you last ticked while it has sets left, else the first
+    // unfinished one. Its next set is highlighted; finished exercises above fold to one line.
+    const live = (e) => !s.skippedSlots.includes(e.slotKey) && e.sets.some(x => !x.done);
+    const cur = ui.lastEi != null && s.exercises[ui.lastEi] && live(s.exercises[ui.lastEi]) ? ui.lastEi : s.exercises.findIndex(live);
     s.exercises.forEach((e, ei) => {
       const skipped = s.skippedSlots.includes(e.slotKey);
+      const allDone = !skipped && e.sets.length > 0 && e.sets.every(x => x.done);
+      if (!editing && allDone && ei !== ui.lastEi && !(ui.openEx && ui.openEx[ei])) {
+        const logged = e.sets.filter(x => x.kind !== 'warm').map(x => `${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ');
+        html += `<section class="ex collapsed" data-ei="${ei}"><button class="ex-sum" data-action="ex-open" data-ei="${ei}" aria-label="Show ${esc(e.name)}">
+          <span class="tick" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></span>
+          <span class="sum-main"><b>${esc(e.name)}</b><span class="small muted num">${logged || 'done'}</span></span><span class="small muted">Show</span></button></section>`;
+        return;
+      }
       const first = e.sets.find(x => x.kind === 'work' || x.kind === 'test') || e.sets[0];
       const nextSet = e.sets.find(x => !x.done && x.kind !== 'warm' && (x.actualW != null || x.w != null));
       const nextW = nextSet ? (nextSet.actualW != null ? nextSet.actualW : nextSet.w) : null;
@@ -602,7 +629,7 @@
         ${e.adjNote ? `<div class="ex-note adj" style="color:var(--accent)">${esc(e.adjNote)}</div>` : ''}
         ${!skipped && (e.hitFloor && e.sets.some(x => x.kind === 'work' && !x.done)) ? `<div class="ex-note"><button class="btn sm" data-action="cut-sets" data-ei="${ei}">Cut the remaining sets</button></div>` : ''}
         ${!skipped && e.cut ? `<div class="ex-note"><button class="btn sm quiet" data-action="restore-sets" data-ei="${ei}">Restore ${e.cut} cut set${e.cut > 1 ? 's' : ''}</button></div>` : ''}
-        ${skipped ? '' : renderSets(e, ei)}
+        ${skipped ? '' : renderSets(e, ei, ei === cur && !editing ? e.sets.findIndex(x => !x.done) : -1)}
         ${skipped ? '' : `<div class="ex-foot">
           ${e.load === 'bar' && nextW ? `<span class="plates">Next work set <b>${nextW}</b> = ${esc(plateText(nextW))}</span>` : e.load === 'bar' && first && first.w ? `<span class="plates">All work sets done</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
           ${swaps.length ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}
@@ -621,13 +648,18 @@
     </div>`;
     return html;
   }
-  function renderSets(e, ei) {
+  function renderSets(e, ei, nextSi) {
     const s = state.current;
-    return `<div class="sets">${e.sets.map((x, si) => {
+    // Once the warm-ups are done and the first working set is ticked, they fold into one row.
+    const warm = e.sets.filter(x => x.kind === 'warm');
+    const foldWarm = s.phase !== 'edit' && warm.length > 0 && warm.every(x => x.done) && e.sets.some(x => x.kind !== 'warm' && x.done) && !(ui.openWarm && ui.openWarm[ei]);
+    const warmRow = foldWarm ? `<button class="set warm-sum" data-action="warm-open" data-ei="${ei}"><span class="n">W</span><span class="small muted">Warm-up done · ${warm.length} set${warm.length > 1 ? 's' : ''}, up to ${Math.max(...warm.map(x => (x.actualW != null ? x.actualW : x.w) || 0))}</span><span class="small muted">Show</span></button>` : '';
+    return `<div class="sets">${warmRow}${e.sets.map((x, si) => {
+      if (foldWarm && x.kind === 'warm') return '';
       const w = x.actualW != null ? x.actualW : x.w;
       const reps = x.actualReps != null ? x.actualReps : '';
       const kind = x.kind === 'warm' ? 'warm-up' : x.kind === 'single' ? 'opener' : x.kind === 'test' ? (x.open ? 'top single' : 'single') : x.ind ? `top set` : '';
-      return `<div class="set ${x.done ? 'done' : ''}" data-si="${si}">
+      return `<div class="set${x.done ? ' done' : ''}${x.kind === 'warm' ? ' is-warm' : ''}${si === nextSi ? ' next' : ''}" data-si="${si}">
         <span class="n">${x.kind === 'warm' ? 'W' : x.kind === 'single' ? 'O' : si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}</span>
         <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
         <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" value="${reps}" placeholder="${x.reps}${x.plus ? '+' : ''}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
@@ -1020,7 +1052,7 @@
     copy.phase = 'edit'; copy.editOf = sess.id; copy.editDate = sess.date;
     copy.skippedSlots = Array.isArray(copy.skippedSlots) ? copy.skippedSlots : [];
     copy.post = copy.post || { difficulty: 0 }; copy.notes = copy.notes || '';
-    state.current = copy; ui.confirm = null; view = 'today';
+    state.current = copy; ui.confirm = null; view = 'today'; ui.lastEi = null; ui.openEx = {}; ui.openWarm = {};
     save(); render(); window.scrollTo(0, 0);
   }
   function cancelEdit() { state.current = null; view = 'history'; save(); render(); }
@@ -1203,10 +1235,19 @@
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-action],[data-view]');
     if (!t) return;
-    if (t.dataset.view) { view = t.dataset.view; ui.confirm = null; render(); window.scrollTo(0, 0); return; }
+    if (t.dataset.view) {
+      // Leaving a session for another tab and coming back returns you to the same spot.
+      if (view === 'today' && state.current) ui.todayScroll = window.scrollY;
+      view = t.dataset.view; ui.confirm = null; render();
+      window.scrollTo(0, view === 'today' && state.current ? (ui.todayScroll || 0) : 0); return;
+    }
     const a = t.dataset.action, d = t.dataset;
     if (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') return;
+    anchor = anchorFor(t, a); Promise.resolve().then(() => { anchor = null; });
+    if (a === 'done' || a === 'rpe') ui.lastEi = Number(d.ei);
     switch (a) {
+      case 'ex-open': ui.openEx = ui.openEx || {}; ui.openEx[Number(d.ei)] = true; render(); break;
+      case 'warm-open': ui.openWarm = ui.openWarm || {}; ui.openWarm[Number(d.ei)] = true; render(); break;
       case 'setup-next': if (ui.setupStep === 1) { const bad = LIFTS.filter(l => !(Number(draft()[l]) > 0)); if (bad.length) { toast(`Enter a ${LIFTNAME[bad[0]]} max`); return; } } ui.setupStep++; render(); window.scrollTo(0, 0); break;
       case 'setup-back': ui.setupStep = Math.max(0, ui.setupStep - 1); render(); break;
       case 'setup-calc': { const dr = draft(); dr.calc[d.lift] = dr.calc[d.lift] ? null : {}; render(); break; }
@@ -1331,8 +1372,11 @@
   });
   // Closing or switching away from the app: write whatever is half-typed right now. iOS can kill a
   // backgrounded web app without warning, and these events are the last chance to save.
+  // Only once the stored data has loaded cleanly: before that (or on the recovery screen) the
+  // in-memory state is a blank default, and saving it would overwrite what is on the device.
+  let booted = false;
   function saveNow() {
-    if (!state) return;
+    if (!state || !booted) return;
     try {
       applyPendingType();
       clearTimeout(notesTimer); notesTimer = null;
@@ -1355,6 +1399,7 @@
       if (loaded) state = cleanState(loaded, true);
       migrate();
       render();
+      booted = true;
     } catch (e) {
       // Never leave a dead page: whatever is stored can still be copied out or replaced.
       recoveryCard(e);
@@ -1373,7 +1418,7 @@
       <label class="f">Stored data<textarea id="recovery-text" rows="5" readonly>${esc(raw)}</textarea></label>
       <div class="btnrow"><button class="btn" id="recovery-copy">Copy stored data</button><button class="btn danger" id="recovery-reset">Start over</button></div></div>`;
     $('#recovery-copy').addEventListener('click', () => { const ta = $('#recovery-text'); ta.select(); try { document.execCommand('copy'); } catch (e) { /* ignore */ } if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(raw).catch(() => {}); toast('Copied'); });
-    $('#recovery-reset').addEventListener('click', () => { try { localStorage.removeItem(Store.key); } catch (e) { /* ignore */ } location.reload(); });
+    $('#recovery-reset').addEventListener('click', () => { booted = false; try { localStorage.removeItem(Store.key); } catch (e) { /* ignore */ } location.reload(); });
   }
   // One-time upgrade steps for data saved by earlier versions.
   function migrate() {

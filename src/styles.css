@@ -35,8 +35,16 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html, body { height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.4; -webkit-text-size-adjust: 100%; }
+/* Touch: no double-tap zoom on quick repeated taps, no grey tap flash (buttons press instead),
+   and taps never select text or pop the iOS callout. Pinch zoom stays available. */
+html { height: 100%; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.4; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; overflow-x: hidden; }
+button, .tabbar, .pill, .set .n, .timer, .seg, .chips { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* iOS zooms the page into any form control whose text is under 16px, and often stays zoomed,
+   which is what makes scrolling drift sideways. No control here goes below 16px. */
+input, select, textarea { font-size: max(16px, 1em); }
+/* While the RPE sheet is up the page behind it must not scroll under your thumb. */
+body:has(.sheet-bg) { overflow: hidden; }
 body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
 h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; margin: 0; text-wrap: balance; letter-spacing: .01em; }
 h1 { font-size: 2rem; } h2 { font-size: 1.45rem; } h3 { font-size: 1.15rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
@@ -56,10 +64,14 @@ button { cursor: pointer; }
 .topbar .brand { font-family: var(--display); font-weight: 700; font-size: 1.35rem; letter-spacing: .02em; }
 .topbar .brand span { color: var(--accent); }
 .topbar .pos { font-family: var(--display); font-size: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; text-align: right; }
-main { flex: 1; padding-block: 14px 110px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; max-width: 680px; width: 100%; margin: 0 auto; }
+/* --tabbar-h is the bar's height above the home indicator; content, the rest timer and the sheet
+   all clear it plus the device's own safe area, whatever the phone. */
+:root { --tabbar-h: 58px; --gutter: 16px; }
+main { flex: 1; padding-top: 14px; padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 28px); padding-left: max(var(--gutter), env(safe-area-inset-left, 0px)); padding-right: max(var(--gutter), env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; max-width: 680px; width: 100%; margin: 0 auto; }
+body:has(#timer) main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 96px); }
 main > * { min-width: 0; }
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 9; display: flex; background: var(--surface); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: max(0px, env(safe-area-inset-left, 0px)); padding-right: max(0px, env(safe-area-inset-right, 0px)); }
-.tabbar button { flex: 1; background: none; border: 0; padding: 10px 4px 8px; display: flex; flex-direction: column; align-items: center; gap: 3px; color: var(--muted); font-family: var(--display); font-size: .95rem; text-transform: uppercase; letter-spacing: .06em; }
+.tabbar button { flex: 1; background: none; border: 0; height: var(--tabbar-h); padding: 6px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--muted); font-family: var(--display); font-size: .95rem; text-transform: uppercase; letter-spacing: .06em; }
 .tabbar button svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .tabbar button[aria-current="page"] { color: var(--accent); }
 
@@ -86,6 +98,9 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
 .btn.danger { color: var(--bad); border-color: var(--bad); }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn.sm { min-height: 36px; padding: 6px 10px; font-size: .9rem; }
+select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
+/* Pressed state, so every tap answers immediately. */
+.btn:active, .seg button:active, .chips button:active, .rpegrid button:active, .set .rpe:active, .set .ok:active, .tabbar button:active, .ex-sum:active, .warm-sum:active, .timer button:active { opacity: .7; }
 .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
 .btnrow .btn { flex: 1; }
 
@@ -115,14 +130,28 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
 .ex-head .meta { font-size: .85rem; color: var(--muted); }
 .ex-note { padding: 0 14px 8px; font-size: .9rem; color: var(--muted); }
 .sets { display: flex; flex-direction: column; }
-.set { display: grid; grid-template-columns: 34px 1fr 1fr 64px 48px; align-items: center; gap: 6px; padding: 7px 10px 7px 14px; border-top: 1px solid var(--line); min-height: 52px; }
+.set { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr) 60px 46px; align-items: center; gap: 6px; padding: 7px 10px 7px 12px; border-top: 1px solid var(--line); min-height: 52px; }
+.set.is-warm { min-height: 46px; padding-block: 4px; }
+.set.is-warm .field input { font-weight: 500; }
+.set.next { box-shadow: inset 3px 0 0 var(--accent); }
+.warm-sum { width: 100%; border: 0; border-top: 1px solid var(--line); background: var(--surface-2); text-align: left; min-height: 44px; display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 6px; padding: 6px 14px 6px 12px; color: inherit; }
+.warm-sum .n { color: var(--good); }
+/* A finished exercise folds to one line (tap to reopen), so the session gets shorter as you go. */
+.ex.collapsed { box-shadow: none; border: 1px solid var(--line); }
+.ex-sum { width: 100%; border: 0; background: var(--surface); color: inherit; text-align: left; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 14px; min-height: 52px; }
+.ex-sum .tick { width: 26px; height: 26px; border-radius: 50%; background: var(--good); color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.ex-sum .tick svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.ex-sum .sum-main { display: flex; flex-direction: column; min-width: 0; }
+.ex-sum .sum-main b { font-family: var(--display); font-size: 1.1rem; line-height: 1.15; }
+.ex-sum .sum-main .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .set .n { font-family: var(--display); color: var(--muted); font-weight: 600; font-size: 1rem; }
 .set.done { background: var(--surface-2); }
 .set.done .n { color: var(--good); }
 .set .field { display: flex; flex-direction: column; align-items: flex-start; gap: 0; }
 .set .field input { width: 100%; max-width: 92px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: var(--surface); font-weight: 600; font-size: 1.05rem; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 .set .field input::-webkit-outer-spin-button, .set .field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.set .field .u { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.set .field { min-width: 0; }
+.set .field .u { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .set .rpe { border: 1px solid var(--line); border-radius: 6px; padding: 6px 4px; background: var(--surface); text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; width: 100%; }
 .set .rpe.empty { color: var(--muted); font-weight: 500; }
 .set .ok { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; }
@@ -138,15 +167,15 @@ details > summary { cursor: pointer; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 
 /* RPE picker sheet */
-.sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
-.sheet { background: var(--surface); width: 100%; max-width: 680px; border-radius: 16px 16px 0 0; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 12px; max-height: 85vh; overflow: auto; }
+.sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 20; display: flex; align-items: flex-end; justify-content: center; overscroll-behavior: contain; touch-action: none; }
+.sheet { background: var(--surface); width: 100%; max-width: 680px; border-radius: 16px 16px 0 0; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 12px; max-height: 85vh; max-height: 85dvh; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; }
 .rpegrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .rpegrid button { border: 1px solid var(--line); border-radius: 8px; padding: 10px 0; font-weight: 700; font-size: 1.1rem; background: var(--surface-2); display: flex; flex-direction: column; gap: 2px; align-items: center; }
 .rpegrid button small { font-weight: 500; font-size: .65rem; color: var(--muted); text-transform: uppercase; }
 .rpegrid button.target { border-color: var(--accent); }
 
 /* Rest timer bar */
-.timer { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(64px + env(safe-area-inset-bottom, 0px)); z-index: 8; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 8px 10px 8px 16px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); font-family: var(--display); font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.timer { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 10px); z-index: 8; max-width: calc(100vw - 2 * var(--gutter)); white-space: nowrap; background: var(--fg); color: var(--bg); border-radius: 999px; padding: 8px 10px 8px 16px; display: flex; align-items: center; gap: 12px; box-shadow: var(--shadow); font-family: var(--display); font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .timer button { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 999px; padding: 8px 12px; min-height: 40px; font-size: .9rem; font-family: var(--body); font-weight: 600; }
 td input[type=number] { font-size: 1rem; min-height: 40px; }
 .timer.over { background: var(--good); color: #fff; }
@@ -189,5 +218,32 @@ canvas { width: 100%; height: auto; display: block; }
 .steps { display: flex; gap: 6px; }
 .steps i { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
 .steps i.on { background: var(--accent); }
-@media (prefers-reduced-motion: no-preference) { .set, .btn, .seg button { transition: background-color .15s ease, color .15s ease; } }
-@media (min-width: 560px) { .set { grid-template-columns: 40px 1fr 1fr 80px 52px; } }
+@media (prefers-reduced-motion: no-preference) { .set, .btn, .seg button { transition: background-color .15s ease, color .15s ease, opacity .1s ease; } }
+
+/* Screen sizes. The layout is one fluid column; these only tune spacing at the extremes. */
+/* Small phones (iPhone SE 1st gen, compact Androids, or any phone with large text): tighter
+   gutters and set rows so the weight and reps fields keep a usable width. */
+@media (max-width: 359px) {
+  :root { --gutter: 10px; }
+  .card { padding: 12px; }
+  .set { grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr) 50px 42px; gap: 4px; padding: 6px 6px 6px 8px; }
+  .set .ok { width: 40px; height: 40px; }
+  .set .field input { padding: 6px 5px; }
+  .warm-sum { grid-template-columns: 22px 1fr auto; padding-left: 8px; }
+  .ex-head, .ex-note, .ex-foot { padding-left: 10px; padding-right: 10px; }
+  .topbar .pos { font-size: .85rem; }
+  .seg button small { font-size: .62rem; letter-spacing: .02em; }
+  .tabbar button { font-size: .85rem; letter-spacing: .03em; }
+  .timeline { gap: 2px; }
+}
+/* Large phones and tablets: roomier set rows. */
+@media (min-width: 560px) { .set { grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) 80px 52px; } .set .field input { max-width: 120px; } }
+/* Phone on its side: little height, so trim the chrome. */
+@media (orientation: landscape) and (max-height: 500px) {
+  :root { --tabbar-h: 48px; }
+  .tabbar button { flex-direction: row; gap: 6px; }
+  .topbar { padding-block: 6px 5px; }
+  .sheet { max-height: 92dvh; }
+  .rpegrid button { padding: 6px 0; }
+}
+.seg button small { text-align: center; line-height: 1.1; }
