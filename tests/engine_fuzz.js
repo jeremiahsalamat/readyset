@@ -68,7 +68,20 @@ for (let i = 0; i < 2000; i++) {
   }
 }
 expect(E.liftCorrection([], 200, 5, 7) === null, 'no evidence -> null');
-expect(E.liftCorrection([{ w: 200, reps: 5, rpe: 5.5, first: true }], 200, 5, 7) === null, 'sub-6 RPE only -> null');
+expect(E.liftCorrection([{ w: 200, reps: 5, rpe: 3.5, first: true }], 200, 5, 7) === null, 'RPE under 4 only -> null');
+// Low RPEs (4-5.5) count, lightly: an easier-than-planned set nudges the rest up, never past the +2.5% cap.
+{
+  const easy = E.liftCorrection([{ w: 200, reps: 8, rpe: 5, first: true }, { w: 200, reps: 8, rpe: 5 }], 200, 8, 7);
+  expect(easy && easy.w > 200 && easy.w <= 200 * 1.025 + 1e-9 && easy.conf < 1, 'RPE 5 on a target-7 day nudges up, capped, low confidence', easy);
+  const onTarget = E.liftCorrection([{ w: 200, reps: 8, rpe: 5, first: true }, { w: 200, reps: 8, rpe: 5 }], 200, 8, 5);
+  expect(onTarget && Math.abs(onTarget.w - 200) < 4, 'RPE 5 on a target-5 day stays put', onTarget);
+  const harder = E.liftCorrection([{ w: 200, reps: 8, rpe: 7, first: true }, { w: 200, reps: 8, rpe: 7 }], 200, 8, 5);
+  expect(harder && harder.w < 200 && !harder.stop, 'RPE 7 on a target-5 day lowers the rest but is not a fatigue stop', harder);
+  const grind = E.liftCorrection([{ w: 200, reps: 8, rpe: 7, first: true }, { w: 200, reps: 8, rpe: 9 }], 200, 8, 5);
+  expect(grind && grind.stop, 'RPE 9 on a target-5 day is a fatigue stop', grind);
+  const s = E.sanitizeState({ lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true, current: { id: 's_1', phase: 'lift', exercises: [{ ex: 'comp_squat', slotKey: 'squat_primary', role: 'primary', lift: 'squat', sets: [{ kind: 'work', w: 255, reps: 8, done: true, rpe: 4 }] }] } }, { trusted: true });
+  expect(s.current.exercises[0].sets[0].rpe === 4, 'RPE 4 survives a reload', s.current.exercises[0].sets[0]);
+}
 // Three RPE points over target on a non-first set -> about -9% (table), bounded by the floor.
 { const r = E.liftCorrection([{ w: 175, reps: 5, rpe: 8, first: false }], 175, 5, 5); expect(r.delta < -0.07 && r.delta > -0.15, 'RPE 8 vs 5 ~ -9%', r.delta); }
 
@@ -250,6 +263,42 @@ for (const includePeak of [true, false]) {
   const st11 = mk(); st11.program.blockIdx = 0; st11.program.week = 3; st11.program.readinessHist = [70, 70, 70, 70, 70, 70];
   const r11 = E.weeklyReview(st11, low, low);
   expect(!r11.suggestDeload && (r11.volumeDial || 0) === 0, 'one low-readiness week is not chronic', { suggest: r11.suggestDeload, dial: r11.volumeDial });
+}
+// Regressions from the 2026-10-30 review.
+{
+  const mk = () => E.sanitizeState({ lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true });
+  // Self-loaded exercises in barbell slots belong to no lift (so they progress on their own and do not feed the barbell review).
+  const st = mk();
+  st.program.swaps = { press_secondary: 'db_shoulder', squat_variation: 'belt_squat' };
+  for (let d = 0; d < E.DAYS.length; d++) {
+    st.program.dayIdx = d;
+    for (const e of E.buildSession(st, 'full').exercises) {
+      if (e.ex === 'db_shoulder' || e.ex === 'belt_squat') expect(e.lift === null, 'self-loaded exercise has no lift', { ex: e.ex, lift: e.lift });
+      if (E.EX[e.ex].tm) expect(!!e.lift, 'barbell exercise keeps its lift', { ex: e.ex });
+    }
+  }
+  // The weekly review ignores a dumbbell press that finished below the top of its rep range.
+  const st2 = mk(); st2.program.week = 2;
+  const sess = { id: 'x', skipped: false, readiness: { score: 70, color: 'green' }, post: { difficulty: 2 }, skippedSlots: [], week: 2, mesoCount: 0, blockIdx: 0,
+    exercises: [{ ex: 'db_shoulder', lift: null, role: 'secondary', slotKey: 'press_secondary', sets: [1, 2, 3].map(() => ({ kind: 'work', done: true, w: 50, reps: 12, actualReps: 9, rpe: 9, rpeTarget: 8 })) }] };
+  const rv = E.weeklyReview(st2, [sess], [sess]);
+  expect(!(rv.flags && rv.flags.bench), 'dumbbell rep-range shortfall does not flag bench', rv.flags);
+  // Sanitizer keeps carried-weight links, the current exercise and the calibration base across a reload.
+  const raw = { lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true, program: { calibBaseTs: 1790000000000 },
+    current: { id: 's_9', phase: 'lift', lastEi: 2, exercises: [{ ex: 'comp_squat', slotKey: 'squat_primary', role: 'primary', lift: 'squat', fold: 'closed', sets: [{ kind: 'work', w: 255, reps: 8, actualW: 225, manualW: true }, { kind: 'work', w: 255, reps: 8, actualW: 225, manualW: true, carriedFrom: 0 }] }] } };
+  const cl = E.sanitizeState(raw, { trusted: true });
+  expect(cl.current && cl.current.exercises[0].sets[1].carriedFrom === 0, 'carriedFrom survives a reload', cl.current && cl.current.exercises[0].sets[1]);
+  expect(cl.current.exercises[0].sets[0].carriedFrom == null, 'no carriedFrom invented');
+  expect(cl.current.lastEi === 2, 'current exercise survives a reload', cl.current.lastEi);
+  expect(cl.current.exercises[0].fold === 'closed', 'fold state survives a reload');
+  expect(cl.program.calibBaseTs === 1790000000000, 'calibration base survives a reload', cl.program.calibBaseTs);
+  // Layoff: a fresh window and a new calibration base for every lift, in every branch.
+  for (const days of [8, 15, 25]) {
+    const s3 = mk(); s3.lifts.squat.oneRM = 380; s3.lifts.squat.blockStartRM = 365; s3.program.blockIdx = 1; s3.program.week = 3;
+    const t0 = Date.now(); E.layoffAdjust(s3, days);
+    expect(s3.program.chronicSince >= t0 && s3.program.calibBaseTs >= t0, 'layoff starts a fresh window', { days, p: s3.program.chronicSince });
+    expect(['squat', 'bench', 'deadlift'].every(k => s3.lifts[k].blockStartRM === s3.lifts[k].oneRM), 'layoff rebases every lift', { days, squat: s3.lifts.squat });
+  }
 }
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

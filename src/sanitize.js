@@ -29,7 +29,8 @@
       w: numOrNull(get(x, 'w'), 0, 2000), reps, pct: numOrNull(get(x, 'pct'), 0, 2), kind,
       ind: bool(get(x, 'ind')), plus: int(get(x, 'plus'), 0, 5, 0), rpeTarget: numOrNull(get(x, 'rpeTarget'), 1, 10), open: bool(get(x, 'open')),
       done: bool(get(x, 'done')), actualW: numOrNull(get(x, 'actualW'), 0, 2000), actualReps: numOrNull(get(x, 'actualReps'), 0, 50) == null ? null : int(get(x, 'actualReps'), 0, 50, null),
-      rpe: numOrNull(get(x, 'rpe'), 5, 10), manualW: bool(get(x, 'manualW')), doneAt: numOrNull(get(x, 'doneAt'), 0, 4e12),
+      rpe: numOrNull(get(x, 'rpe'), 4, 10), manualW: bool(get(x, 'manualW')), doneAt: numOrNull(get(x, 'doneAt'), 0, 4e12),
+      carriedFrom: int(get(x, 'carriedFrom'), 0, 39, null),
     };
   }
   function sanitizeExercise(e, state) {
@@ -49,7 +50,7 @@
       target: numOrNull(get(e, 'target'), 0, 2000), est: numOrNull(get(e, 'est'), 0, 3000), hitFloor: bool(get(e, 'hitFloor')), cut: int(get(e, 'cut'), 0, 20, 0),
       repRange: Array.isArray(rr) && rr.length === 2 ? [int(rr[0], 1, 50, 10), int(rr[1], 1, 50, 13)] : null,
       needsWeight: bool(get(e, 'needsWeight')), startHint: ex.startHint || null, adjNote: str(get(e, 'adjNote'), 240, null) || null, note: str(get(e, 'note'), 240, null) || null,
-      autoStopped: bool(get(e, 'autoStopped')),
+      autoStopped: bool(get(e, 'autoStopped')), fold: oneOf(get(e, 'fold'), ['open', 'closed'], undefined),
     };
     return out;
   }
@@ -83,6 +84,7 @@
       out.phase = phase; out.startedAt = num(get(s, 'startedAt'), 0, 4e12, Date.now()); out.finishedAt = numOrNull(get(s, 'finishedAt'), 0, 4e12);
       out.cardioMin = int(get(s, 'cardioMin'), 0, 600, 0); out.estMinutes = int(get(s, 'estMinutes'), 0, 600, 0);
       out.setLightRest = bool(get(s, 'setLightRest'));
+      out.lastEi = int(get(s, 'lastEi'), 0, 11, null);
       if (phase === 'edit') { out.editOf = idStr(get(s, 'editOf'), null); out.editDate = dateStr(get(s, 'editDate'), out.date); if (!out.editOf) return null; }
       const cr = get(s, 'cardioRun');
       out.cardioRun = isObj(cr) ? { start: num(get(cr, 'start'), 0, 4e12, 0), pausedTotal: num(get(cr, 'pausedTotal'), 0, 4e12, 0), paused: bool(get(cr, 'paused')), pausedAt: numOrNull(get(cr, 'pausedAt'), 0, 4e12) } : null;
@@ -155,7 +157,7 @@
     p.volumeDial = int(get(P, 'volumeDial'), -2, 2, 0); p.blockClean = get(P, 'blockClean') !== false; p.readinessBase = numOrNull(get(P, 'readinessBase'), 0, 100);
     const CD = isObj(get(P, 'calibDrops')) ? get(P, 'calibDrops') : {};
     p.calibDrops = {}; for (const k of LIFTS) { const n = int(get(CD, k), 0, 50, 0); if (n) p.calibDrops[k] = n; }
-    p.chronicSince = num(get(P, 'chronicSince'), 0, 4e12, 0);
+    p.chronicSince = num(get(P, 'chronicSince'), 0, 4e12, 0); p.calibBaseTs = num(get(P, 'calibBaseTs'), 0, 4e12, 0);
     p.macroPos = int(get(P, 'macroPos'), 0, E.MACRO.length - 1, 0);
     if (E.MACRO[p.macroPos].block !== E.BLOCKS[p.blockIdx].id) { const i = E.MACRO.findIndex(m => m.block === E.BLOCKS[p.blockIdx].id); p.macroPos = i >= 0 ? i : 0; }
     p.variantSet = oneOf(get(P, 'variantSet'), ['A', 'B'], 'A');

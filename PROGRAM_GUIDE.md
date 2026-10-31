@@ -157,14 +157,17 @@ the next set drops by what the table says (about 9%), not by a fixed step.
   and the full correction lands. A first set that was clearly hard (1.5+ RPE over target, or reps
   missed) counts in full: that is not a warm-up effect.
 - The opener single counts in full, read against its own target of RPE 8.
-- Sets logged below RPE 6 are too far from failure to say much and count half.
+- Sets logged at RPE 6-6.5 count half, and RPE 4-5.5 about a third: the further from failure, the
+  less precise anyone's rating is. They still move the remaining sets, within the usual limits, so an
+  easy day that is easier than planned nudges the load up and one that is harder brings it down.
 - It re-runs from scratch on any edit: tick, untick, an RPE changed later, a rep count or weight
   corrected. Picking an RPE on a set you have not ticked yet ticks it.
 - A weight you type into an undone set yourself is left alone.
 - Limits per exercise: never below 85% or above 102.5% of the planned weight (100% in Peak).
 - **The fatigue stop.** The RTS-style rule most coaches use: a missed rep, a set that is still two
-  or more RPE over target after the weight has already been corrected, or the floor being reached,
-  ends the exercise. The remaining sets are cut automatically, with a Restore button if you know
+  or more RPE over target (and at least RPE 8.5, so an easy day planned at RPE 5 is not cut short by
+  an RPE 7 set) after the weight has already been corrected, or the floor being reached, ends the
+  exercise. The remaining sets are cut automatically, with a Restore button if you know
   better. Grinding on past that point costs more recovery than it buys, and it is exactly the kind
   of session that used to bury you.
 - Deload, easy and test weeks are exempt; their loads are light on purpose.

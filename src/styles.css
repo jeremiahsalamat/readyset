@@ -156,6 +156,26 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .ex-sum .sum-main { display: flex; flex-direction: column; min-width: 0; }
 .ex-sum .sum-main b { font-family: var(--display); font-size: 1.1rem; line-height: 1.15; }
 .ex-sum .sum-main .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ex-sum { grid-template-columns: 28px minmax(0, 1fr) 28px; }
+.ex.collapsed.todo .tick { background: var(--surface-2); color: var(--fg); border: 2px solid var(--accent); font-family: var(--display); font-weight: 700; font-size: .95rem; }
+.ex-sum .chev, .fold-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ex-sum .chev { display: inline-flex; color: var(--muted); }
+.ex-sum .chev svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ex-tools { display: flex; align-items: center; gap: 4px; flex: none; }
+.fold-btn { width: 40px; height: 40px; margin: -6px -8px 0 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+.fold-btn:active { opacity: .7; background: var(--surface-2); }
+.session-tools { margin: -4px 0 -2px; flex-wrap: nowrap; }
+.session-tools .small { min-width: 0; }
+.foot-tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+.set .del { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--bad); background: var(--bad-soft); color: var(--bad); display: inline-flex; align-items: center; justify-content: center; }
+.set .del svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2.6; stroke-linecap: round; }
+.set .del:active { opacity: .7; }
+/* History: name and date on the left; readiness and difficulty in fixed columns so they line up. */
+.hist-row { display: grid; grid-template-columns: minmax(0, 1fr) 46px 96px; align-items: center; gap: 8px; padding: 2px 0; }
+.hist-main { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.hist-main b { line-height: 1.2; }
+.hist-ready, .hist-diff { display: flex; justify-content: center; }
+.hist-row .pill { width: 100%; justify-content: center; padding: 3px 4px; font-size: .72rem; letter-spacing: .04em; white-space: nowrap; }
 .set .n { font-family: var(--display); color: var(--muted); font-weight: 600; font-size: 1rem; }
 .set.done { background: var(--surface-2); }
 .set.done .n { color: var(--good); }
@@ -195,6 +215,13 @@ td input[type=number] { font-size: 1rem; min-height: 40px; }
 /* Forms */
 label.f { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); font-weight: 600; min-width: 0; }
 label.f input, label.f select, label.f textarea { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); font-size: 1rem; font-weight: 500; color: var(--fg); min-height: 44px; width: 100%; }
+label.f input:not([type=checkbox]):not([type=file]), label.f select { height: 46px; }
+label.f .opt { font-weight: 500; text-transform: none; color: var(--muted); opacity: .8; }
+/* iOS draws date fields at their own width and height and centres the text, which made the date
+   box spill over the field beside it. Make it behave like every other field. */
+input[type="date"] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; text-align: left; line-height: 1.4; }
+input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; min-height: 1.4em; }
+input[type="date"]::-webkit-calendar-picker-indicator { opacity: .6; }
 label.f input[type=number] { font-variant-numeric: tabular-nums; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: .9rem; min-height: 36px; }
@@ -245,6 +272,10 @@ canvas { width: 100%; height: auto; display: block; }
   .ex-head, .ex-note, .ex-foot { padding-left: 10px; padding-right: 10px; }
   .topbar .pos { font-size: .85rem; }
   .seg button small { font-size: .62rem; letter-spacing: .02em; }
+  .hist-row { grid-template-columns: minmax(0, 1fr) 40px 86px; gap: 6px; }
+  .hist-row .pill { font-size: .66rem; letter-spacing: .02em; }
+  .session-tools .small { display: none; }
+  .set .del { width: 40px; height: 40px; }
   .tabbar button { font-size: .78rem; letter-spacing: .03em; }
   .timeline { gap: 2px; }
 }

@@ -166,7 +166,7 @@
     // In-session: a hard first set counts in full (RPE rises set to set at a fixed load, so a hard
     // first set predicts harder later sets); an easy day may push the remaining sets up by at most
     // 2.5% (never in Peak). Stop rules: a miss, a non-first set 2+ over target, or the floor.
-    correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, minRpe: 6, stopOver: 2 },
+    correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, minRpe: 4, lowRpeWeight: 0.35, stopOver: 2, stopMin: 8.5 },
     sessionCapMin: 70,
     calibrate: { downAt: 0.97, downMax: 0.95, downConfHigh: 1.5, downSure: 0.95, upAt: 1.02, upMax: 1.025, upFastAt: 1.04, allowance: 0.03, blockFloor: 0.90, blockFloorMissed: 0.85, minRpe: 6.5 },
     review: { add: 2, cut: -2, bigCut: -4, onTarget: 1 },
@@ -303,7 +303,7 @@
       const ex = EX[exId];
       // A TM-loaded exercise in an accessory slot (RDL for hamstrings) takes its lift from the
       // exercise and follows the second-lift scheme.
-      const lift = slot.tm || (ex.tm ? ex.tm : null);
+      const lift = ex.tm ? (slot.tm || ex.tm) : null;
       const schemeRole = slot.role === 'accessory' && ex.tm ? 'secondary' : slot.role;
       const heavyBlock = block.id !== 'build' && !rest; // heavy triples and singles earn +60 s on the main lift
       const item = { slotKey: slot.key, ex: exId, name: exerciseName(state, exId), role: slot.role, lift, load: ex.load, optional: !!slot.optional, cue: ex.cue || null, sets: [],
@@ -441,7 +441,7 @@
     let num = 0, den = 0;
     for (const x of rows) {
       const hard = x.missed || x.rpe >= (x.target != null ? x.target : targetRPE) + 1.5;
-      const wt = (x.first ? (hard ? C.firstSetHardWeight : C.firstSetWeight) : 1) * (x.rpe < 7 ? 0.5 : 1);
+      const wt = (x.first ? (hard ? C.firstSetHardWeight : C.firstSetWeight) : 1) * (x.rpe < 6 ? C.lowRpeWeight : x.rpe < 7 ? 0.5 : 1);
       num += wt * e1rm(x.w, x.reps, x.rpe); den += wt;
     }
     const est = num / den;
@@ -453,7 +453,7 @@
     w = Math.max(floor, Math.min(ceil, w));
     // RTS-style stop: a miss, a later set still 2+ over target after a correction, or the floor.
     const last = rows[rows.length - 1];
-    const stop = rows.some(x => x.missed) || (rows.length >= 2 && !last.first && last.rpe >= (last.target != null ? last.target : targetRPE) + C.stopOver) || hitFloor;
+    const stop = rows.some(x => x.missed) || (rows.length >= 2 && !last.first && last.rpe >= (last.target != null ? last.target : targetRPE) + C.stopOver && last.rpe >= C.stopMin) || hitFloor;
     return { w, est, ideal, conf, hitFloor, stop, delta: w / plannedW - 1 };
   }
 
@@ -853,6 +853,7 @@
   function layoffAdjust(state, days) {
     const P = clampProgram(state), lines = [];
     if (!(days >= 7)) return lines;
+    P.chronicSince = Date.now(); P.calibBaseTs = Date.now(); P.calibDrops = {}; P.readinessLowWeeks = 0;
     const cut = (f) => { for (const k of ['squat', 'bench', 'deadlift']) if (state.lifts[k].oneRM > 0) { const v = roundTo(state.lifts[k].oneRM * (1 - f), 2.5); applyTM(state, k, v); state.lifts[k].blockStartRM = v; state.lifts[k].est = null; } };
     P.pendingDeload = false; P.lightRestOfWeek = false; P.special = null;
     if (days < 14) {
@@ -866,6 +867,7 @@
       P.week = 1; P.dayIdx = 0; P.macroPos = 0; P.variantSet = 'A'; P.blockIdx = blockIndex('build'); P.setAdj = { squat: 0, bench: 0, deadlift: 0, acc: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 }; P.layoffPct = 0; cut(0.10);
       lines.push(`${days} days off: starting again from Build week 1 with maxes 10% lower (they recalibrate from your sets).`);
     }
+    for (const k of ['squat', 'bench', 'deadlift']) { const L = state.lifts[k]; L.blockStartRM = L.oneRM; L.estAtBlockStart = L.est == null ? null : L.est; }
     return lines;
   }
   // Named tuning presets for simulation sweeps (and nothing else).
