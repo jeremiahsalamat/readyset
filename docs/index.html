@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-S15cClPaUMm/PJUdGXVUkl9iiN00H+sQZNi5tm9tl7I=' 'sha256-8cuXY4QaLi4K4cKee84B6Nqp13kgVCDDVryqlMdLdR4=' 'sha256-kmBoXORmKIcP7hhHFMfc7PEHHz4/L501ozfSZLBHNCM=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-S15cClPaUMm/PJUdGXVUkl9iiN00H+sQZNi5tm9tl7I=' 'sha256-NXxvRTbk+H4i7kfLkqNDadYm5ZkkhZ9nVKPjsHldmK8=' 'sha256-CzXp6nc6+WfOQkCH3eYSuNjpSZnxLGBbW4of+xjXodo=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -1498,7 +1498,7 @@ canvas { width: 100%; height: auto; display: block; }
     d.timer = isObj(T) ? { end: num(get(T, 'end'), 0, 4e12, 0), total: int(get(T, 'total'), 1, 3600, 90), label: str(get(T, 'label'), 60) } : null;
     d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(0, 2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
-    d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud'], null);
+    d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);
     d.lastCloudBackup = numOrNull(get(raw, 'lastCloudBackup'), 0, 4e12);
     d.cloudError = trusted ? (str(get(raw, 'cloudError'), 200, null) || null) : null;
     d.lastCloudBackup = trusted ? d.lastCloudBackup : null;
@@ -1610,16 +1610,19 @@ canvas { width: 100%; height: auto; display: block; }
   // The phone's storage is the only copy of the data, and on iOS deleting the home-screen icon
   // deletes it. So: an automatic off-device copy in a private GitHub Gist (the user's own account,
   // written after every change), a share-sheet file, and a clipboard copy.
-  function backupJSON() {
+  // kind: how this copy is being saved. The copy records its own time, so data restored from it
+  // knows that everything in it was backed up.
+  function backupJSON(kind) {
     const copy = Object.assign({}, state); copy.settings = Object.assign({}, state.settings);
     for (const k of ['gistToken', 'gistId']) delete copy.settings[k];
     for (const k of ['current', 'undo', 'timer', 'cloudError', 'lastCloudBackup']) delete copy[k];
+    copy.lastBackupAt = Date.now(); copy.lastBackupKind = kind || 'file';
     return JSON.stringify(copy);
   }
   function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; Store.saveLocal(state); }
   function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.ts || 0) > t).length; }
   async function shareBackup() {
-    const json = backupJSON(), name = `readyset-backup-${todayISO()}.json`;
+    const json = backupJSON('file'), name = `readyset-backup-${todayISO()}.json`;
     try {
       const file = new File([json], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Readyset backup' }); noteBackup('file'); toast('Backup shared'); render(); return; }
@@ -1629,7 +1632,7 @@ canvas { width: 100%; height: auto; display: block; }
       noteBackup('file'); toast('Backup file saved'); render();
     } catch (e) { copyBackup(); }
   }
-  function copyBackup() { const txt = backupJSON(); const ok = () => { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); }; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt)); else fallbackCopy(txt); }
+  function copyBackup() { const txt = backupJSON('clipboard'); const ok = () => { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); }; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt)); else fallbackCopy(txt); }
   const Cloud = {
     timer: null, busy: false,
     available() { return !!(state && state.settings.gistToken) && !(window.claude && window.claude.use); },
@@ -1646,7 +1649,7 @@ canvas { width: 100%; height: auto; display: block; }
       this.busy = true;
       try {
         const stamp = Date.now();
-        const content = backupJSON();
+        const content = backupJSON('cloud');
         if (state.settings.gistId) {
           try { await this.req('/gists/' + state.settings.gistId, 'PATCH', { files: { 'readyset-backup.json': { content } } }); }
           catch (e) { if (e.status === 404) { state.settings.gistId = null; this.busy = false; return this.backup(); } throw e; }
@@ -2814,7 +2817,7 @@ canvas { width: 100%; height: auto; display: block; }
         <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Keep a backup on, and never delete or re-add the icon without one.</div>
         ${renderCloud()}`}
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
-        <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
+        <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
         ${ui.showImport ? `${filePick('Choose a backup file', 'primary block')}<label class="f">Or paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn" data-action="import">Restore from text</button>` : ''}
         <button class="btn danger block" data-action="reset-confirm">Start over</button>
@@ -2999,6 +3002,7 @@ canvas { width: 100%; height: auto; display: block; }
   }
   function applyRestore(fresh) {
     ui.pendingRestore = null;
+    fresh.lastBackupAt = Date.now(); fresh.lastBackupKind = 'restore';
     try {
       const keepToken = state.settings.gistToken, keepGist = state.settings.gistId;
       const oldIds = state.sessions.map(x => x.id);
