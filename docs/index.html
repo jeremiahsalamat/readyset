@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-S15cClPaUMm/PJUdGXVUkl9iiN00H+sQZNi5tm9tl7I=' 'sha256-NXxvRTbk+H4i7kfLkqNDadYm5ZkkhZ9nVKPjsHldmK8=' 'sha256-CzXp6nc6+WfOQkCH3eYSuNjpSZnxLGBbW4of+xjXodo=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-S15cClPaUMm/PJUdGXVUkl9iiN00H+sQZNi5tm9tl7I=' 'sha256-NXxvRTbk+H4i7kfLkqNDadYm5ZkkhZ9nVKPjsHldmK8=' 'sha256-nmMZtS36cMkkJxyH1B2QQ2NGgSbDI6csquRdif4RJD0=' 'sha256-TEe1LIJYk4MJ54AHKJ/DIDK7+u5kZ38eQpXNSM61lDY='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -111,7 +111,9 @@ main > * { min-width: 0; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .row.between { justify-content: space-between; }
 .stack { display: flex; flex-direction: column; gap: 6px; }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; }
+/* Paired fields keep their boxes level even when one label wraps (narrow phones, larger text). */
+.grid2 > label.f { justify-content: flex-end; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .kpi { display: flex; flex-direction: column; gap: 2px; }
 .kpi .v { font-family: var(--display); font-size: 1.9rem; font-weight: 700; line-height: 1; }
@@ -2153,7 +2155,7 @@ canvas { width: 100%; height: auto; display: block; }
     let html = `<div class="row between"><div><h2>${editing ? 'Editing: ' : ''}${esc(s.dayName)}</h2><div class="small muted">${esc(s.blockName)} · ${s.isDeload ? 'deload' : s.isRest ? 'easy week' : s.isTest ? 'test week' : 'week ' + s.week} · ${E.MODES[s.mode].label}${s.backfill ? ` · logged for ${fmtDate(s.date)}` : ''}</div></div><span class="pill ${s.readiness ? s.readiness.color : ''}">${doneSets}/${totalSets} sets</span></div>`;
     if (editing) html += `<div class="card"><label class="f">Date<input id="edit-date" type="date" value="${esc(s.editDate || s.date)}" max="${todayISO()}" data-edit="date"></label>
       <div class="grid2"><label class="f">Bike after (min)<input id="edit-cardio" type="number" inputmode="numeric" value="${s.cardio && s.cardio.min ? s.cardio.min : ''}" placeholder="0" data-edit="cardio"></label>
-      <label class="f">Average watts <span class="opt">optional</span><input id="edit-watts" type="number" inputmode="numeric" value="${s.cardio && s.cardio.watts ? s.cardio.watts : ''}" placeholder="${esc(state.settings.cardioWatts)}" data-edit="watts"></label></div>
+      <label class="f">Watts <span class="opt">(optional)</span><input id="edit-watts" type="number" inputmode="numeric" value="${s.cardio && s.cardio.watts ? s.cardio.watts : ''}" placeholder="${esc(state.settings.cardioWatts)}" data-edit="watts"></label></div>
       <div class="q"><span class="label">Overall, that session was</span><div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${!!s.post && s.post.difficulty === v}">${DIFF[v]}</button>`).join('')}</div></div>
       <p class="small muted">Tick, untick or retype any set below. Saving replaces the stored session; if it belongs to the current block, the maxes are re-read from the whole block's sessions.</p></div>`;
     for (const n of (Array.isArray(s.planNotes) ? s.planNotes : [])) html += `<div class="callout">${esc(n)}</div>`;

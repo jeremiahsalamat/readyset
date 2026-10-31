@@ -92,7 +92,9 @@ main > * { min-width: 0; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .row.between { justify-content: space-between; }
 .stack { display: flex; flex-direction: column; gap: 6px; }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; }
+/* Paired fields keep their boxes level even when one label wraps (narrow phones, larger text). */
+.grid2 > label.f { justify-content: flex-end; }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .kpi { display: flex; flex-direction: column; gap: 2px; }
 .kpi .v { font-family: var(--display); font-size: 1.9rem; font-weight: 700; line-height: 1; }
