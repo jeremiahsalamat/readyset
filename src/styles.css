@@ -109,6 +109,8 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
 .btn.danger { color: var(--bad); border-color: var(--bad); }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn.sm { min-height: 36px; padding: 6px 10px; font-size: .9rem; }
+.btn.icon { min-width: 44px; min-height: 36px; padding: 6px; }
+.row.nowrap { flex-wrap: nowrap; flex: none; }
 select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 /* File picker styled as a button: the input stays in the layout (not display:none) so iOS opens it. */
 .file-pick { position: relative; overflow: hidden; cursor: pointer; }

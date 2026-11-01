@@ -122,7 +122,11 @@ self.addEventListener('fetch', e => {
   if (!url.search) e.waitUntil(fromNet.then(r => { if (!(r && r.ok)) return null; const c = r.clone(); return caches.open(CACHE).then(x => x.put(e.request, c)); }).catch(() => {}));
   const cached = () => caches.match(e.request).then(m => m || (e.request.mode === 'navigate' ? caches.match('./index.html') : undefined));
   const timeout = new Promise(res => setTimeout(() => res('timeout'), 4000));
-  e.respondWith(Promise.race([fromNet.catch(() => 'failed'), timeout]).then(r => (r === 'timeout' || r === 'failed') ? cached().then(m => m || fromNet) : r).catch(() => cached()));
+  e.respondWith(Promise.race([fromNet.catch(() => 'failed'), timeout]).then(r => {
+    if (r === 'timeout' || r === 'failed') return cached().then(m => m || fromNet);
+    if (!r.ok && e.request.mode === 'navigate') return cached().then(m => m || r); // an error page is no substitute for the cached app
+    return r;
+  }).catch(() => cached()));
 });
 """
 

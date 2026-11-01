@@ -113,6 +113,8 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
 .btn.danger { color: var(--bad); border-color: var(--bad); }
 .btn:disabled { opacity: .45; cursor: default; }
 .btn.sm { min-height: 36px; padding: 6px 10px; font-size: .9rem; }
+.btn.icon { min-width: 44px; min-height: 36px; padding: 6px; }
+.row.nowrap { flex-wrap: nowrap; flex: none; }
 select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 /* File picker styled as a button: the input stays in the layout (not display:none) so iOS opens it. */
 .file-pick { position: relative; overflow: hidden; cursor: pointer; }
@@ -786,7 +788,8 @@ canvas { width: 100%; height: auto; display: block; }
     const ceil = plannedW * caps.up;
     for (const x of rows) {
       const tgt = x.target != null ? x.target : targetRPE;
-      if (!x.first && x.w <= floor * 1.01 && (x.missed || x.rpe >= tgt + C.floorHard)) floor *= C.floorStep;
+      const nearFloor = x.w <= floor + Math.max(floor * 0.01, (caps.inc || 0) / 2) + 1e-9; // the loaded weight is the floor rounded to the plates
+      if (!x.first && nearFloor && (x.missed || x.rpe >= tgt + C.floorHard)) floor *= C.floorStep;
     }
     const hitFloor = w < floor - 1e-9;
     w = Math.max(floor, Math.min(ceil, w));
@@ -812,6 +815,7 @@ canvas { width: 100%; height: auto; display: block; }
       if (e.lift !== lift || !EX[e.ex] || !EX[e.ex].tm || EX[e.ex].mult < 0.8) continue;
       if ((sess.skippedSlots || []).includes(e.slotKey)) continue;
       const work = (e.sets || []).filter(x => (x.kind === 'work' || x.kind === 'single') && x.done);
+      const firstWork = work.find(x => x.kind === 'work');
       work.forEach((x, i) => {
         let reps = x.actualReps != null ? x.actualReps : x.reps;
         let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
@@ -821,7 +825,7 @@ canvas { width: 100%; height: auto; display: block; }
         let implied = e1rm(w, reps, rpe) / EX[e.ex].mult;
         if (ref > 0) implied = Math.min(ref * 1.3, Math.max(ref * 0.7, implied));
         const single = x.kind === 'single';
-        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (i === 0 && !single ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
+        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (x === firstWork ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
         num += wt * implied; den += wt; n++;
         if (rpe >= 7.5 || (x.rpeTarget != null && x.rpeTarget >= 7)) confHigh += wt;
       });
@@ -1427,7 +1431,7 @@ canvas { width: 100%; height: auto; display: block; }
     s.cardioWatts = int(get(S, 'cardioWatts'), 30, 600, 110);
     s.warmupSets = get(S, 'warmupSets') !== false;
     s.autoCalibrate = get(S, 'autoCalibrate') !== false;
-    s.notify = bool(get(S, 'notify'));
+    s.notify = bool(get(S, 'notify')); s.backupOffer = bool(get(S, 'backupOffer')); s.backupRemind = bool(get(S, 'backupRemind'));
     s.includePeak = get(S, 'includePeak') === true;
     const DAYS7 = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const days = Array.isArray(get(S, 'days')) ? get(S, 'days').filter(x => DAYS7.includes(x)) : [];
@@ -1507,6 +1511,7 @@ canvas { width: 100%; height: auto; display: block; }
     d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(0, 2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
     d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);
+    d.backupOffer = bool(get(raw, 'backupOffer')); d.backupNudgeSeen = int(get(raw, 'backupNudgeSeen'), 0, 100000, 0);
     d.migratedV2 = bool(get(raw, 'migratedV2'));
     d.setupDone = bool(get(raw, 'setupDone')) && LIFTS.every(k => d.lifts[k].oneRM > 0);
     d.updatedAt = num(get(raw, 'updatedAt'), 0, 4e12, 0);
@@ -1570,7 +1575,7 @@ canvas { width: 100%; height: auto; display: block; }
             const snap = await db.doc('app/state').get();
             if (snap.exists) {
               const remote = snap.data();
-              const q = await db.collection('sessions').limit(1000).get();
+              const q = await db.collection('sessions').limit(5000).get();
               const remoteSessions = q.docs.map(d => d.data());
               const localSessions = (local && Array.isArray(local.sessions)) ? local.sessions : [];
               // Sessions are merged by id, never replaced, so a push that failed cannot lose one.
@@ -1618,16 +1623,31 @@ canvas { width: 100%; height: auto; display: block; }
   // and a banner on Today whenever a session is newer than the last backup.
   // kind: how this copy is being saved. The copy records its own time, so data restored from it
   // knows that everything in it was backed up.
+  const BACKUP_NAME = 'readyset-backup.json'; // one fixed name, so Files offers to replace the old copy
+  const REMIND_AT = 5; // sessions without a backup before the (opt-in) reminder shows
+  // Nulls and empty strings are dropped from the copy: the sanitizer puts the defaults back on
+  // restore, and a year of sessions stays a few hundred KB.
+  function compact(v) {
+    if (Array.isArray(v)) return v.map(compact);
+    if (v && typeof v === 'object') { const o = {}; for (const k of Object.keys(v)) { const x = v[k]; if (x == null || x === '') continue; o[k] = compact(x); } return o; }
+    return v;
+  }
   function backupJSON(kind) {
     const copy = Object.assign({}, state); copy.settings = Object.assign({}, state.settings);
-    for (const k of ['current', 'undo', 'timer']) delete copy[k];
+    for (const k of ['current', 'undo', 'timer', 'backupOffer', 'backupNudgeSeen']) delete copy[k];
     copy.lastBackupAt = Date.now(); copy.lastBackupKind = kind || 'file';
-    return JSON.stringify(copy);
+    return JSON.stringify(compact(copy));
   }
-  function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; Store.saveLocal(state); }
+  let sizeCache = { key: '', text: '' };
+  function backupSizeText() {
+    const key = `${state.updatedAt || 0}:${state.sessions.length}`;
+    if (sizeCache.key !== key) { const n = backupJSON('file').length; sizeCache = { key, text: n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB` }; }
+    return sizeCache.text;
+  }
+  function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; state.backupOffer = false; state.backupNudgeSeen = 0; Store.saveLocal(state); }
   function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.savedAt || s.ts || 0) > t).length; }
   async function shareBackup() {
-    const json = backupJSON('file'), name = `readyset-backup-${todayISO()}.json`;
+    const json = backupJSON('file'), name = BACKUP_NAME;
     try {
       const file = new File([json], name, { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Readyset backup' }); noteBackup('file'); toast('Backup shared'); render(); return; }
@@ -1910,7 +1930,9 @@ canvas { width: 100%; height: auto; display: block; }
     const plan = E.buildSession(state, 'full');
     const last = lastSession();
     let html = '';
-    if (!Store.db && sessionsSinceBackup() >= 1) html += `<div class="callout bad row between"><span>${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} not backed up.</span><button class="btn sm" data-action="share-backup">Save backup</button></div>`;
+    const unbacked = Store.db ? 0 : sessionsSinceBackup();
+    if (state.backupOffer && !Store.db && state.settings.backupOffer) html += `<div class="card"><div class="row between"><h3>Back up today's session?</h3><button class="btn sm quiet" data-action="offer-dismiss">Not now</button></div><p class="small muted">One tap saves the whole log as ${BACKUP_NAME} (${backupSizeText()}). Save it to the same folder each time and Files offers to replace the old copy.</p><button class="btn primary block" data-action="share-backup">Save backup</button></div>`;
+    else if (state.settings.backupRemind && unbacked >= REMIND_AT && unbacked >= (state.backupNudgeSeen || 0) + REMIND_AT) html += `<div class="callout warn row between"><span>${unbacked} sessions haven't been backed up.</span><span class="row nowrap" style="gap:6px"><button class="btn sm" data-action="share-backup">Save backup</button><button class="btn sm quiet icon" data-action="remind-dismiss" aria-label="Dismiss">✕</button></span></div>`;
     if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
     if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up this week (the review on the Program tab says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
     if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
@@ -2078,7 +2100,7 @@ canvas { width: 100%; height: auto; display: block; }
     state.undo = null;
     save(); render(); toast(`Undone: ${u.label}`);
   }
-  function renderUndo() { return state.undo ? `<div class="callout warn row between"><span>${esc(state.undo.label)}.</span><button class="btn sm" data-action="undo">Undo</button></div>` : ''; }
+  function renderUndo() { return state.undo ? `<div class="callout warn row between"><span>${esc(state.undo.label)}.</span><span class="row nowrap" style="gap:6px"><button class="btn sm" data-action="undo">Undo</button><button class="btn sm quiet icon" data-action="undo-dismiss" aria-label="Dismiss">✕</button></span></div>` : ''; }
   function skipSession() {
     const P = state.program, pos = E.positionLabel(state);
     const s = { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), skipped: true, dayId: pos.day.id, dayName: pos.day.name, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, week: P.week, isRest: pos.isRest, isDeload: pos.isDeload, exercises: [] };
@@ -2284,7 +2306,7 @@ canvas { width: 100%; height: auto; display: block; }
       evidence.push({ w, reps, rpe, first: x === work[0], missed: zero || reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null });
     });
     const C = E.TUNE.correction, peak = !!(E.BLOCKS[s.blockIdx] && E.BLOCKS[s.blockIdx].test);
-    const r = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up: peak ? C.ceilPeak : C.ceil });
+    const r = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up: peak ? C.ceilPeak : C.ceil, inc: state.settings.increment });
     const missedAny = evidence.some(x => x.missed);
     const inc = state.settings.increment, bar = state.settings.barWeight;
     const target = r ? Math.max(bar, E.roundTo(r.w, inc)) : e.plannedW;
@@ -2514,6 +2536,7 @@ canvas { width: 100%; height: auto; display: block; }
     afterSession();
     if (cal.length) { const rep = state.lastReport || { title: 'After today', lines: [] }; rep.lines = cal.concat(rep.lines); rep.title = state.lastReport ? rep.title : 'Maxes calibrated from today'; state.lastReport = rep; }
     try { if (wakeLock) wakeLock.release(); } catch (e) { /* ignore */ }
+    if (state.settings.backupOffer && !Store.db) state.backupOffer = true; // the one-tap offer on Today
     save(); render(); scrollToY(0);
     setTimeout(() => applyUpdateIfSafe(false), 1500);
   }
@@ -2639,8 +2662,9 @@ canvas { width: 100%; height: auto; display: block; }
       else { const w = Number(t.value); watts = t.value !== '' && w > 0 ? Math.min(2000, Math.round(w)) : null; }
       s.cardio = { min, watts, kcal: min ? E.cardioKcal(min, watts || state.settings.cardioWatts) : 0 };
     }
-    Store.saveLocal(state);
+    clearTimeout(editSaveTimer); editSaveTimer = setTimeout(() => Store.saveLocal(state), 400);
   }
+  let editSaveTimer = null;
   function cancelEdit() { state.current = null; view = 'history'; save(); render(); }
   function saveEdit() {
     const s = state.current; if (!s || s.phase !== 'edit') return;
@@ -2770,8 +2794,10 @@ canvas { width: 100%; height: auto; display: block; }
       </div>
       <div class="card"><h3>Data and backups</h3>
         ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
-        <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Keep a backup on, and never delete or re-add the icon without one.</div>
-        <p class="small">Save a backup file to Files (iCloud Drive keeps it off the phone) whenever the red banner shows, and before any change to the home-screen icon. Restore it from the setup screen or below.</p>`}
+        <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Never delete or re-add the icon without a backup.</div>
+        <p class="small">A backup is the whole log in one file, ${BACKUP_NAME} (${backupSizeText()} now). Save it to Files; iCloud Drive keeps it off the phone, and saving to the same folder lets Files replace the old copy. Restore it from the setup screen or below.</p>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupOffer" ${s.backupOffer ? 'checked' : ''} style="width:22px;height:22px"> Offer a one-tap backup after each session</label>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupRemind" ${s.backupRemind ? 'checked' : ''} style="width:22px;height:22px"> Remind me when ${REMIND_AT} or more sessions are not backed up</label>`}
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
         <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
@@ -2802,6 +2828,8 @@ canvas { width: 100%; height: auto; display: block; }
     else if (key === 'includePeak') s.includePeak = !!val;
     else if (key === 'warmupSets') s.warmupSets = !!val;
     else if (key === 'notify') { if (val) enableNotify(); else s.notify = false; }
+    else if (key === 'backupOffer') { s.backupOffer = !!val; if (!val) state.backupOffer = false; }
+    else if (key === 'backupRemind') { s.backupRemind = !!val; state.backupNudgeSeen = 0; }
     else if (key === 'squatStyle') { if (['lowbar', 'highbar'].includes(val)) s.squatStyle = val; }
     else if (key === 'deadliftStyle') { if (['conventional', 'sumo'].includes(val)) s.deadliftStyle = val; }
     else if (key === 'dbIncrement') { if ([2.5, 5].includes(n)) s.dbIncrement = n; }
@@ -2816,7 +2844,7 @@ canvas { width: 100%; height: auto; display: block; }
     if (t.dataset.view) {
       // Leaving a session for another tab and coming back returns you to the same spot.
       if (view === 'today' && state.current) ui.todayScroll = scroller().scrollTop;
-      view = t.dataset.view; ui.confirm = null; render();
+      view = t.dataset.view; ui.confirm = null; ui.pendingRestore = null; ui.backfill = null; render();
       scrollToY(view === 'today' && state.current ? (ui.todayScroll || 0) : 0); return;
     }
     const a = t.dataset.action, d = t.dataset;
@@ -2885,6 +2913,9 @@ canvas { width: 100%; height: auto; display: block; }
       case 'timer-stop': stopTimer(); Store.saveLocal(state); break;
       case 'dismiss-report': state.lastReport = null; save(); render(); break;
       case 'undo': undoLast(); break;
+      case 'undo-dismiss': state.undo = null; save(); render(); break;
+      case 'remind-dismiss': state.backupNudgeSeen = sessionsSinceBackup(); save(); render(); break;
+      case 'offer-dismiss': state.backupOffer = false; save(); render(); break;
       case 'apply-update': applyUpdateIfSafe(true); break;
       case 'check-update': { lastUpdateCheck = 0; checkForUpdate(true).then(r => { if (r === 'latest') toast('You have the latest version'); else if (r === 'guarded') toast('An update is waiting: close the app fully and reopen it'); else if (r === 'failed') toast('Could not reach the server. Try again with a connection'); }); break; }
       case 'deload-now-confirm': ui.confirm = 'deload'; render(); break;
@@ -2892,7 +2923,7 @@ canvas { width: 100%; height: auto; display: block; }
       case 'deload-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Deload started early'); const ok = E.startDeloadNow(state); ui.confirm = null; if (ok) addLog('Deload started early.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
       case 'deload-later': snapshot('Deload suggestion dismissed'); state.program.pendingDeload = false; state.program.pushOn = true; addLog('Deload suggestion declined; pushing on with the week trimmed (no bonus reps or earned sets, loads one step down).'); save(); render(); break;
       case 'rest-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Easy week inserted'); const ok = E.startActiveRest(state, 1); ui.confirm = null; if (ok) addLog('Easy week inserted.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
-      case 'set-plate': { const s = state.settings, p = Number(d.p); s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); save(); render(); break; }
+      case 'set-plate': { const s = state.settings, p = Number(d.p); s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); save(); render(); break; }
       case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
       case 'extra-cardio': { const m = Math.min(600, Math.max(0, Math.round(Number($('#extra-cardio').value) || 0))); if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
       case 'export': copyBackup(); break;
@@ -2903,7 +2934,7 @@ canvas { width: 100%; height: auto; display: block; }
       case 'restore-cancel': ui.pendingRestore = null; render(); break;
       case 'setup-restore': ui.setupRestore = !ui.setupRestore; render(); break;
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
-      case 'reset': { stopTimer(); for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; renderSheet(); save(); render(); break; }
+      case 'reset': { stopTimer(); for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; ui.pendingRestore = null; ui.backfill = null; ui.showImport = false; ui.editSets = {}; ui.lastDeleted = null; ui.lastEi = null; renderSheet(); save(); render(); break; }
       case 'delete-session': { if (state.current) { toast('Finish or discard the open session first'); break; } const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
     }
   });

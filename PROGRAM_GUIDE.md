@@ -208,8 +208,9 @@ until your sets say otherwise.
 
 On an iPhone the home-screen app keeps its own storage, separate from Safari, and iOS deletes it
 when the icon is deleted. The app therefore offers a backup file (share sheet to Files, iCloud
-Drive or AirDrop) and a clipboard copy, and shows a red banner on Today whenever a session has not
-been backed up. Restore from the file picker on the setup screen or in Settings.
+Drive or AirDrop) and a clipboard copy. Backing up is your decision: Settings can offer a one-tap
+backup after each session, and can remind you once five or more sessions are unbacked; both
+banners can be dismissed. Restore from the file picker on the setup screen or in Settings.
 
 Forgot to log a session, or logged it wrong? **Log a past session** on the Today tab builds the
 next planned session on the date you choose (no check-in, no timer) and then runs it through the

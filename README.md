@@ -69,7 +69,11 @@ deletes the data.** Never delete or re-add the icon without a backup. Two backup
   the copy off the phone. Restore from the setup screen or Settings with the file picker.
 - **Copy backup:** the same JSON on the clipboard, to paste into Notes and back.
 
-Today shows a red banner whenever there are sessions newer than the last backup. *Start over*
+Backups are a manual decision by default. Two optional Settings toggles help: one offers a one-tap
+backup card on Today after each completed session, the other shows a reminder once five or more
+sessions are newer than the last backup. Both banners can be dismissed. The file always uses the same
+name (`readyset-backup.json`) so Files replaces the previous copy, and it is written compactly
+(about 10 KB per session). *Start over*
 erases everything and cannot be undone.
 
 ## Tests

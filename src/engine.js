@@ -455,7 +455,8 @@
     const ceil = plannedW * caps.up;
     for (const x of rows) {
       const tgt = x.target != null ? x.target : targetRPE;
-      if (!x.first && x.w <= floor * 1.01 && (x.missed || x.rpe >= tgt + C.floorHard)) floor *= C.floorStep;
+      const nearFloor = x.w <= floor + Math.max(floor * 0.01, (caps.inc || 0) / 2) + 1e-9; // the loaded weight is the floor rounded to the plates
+      if (!x.first && nearFloor && (x.missed || x.rpe >= tgt + C.floorHard)) floor *= C.floorStep;
     }
     const hitFloor = w < floor - 1e-9;
     w = Math.max(floor, Math.min(ceil, w));
@@ -481,6 +482,7 @@
       if (e.lift !== lift || !EX[e.ex] || !EX[e.ex].tm || EX[e.ex].mult < 0.8) continue;
       if ((sess.skippedSlots || []).includes(e.slotKey)) continue;
       const work = (e.sets || []).filter(x => (x.kind === 'work' || x.kind === 'single') && x.done);
+      const firstWork = work.find(x => x.kind === 'work');
       work.forEach((x, i) => {
         let reps = x.actualReps != null ? x.actualReps : x.reps;
         let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
@@ -490,7 +492,7 @@
         let implied = e1rm(w, reps, rpe) / EX[e.ex].mult;
         if (ref > 0) implied = Math.min(ref * 1.3, Math.max(ref * 0.7, implied));
         const single = x.kind === 'single';
-        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (i === 0 && !single ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
+        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (x === firstWork ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
         num += wt * implied; den += wt; n++;
         if (rpe >= 7.5 || (x.rpeTarget != null && x.rpeTarget >= 7)) confHigh += wt;
       });
