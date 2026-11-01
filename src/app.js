@@ -22,13 +22,14 @@
 
   // ---------- Storage ----------
   // Every state object that enters from outside the running page is rebuilt by the sanitizer:
-  // the device's own storage is trusted (it may carry the cloud token); anything pasted, shared or
-  // fetched is not. A state that cannot even build a session is refused rather than kept.
+  // the device's own storage is trusted (it may carry the undo snapshot); anything pasted or shared
+  // is not. A state that cannot even build a session is refused rather than kept.
   function cleanState(raw, trusted) {
     const st = E.sanitizeState(raw, { trusted });
     E.positionLabel(st);
+    const dayIdx = st.program.dayIdx;
     for (let d = 0; d < E.DAYS.length; d++) { st.program.dayIdx = d; E.buildSession(st, 'full'); }
-    st.program.dayIdx = E.sanitizeState(raw, { trusted }).program.dayIdx;
+    st.program.dayIdx = dayIdx;
     return st;
   }
   const Store = {
@@ -78,7 +79,7 @@
     pushState(s) {
       if (!this.db) return;
       const copy = Object.assign({}, s); delete copy.sessions;
-      copy.settings = Object.assign({}, s.settings); delete copy.settings.gistToken; delete copy.settings.gistId;
+      copy.settings = Object.assign({}, s.settings);
       this.chain = this.chain.then(() => this.db.doc('app/state').set(copy)).catch(() => {});
     },
     pushSession(sess) {
@@ -88,23 +89,22 @@
     pushAll(s) { this.pushState(s); for (const x of s.sessions || []) this.pushSession(x); },
     deleteSession(id) { if (this.db) this.chain = this.chain.then(() => this.db.doc('sessions/' + id).delete()).catch(() => {}); },
   };
-  function save() { Store.save(state); Cloud.schedule(); }
+  function save() { Store.save(state); }
 
   // ---------- Backups ----------
   // The phone's storage is the only copy of the data, and on iOS deleting the home-screen icon
-  // deletes it. So: an automatic off-device copy in a private GitHub Gist (the user's own account,
-  // written after every change), a share-sheet file, and a clipboard copy.
+  // deletes it. So: a share-sheet backup file (Files, iCloud Drive, AirDrop) and a clipboard copy,
+  // and a banner on Today whenever a session is newer than the last backup.
   // kind: how this copy is being saved. The copy records its own time, so data restored from it
   // knows that everything in it was backed up.
   function backupJSON(kind) {
     const copy = Object.assign({}, state); copy.settings = Object.assign({}, state.settings);
-    for (const k of ['gistToken', 'gistId']) delete copy.settings[k];
-    for (const k of ['current', 'undo', 'timer', 'cloudError', 'lastCloudBackup']) delete copy[k];
+    for (const k of ['current', 'undo', 'timer']) delete copy[k];
     copy.lastBackupAt = Date.now(); copy.lastBackupKind = kind || 'file';
     return JSON.stringify(copy);
   }
   function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; Store.saveLocal(state); }
-  function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.ts || 0) > t).length; }
+  function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.savedAt || s.ts || 0) > t).length; }
   async function shareBackup() {
     const json = backupJSON('file'), name = `readyset-backup-${todayISO()}.json`;
     try {
@@ -117,79 +117,6 @@
     } catch (e) { copyBackup(); }
   }
   function copyBackup() { const txt = backupJSON('clipboard'); const ok = () => { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); }; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt)); else fallbackCopy(txt); }
-  const Cloud = {
-    timer: null, busy: false,
-    available() { return !!(state && state.settings.gistToken) && !(window.claude && window.claude.use); },
-    headers(token) { return { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' }; },
-    async req(path, method, body, token) {
-      const r = await fetch('https://api.github.com' + path, { method: method || 'GET', headers: this.headers(token || state.settings.gistToken), body: body ? JSON.stringify(body) : undefined });
-      if (!r.ok) { const e = new Error(r.status === 401 ? 'GitHub rejected the token' : r.status === 404 ? 'not found' : 'GitHub error ' + r.status); e.status = r.status; throw e; }
-      return r.json();
-    },
-    schedule() { if (!this.available()) return; clearTimeout(this.timer); this.timer = setTimeout(() => this.backup(), 15000); },
-    async backup() {
-      if (!this.available()) return false;
-      if (this.busy) { this.again = true; return false; }
-      this.busy = true;
-      try {
-        const stamp = Date.now();
-        const content = backupJSON('cloud');
-        if (state.settings.gistId) {
-          try { await this.req('/gists/' + state.settings.gistId, 'PATCH', { files: { 'readyset-backup.json': { content } } }); }
-          catch (e) { if (e.status === 404) { state.settings.gistId = null; this.busy = false; return this.backup(); } throw e; }
-        } else {
-          const g = await this.req('/gists', 'POST', { description: 'Readyset backup', public: false, files: { 'readyset-backup.json': { content } } });
-          state.settings.gistId = g.id;
-        }
-        state.lastCloudBackup = stamp; state.cloudError = null; state.lastBackupAt = stamp; state.lastBackupKind = 'cloud'; Store.saveLocal(state);
-      } catch (e) { state.cloudError = (e && e.message) || 'backup failed'; Store.saveLocal(state); }
-      this.busy = false;
-      if (this.again) { this.again = false; this.schedule(); }
-      // Never rebuild the page under the user's fingers: no re-render during a session or while typing.
-      const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-      if ((view === 'settings' || view === 'today') && !state.current && !typing) render();
-      return !state.cloudError;
-    },
-    async restore(token) {
-      const list = await this.req('/gists?per_page=100', 'GET', null, token);
-      const mine = (Array.isArray(list) ? list : []).filter(x => x && x.description === 'Readyset backup' && x.files && x.files['readyset-backup.json'] && /^[a-f0-9]{8,64}$/.test(String(x.id)));
-      mine.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
-      const g = mine[0];
-      if (!g) throw new Error('No Readyset backup found in this account');
-      const full = await this.req('/gists/' + g.id, 'GET', null, token);
-      const f = full.files['readyset-backup.json'];
-      let content = f.content;
-      if (f.truncated) {
-        const u = new URL(String(f.raw_url));
-        if (u.protocol !== 'https:' || u.host !== 'gist.githubusercontent.com') throw new Error('That backup is not readable');
-        content = await (await fetch(u.href)).text();
-      }
-      if (typeof content !== 'string' || content.length > 20e6) throw new Error('That backup is too large');
-      const obj = JSON.parse(content);
-      if (!obj || typeof obj !== 'object' || !obj.settings || !obj.program) throw new Error('That backup is not readable');
-      return { obj, gistId: g.id };
-    },
-  };
-  async function connectCloud(token, restoreFirst) {
-    token = (token || '').trim(); if (!token) { toast('Paste a token first'); return; }
-    ui.cloudBusy = true; render();
-    try {
-      if (restoreFirst) {
-        const r = await Cloud.restore(token);
-        const fresh = cleanState(r.obj, false); // the backup is untrusted: it can carry no token, gist id or undo
-        fresh.settings.gistToken = token; fresh.settings.gistId = r.gistId; fresh.current = null;
-        if (!fresh.setupDone) throw new Error('That backup has no maxes in it');
-        stopTimer(); state = fresh; migrate(); Store.pushAll(state);
-        state.lastBackupAt = Date.now(); state.lastBackupKind = 'cloud'; state.lastCloudBackup = Date.now();
-        ui.cloudBusy = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null; save(); toast('Restored from your cloud backup'); render(); return;
-      }
-      state.settings.gistToken = token; state.cloudError = null; save();
-      await Cloud.backup();
-      ui.cloudBusy = false;
-      if (state.cloudError) toast(state.cloudError); else toast('Cloud backup on');
-      render();
-    } catch (e) { ui.cloudBusy = false; toast((e && e.message) || 'Could not reach GitHub'); render(); }
-  }
   function addLog(msg) { state.log.unshift({ date: todayISO(), msg }); if (state.log.length > 200) state.log.length = 200; }
 
   // ---------- Toast / confirm ----------
@@ -235,26 +162,38 @@
   function unlockAudio() { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (e) { /* ignore */ } }
 
   // ---------- Rest timer (persisted, so closing the app mid-rest loses nothing) ----------
+  // The page's own timer stops the moment iOS suspends the app (another app in front, screen locked),
+  // so the service worker, which iOS keeps alive a little longer, is asked to show the alert too. The
+  // notification tag makes the two one alert, never two.
+  function swNotify(timer) {
+    try {
+      if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return false;
+      if (!timer || !state.settings.notify || !('Notification' in window) || Notification.permission !== 'granted') { navigator.serviceWorker.controller.postMessage({ type: 'rest-cancel' }); return false; }
+      navigator.serviceWorker.controller.postMessage({ type: 'rest-schedule', at: timer.end, body: timer.label ? `Next set: ${timer.label}` : 'Next set' });
+      return true;
+    } catch (e) { return false; }
+  }
   function startTimer(seconds, label) {
     stopTimer();
     const end = Date.now() + seconds * 1000;
     state.timer = { end, total: seconds, label: label || '' };
-    ui.timer = { end, total: seconds, fired: false, iv: setInterval(tickTimer, 250) };
+    ui.timer = { end, total: seconds, fired: false, iv: setInterval(tickTimer, 250), viaSw: swNotify(state.timer) };
     tickTimer();
   }
   function resumeTimer() {
     const t = state.timer; if (!t || !state.current) return;
     if (Date.now() - t.end > 15 * 60000) { state.timer = null; return; } // long gone: forget it
-    ui.timer = { end: t.end, total: t.total, fired: Date.now() >= t.end, iv: setInterval(tickTimer, 250) };
+    const fired = Date.now() >= t.end;
+    ui.timer = { end: t.end, total: t.total, fired, iv: setInterval(tickTimer, 250), viaSw: fired ? false : swNotify(t) };
     tickTimer();
   }
-  function stopTimer() { if (ui.timer) clearInterval(ui.timer.iv); ui.timer = null; if (state && state.timer) { state.timer = null; } const el = $('#timer'); if (el) el.remove(); }
+  function stopTimer() { if (ui.timer) clearInterval(ui.timer.iv); ui.timer = null; if (state && state.timer) { state.timer = null; swNotify(null); } const el = $('#timer'); if (el) el.remove(); }
   function tickTimer() {
     if (!ui.timer) return;
     let el = $('#timer');
     if (!el) { el = document.createElement('div'); el.id = 'timer'; el.className = 'timer'; document.body.appendChild(el); }
     const left = Math.ceil((ui.timer.end - Date.now()) / 1000);
-    if (left <= 0 && !ui.timer.fired) { ui.timer.fired = true; beep(); notifyRestDone(); }
+    if (left <= 0 && !ui.timer.fired) { ui.timer.fired = true; if (left > -60) { beep(); if (!ui.timer.viaSw) notifyRestDone(); } if (!ui.timer.viaSw) swNotify(null); }
     el.classList.toggle('over', left <= 0);
     const a = Math.abs(left), txt = left <= 0 ? `Rest done ${a >= 60 ? '+' + Math.floor(a / 60) + ':' + String(a % 60).padStart(2, '0') : '+' + a + 's'}` : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
     if (!el.firstChild) el.innerHTML = `<span></span><button data-action="timer-add">+30s</button><button data-action="timer-stop">Done</button>`;
@@ -265,11 +204,10 @@
   // app is still running; nothing can fire while iOS has suspended it.
   function enableNotify() {
     if (!('Notification' in window)) { toast('Notifications are not available in this browser'); state.settings.notify = false; render(); return; }
-    Notification.requestPermission().then(p => {
-      state.settings.notify = p === 'granted';
-      if (p !== 'granted') toast('Notifications were not allowed');
-      save(); render();
-    }).catch(() => { state.settings.notify = false; save(); render(); });
+    let done = false;
+    const finish = (p) => { if (done) return; done = true; state.settings.notify = p === 'granted'; if (p !== 'granted') toast('Notifications were not allowed'); save(); render(); };
+    try { const r = Notification.requestPermission(finish); if (r && typeof r.then === 'function') r.then(finish, () => finish('denied')); }
+    catch (e) { finish('denied'); }
   }
   function notifyRestDone() {
     try {
@@ -351,7 +289,7 @@
       anchor = null;
     }
     if (view === 'history') requestAnimationFrame(drawCharts);
-    if (view === 'today' && state.current && state.current.phase === 'cardio' && ui.cardioRun) requestAnimationFrame(tickCardio);
+    if (view === 'today' && state.current && state.current.phase === 'cardio' && state.current.cardioRun) tickCardio(); // self-schedules; no animation frame needed, so it also starts while the page is hidden
   }
 
   // ---------- Setup wizard ----------
@@ -376,7 +314,6 @@
       ${ui.setupRestore ? `<div class="stack">
         ${filePick('Restore from a backup file', 'primary')}
         <label class="f">Or paste backup text<textarea id="import-text" rows="3"></textarea></label><button class="btn" data-action="import">Restore from text</button>
-        ${!(window.claude && window.claude.use) ? `<label class="f">Or your GitHub token for cloud backup<input id="gist-token" type="password" autocomplete="off" placeholder="github_pat_…"></label><button class="btn" data-action="cloud-restore" ${ui.cloudBusy ? 'disabled' : ''}>Restore from cloud</button>` : ''}
       </div>` : ''}</div>`;
     if (step === 1) return `
       <div class="card"><h2>Current maxes</h2>
@@ -436,6 +373,7 @@
     if (d.easyWeek) E.startActiveRest(state, 1);
     state.setupDone = true; state.migratedV2 = true; // a fresh program has nothing to migrate
     addLog(`Program started. 1RMs: squat ${state.lifts.squat.oneRM}, bench ${state.lifts.bench.oneRM}, deadlift ${state.lifts.deadlift.oneRM}. Training maxes at ${Math.round(s.tmPct * 100)}%.`);
+    state = cleanState(state, true); // the same clamps a reload applies, so what you see is what is stored
     ui.draft = null; save(); render();
   }
 
@@ -451,7 +389,7 @@
     const plan = E.buildSession(state, 'full');
     const last = lastSession();
     let html = '';
-    if (!Store.db && sessionsSinceBackup() >= 1 && !(state.settings.gistToken && !state.cloudError)) html += `<div class="callout bad row between"><span>${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} not backed up.${state.settings.gistToken ? ' Cloud backup failed.' : ''}</span><button class="btn sm" data-action="share-backup">Save backup</button></div>`;
+    if (!Store.db && sessionsSinceBackup() >= 1) html += `<div class="callout bad row between"><span>${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} not backed up.</span><button class="btn sm" data-action="share-backup">Save backup</button></div>`;
     if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
     if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up this week (the review on the Program tab says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
     if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
@@ -507,7 +445,7 @@
     const P = state.program, pos = E.positionLabel(state);
     const done = sessionsOfWeek();
     const dots = E.DAYS.map((d, i) => { const s = done.find(x => x.dayIdx === i); return `<span class="pill ${s ? (s.skipped ? '' : 'green') : i === P.dayIdx ? 'accent' : ''}">${d.id}</span>`; }).join(' ');
-    const sets = LIFTS.map(l => `<div class="kpi"><span class="tiny">${LIFTNAME[l]} sets</span><span class="v num">${E.weeklySets(state, l)}<small>/ ${E.CAPS[l]}</small></span></div>`).join('');
+    const sets = LIFTS.map(l => `<div class="kpi"><span class="tiny">${LIFTNAME[l]} sets</span><span class="v num">${E.weeklySets(state, l)}<small>/ ${E.capFor(state, l)}</small></span></div>`).join('');
     const kcal = weekCardio();
     return `<div class="card"><div class="row between"><h3>This week</h3><div class="row" style="gap:4px">${dots}</div></div>
       <div class="grid3">${sets}</div>
@@ -537,17 +475,17 @@
       const plan = E.buildSession(state, c.choice || r.mode);
       const explain = lightWeek ? `${pos.isRest ? 'Easy week' : pos.isDeload ? 'Deload week' : 'Test week'}: this session is already as light as the program gets, so readiness is recorded for your trend but doesn't change it.${r.color === 'red' ? ' If you feel genuinely wrecked, resting today and keeping the session is fine.' : ''}`
         : state.program.lightRestOfWeek ? 'The rest of this week is set to light sessions after two red check-ins, so today runs light whatever the score. Readiness is recorded for your trend.'
-        : state.program.pushOn ? 'You chose to push on past a deload suggestion, so this week runs trimmed whatever the score: no bonus reps or earned sets, loads one step down.'
+        : state.program.pushOn && r.color !== 'red' ? 'You chose to push on past a deload suggestion, so this week runs trimmed whatever the score: no bonus reps or earned sets, loads one step down.'
         : r.color === 'green' ? 'Good to go. Loads and sets as planned, and the first set of each main lift can take bonus reps if it moves well.'
         : r.color === 'yellow' ? 'So-so day. The book\'s rule: most days like this still allow an overload, so the session stands, trimmed: loads one step down (2.5%), no bonus reps, no earned extra sets. Same reps, same number of planned sets.'
-        : 'Rough day. Grinding a planned overload through this is the fatigue trap. A light session (fewer sets, lighter loads) clears fatigue better than a day off and keeps the week on track.';
+        : `Rough day. Grinding a planned overload through this is the fatigue trap. A light session (fewer sets, lighter loads) clears fatigue better than a day off and keeps the week on track.${state.program.pushOn ? ' You are pushing on past a deload suggestion this week, so the alternative is a trimmed session, not a full one.' : ''}`;
       return `<div class="card">
         <div class="row between"><h2>Readiness ${r.score}</h2><span class="pill ${r.color}">${r.color === 'green' ? 'Green' : r.color === 'yellow' ? 'Yellow' : 'Red'}</span></div>
         <p>${explain}</p>
         ${r.color === 'red' && lightWeek ? `<button class="btn block" data-action="ci-rest">Rest today, keep this session for next time</button>` : ''}
         ${r.color === 'red' && !lightWeek ? `<div class="seg wrap">
             <button data-action="ci-choice" data-v="light" aria-pressed="${c.choice === 'light'}">Light session<small>recommended</small></button>
-            <button data-action="ci-choice" data-v="full" aria-pressed="${c.choice === 'full'}">As planned<small>if you know it's not fatigue</small></button>
+            ${state.program.lightRestOfWeek ? '' : `<button data-action="ci-choice" data-v="${state.program.pushOn ? 'trim' : 'full'}" aria-pressed="${c.choice === (state.program.pushOn ? 'trim' : 'full')}">${state.program.pushOn ? 'Trimmed' : 'As planned'}<small>if you know it's not fatigue</small></button>`}
           </div>
           <button class="btn block" data-action="ci-rest">Rest today, keep this session for next time</button>` : ''}
         <div class="callout">${esc(plan.dayName)} · ${plan.exercises.map(summ).join(' · ')} · about ${plan.estMinutes} min</div>
@@ -602,13 +540,15 @@
   // General undo: snapshot everything a program-level action can change (position, maxes, learned
   // set counts, the report and log) before the action, and offer one Undo until the next session.
   function snapshot(label, extra) {
-    state.undo = Object.assign({ label, snap: JSON.stringify({ program: state.program, lifts: state.lifts, learned: state.learned, lastReport: state.lastReport || null, logLen: state.log.length }) }, extra || {});
+    state.undo = Object.assign({ label, snap: JSON.stringify({ program: state.program, lifts: state.lifts, learned: state.learned, lastReport: state.lastReport || null, logLen: state.log.length, tmPct: state.settings.tmPct }) }, extra || {});
   }
   function undoLast() {
     const u = state.undo; if (!u) return;
     let snap; try { snap = JSON.parse(u.snap); } catch (e) { state.undo = null; save(); render(); return; }
     // The snapshot goes through the same sanitizer as any stored state before it is restored.
-    const clean = E.sanitizeState({ settings: state.settings, lifts: snap.lifts, program: snap.program, learned: snap.learned, lastReport: snap.lastReport, setupDone: true }, { trusted: false });
+    const settings = Object.assign({}, state.settings, Number.isFinite(snap.tmPct) ? { tmPct: snap.tmPct } : {});
+    const clean = E.sanitizeState({ settings, lifts: snap.lifts, program: snap.program, learned: snap.learned, lastReport: snap.lastReport, setupDone: true }, { trusted: false });
+    state.settings.tmPct = clean.settings.tmPct;
     state.program = clean.program; state.lifts = clean.lifts; state.learned = clean.learned; state.lastReport = clean.lastReport;
     const logLen = Number.isFinite(snap.logLen) ? Math.max(0, snap.logLen) : state.log.length;
     state.log.splice(0, Math.max(0, state.log.length - logLen));
@@ -651,7 +591,7 @@
     const folded = (e, ei) => e.fold === 'closed' || (e.fold !== 'open' && !editing && e.sets.length > 0 && e.sets.every(x => x.done) && ei !== lastEi);
     const shown = s.exercises.filter(e => !s.skippedSlots.includes(e.slotKey));
     const anyOpen = s.exercises.some((e, ei) => !s.skippedSlots.includes(e.slotKey) && !folded(e, ei));
-    if (shown.length > 1) html += `<div class="row between session-tools"><span class="small muted">Tap an exercise's arrow to fold it away.</span><button class="btn sm quiet" data-action="fold-all" data-v="${anyOpen ? 'closed' : 'open'}">${anyOpen ? 'Collapse all' : 'Expand all'}</button></div>`;
+    if (shown.length > 1) html += `<div class="row between session-tools"><span class="small muted">Swipe a set left to delete it. The arrow folds an exercise.</span><button class="btn sm quiet" data-action="fold-all" data-v="${anyOpen ? 'closed' : 'open'}">${anyOpen ? 'Collapse all' : 'Expand all'}</button></div>`;
     const setText = (x) => `${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`;
     s.exercises.forEach((e, ei) => {
       const skipped = s.skippedSlots.includes(e.slotKey);
@@ -674,7 +614,7 @@
       html += `<section class="ex" data-ei="${ei}">
         <div class="ex-head"><div><div class="name">${esc(e.name)}</div>
           <div class="meta">${e.role === 'primary' ? 'Main lift' : e.role === 'secondary' ? 'Second lift' : 'Accessory'}${e.optional ? ' · optional' : ''}${e.pctTM != null ? ` · ${pctLabel(e)}` : ''}${e.rpeTarget != null && !s.isTest ? ` · aim RPE ${e.rpeTarget}${e.rpeTarget < 6 ? ', easy' : ''}` : ''}${e.repRange ? ` · ${e.repRange[0]}–${e.repRange[1]} reps, add weight when every set hits ${e.repRange[1]}` : ''}</div></div>
-          <div class="ex-tools">${e.optional || skipped ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}">${skipped ? 'Undo skip' : 'Skip'}</button>` : ''}${skipped ? '' : `<button class="fold-btn" data-action="ex-fold" data-ei="${ei}" data-v="closed" aria-expanded="true" aria-label="Fold ${esc(e.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>`}</div></div>
+          <div class="ex-tools">${skipped ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}">Undo skip</button>` : ''}${skipped ? '' : `<button class="fold-btn" data-action="ex-fold" data-ei="${ei}" data-v="closed" aria-expanded="true" aria-label="Fold ${esc(e.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>`}</div></div>
         ${e.cue ? `<div class="ex-note">${esc(e.cue)}</div>` : ''}${e.note ? `<div class="ex-note">${esc(e.note)}</div>` : ''}
         ${e.adjNote ? `<div class="ex-note adj" style="color:var(--accent)">${esc(e.adjNote)}</div>` : ''}
         ${!skipped && (e.hitFloor && e.sets.some(x => x.kind === 'work' && !x.done)) ? `<div class="ex-note"><button class="btn sm" data-action="cut-sets" data-ei="${ei}">Cut the remaining sets</button></div>` : ''}
@@ -682,7 +622,7 @@
         ${skipped ? '' : renderSets(e, ei, ei === cur && !editing ? e.sets.findIndex(x => !x.done) : -1)}
         ${skipped ? '' : `<div class="ex-foot">
           ${e.load === 'bar' && nextW ? `<span class="plates">Next work set <b>${nextW}</b> = ${esc(plateText(nextW))}</span>` : e.load === 'bar' && first && first.w ? `<span class="plates">All work sets done</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
-          <span class="foot-tools">${ui.editSets && ui.editSets[ei] && ui.lastDeleted && ui.lastDeleted.sid === s.id && ui.lastDeleted.ei === ei ? `<button class="btn sm" data-action="undo-del" data-ei="${ei}">Undo delete</button>` : ''}<button class="btn sm ${ui.editSets && ui.editSets[ei] ? 'primary' : 'quiet'}" data-action="edit-sets" data-ei="${ei}">${ui.editSets && ui.editSets[ei] ? 'Done' : 'Edit sets'}</button>${swaps.length && !(ui.editSets && ui.editSets[ei]) ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}</span>
+          <span class="foot-tools">${ui.lastDeleted && ui.lastDeleted.sid === s.id && ui.lastDeleted.ei === ei ? `<button class="btn sm primary" data-action="undo-del" data-ei="${ei}">Undo delete</button>` : ''}${e.optional && !(ui.editSets && ui.editSets[ei]) ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}">Skip</button>` : ''}<button class="btn sm ${ui.editSets && ui.editSets[ei] ? 'primary' : ''}" data-action="edit-sets" data-ei="${ei}">${ui.editSets && ui.editSets[ei] ? 'Done' : 'Remove sets'}</button>${swaps.length && !(ui.editSets && ui.editSets[ei]) ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}</span>
         </div>`}
         ${!skipped && e.load === 'bar' && first && first.w && !s.isTest && e.role !== 'accessory' && !e.sets.some(x => x.kind === 'warm') ? `<details class="warm"><summary class="tiny">Warm-up ramp</summary>${E.warmups(first.w, state.settings.barWeight, state.settings.increment, e.role).map(w => `<span class="num">${w.w} × ${w.reps}</span>`).join('')}</details>` : ''}
       </section>`;
@@ -706,13 +646,13 @@
     const editingSets = !!(ui.editSets && ui.editSets[ei]);
     const foldWarm = !editingSets && s.phase !== 'edit' && warm.length > 0 && warm.every(x => x.done) && e.sets.some(x => x.kind !== 'warm' && x.done) && !(ui.openWarm && ui.openWarm[ei]);
     const warmRow = foldWarm ? `<button class="set warm-sum" data-action="warm-open" data-ei="${ei}"><span class="n">W</span><span class="small muted">Warm-up done · ${warm.length} set${warm.length > 1 ? 's' : ''}, up to ${Math.max(...warm.map(x => (x.actualW != null ? x.actualW : x.w) || 0))}</span><span class="small muted">Show</span></button>` : '';
-    const editHint = editingSets ? `<div class="ex-note">Tap × to remove a set you skipped. Removed sets do not count anywhere.</div>` : '';
+    const editHint = editingSets ? `<div class="ex-note">Tap × on a set you skipped (or swipe any set left at any time). Removed sets do not count anywhere.</div>` : '';
     return `${editHint}<div class="sets">${warmRow}${e.sets.map((x, si) => {
       if (foldWarm && x.kind === 'warm') return '';
       const w = x.actualW != null ? x.actualW : x.w;
       const reps = x.actualReps != null ? x.actualReps : '';
       const kind = x.kind === 'warm' ? 'warm-up' : x.kind === 'single' ? 'opener' : x.kind === 'test' ? (x.open ? 'top single' : 'single') : x.ind ? `top set` : '';
-      return `<div class="set${x.done ? ' done' : ''}${x.kind === 'warm' ? ' is-warm' : ''}${si === nextSi ? ' next' : ''}" data-si="${si}">
+      return `<div class="set${x.done ? ' done' : ''}${x.kind === 'warm' ? ' is-warm' : ''}${si === nextSi ? ' next' : ''}" data-si="${si}"><button class="swipe-del" data-action="del-set" data-ei="${ei}" data-si="${si}" tabindex="-1" aria-label="Delete this set">Delete</button>
         <span class="n">${x.kind === 'warm' ? 'W' : x.kind === 'single' ? 'O' : si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}</span>
         <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
         <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" value="${reps}" placeholder="${x.reps}${x.plus ? '+' : ''}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
@@ -769,7 +709,7 @@
   }
   // Every set of every exercise you are doing is ticked (skipped exercises do not count).
   function sessionComplete(s) {
-    return !!s && s.phase === 'lift' && s.exercises.every(e => s.skippedSlots.includes(e.slotKey) || e.sets.every(x => x.done));
+    return !!s && s.phase === 'lift' && s.exercises.every(e => s.skippedSlots.includes(e.slotKey) || e.sets.every(x => x.done || x.kind === 'warm'));
   }
   // After any change to the sets: when nothing is left to lift, there is nothing to rest for.
   function afterSetChange() { if (sessionComplete(state.current)) stopTimer(); }
@@ -791,6 +731,7 @@
     const e = state.current && state.current.exercises[ei], x = e && e.sets[si];
     if (!x) { render(); return; }
     if (x.done) { x.done = false; recalcExercise(ei, true); save(); render(); return; }
+    if (x.kind !== 'warm' && e.lift && e.pctTM != null && x.rpe == null && !(ui.sheet && ui.sheet.fromTick)) { applyPendingType(); ui.sheet = { ei, si, fromTick: true }; renderSheet(); return; }
     if (!markDone(ei, si)) return;
     recalcExercise(ei);
     afterSetChange();
@@ -813,11 +754,13 @@
     // The opener single (Strength week 3) is evidence too, read against its own RPE target.
     e.sets.filter(x => x.kind === 'single' || x.kind === 'work').forEach(x => {
       if (!x.done) return;
-      const reps = x.actualReps != null ? x.actualReps : x.reps;
+      let reps = x.actualReps != null ? x.actualReps : x.reps;
       let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
       const w = x.actualW != null ? x.actualW : x.w;
+      const zero = reps === 0; // a set that did not go up at all: the strongest miss there is
+      if (zero) { reps = 1; rpe = 10; }
       if (rpe == null || !w || !reps) return;
-      evidence.push({ w, reps, rpe, first: x === work[0], missed: reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null });
+      evidence.push({ w, reps, rpe, first: x === work[0], missed: zero || reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null });
     });
     const C = E.TUNE.correction, peak = !!(E.BLOCKS[s.blockIdx] && E.BLOCKS[s.blockIdx].test);
     const r = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up: peak ? C.ceilPeak : C.ceil });
@@ -857,13 +800,13 @@
     for (let ei = 0; ei < s.exercises.length; ei++) {
       const e = s.exercises[ei]; if (!e.lift || !E.EX[e.ex].tm) continue;
       const tm = state.lifts[e.lift].tm, mult = E.EX[e.ex].mult;
-      const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff' || x.kind === 'single');
-      if (!work.length || work[0].pct == null) continue;
-      const planned = Math.max(S.barWeight, E.roundTo(tm * mult * work[0].pct, S.increment));
+      const first = e.sets.find(x => x.kind === 'work');
+      if (!first || first.pct == null) continue;
+      const planned = Math.max(S.barWeight, E.roundTo(tm * mult * first.pct, S.increment));
       if (planned === e.plannedW) continue;
       e.plannedW = planned;
       e.sets.forEach(x => { if (x.done || x.manualW || x.pct == null) return; x.w = Math.max(S.barWeight, E.roundTo(tm * mult * x.pct, S.increment)); x.actualW = null; n++; });
-      if (!e.sets.some(x => x.kind === 'warm' && x.done) && S.warmupSets !== false) {
+      if (!s.isTest && !e.sets.some(x => x.kind === 'warm' && x.done) && S.warmupSets !== false) {
         const fresh = E.warmups(planned, S.barWeight, S.increment, e.role).map(st => ({ w: st.w, reps: st.reps, kind: 'warm', done: false, actualReps: null, rpe: null, actualW: null }));
         const rest = e.sets.filter(x => x.kind !== 'warm'), delta = fresh.length - (e.sets.length - rest.length);
         if (delta) rest.forEach(y => { if (y.carriedFrom != null) y.carriedFrom += delta; });
@@ -885,6 +828,7 @@
     e.sets.forEach(y => { if (y.carriedFrom != null) { if (y.carriedFrom === si) delete y.carriedFrom; else if (y.carriedFrom > si) y.carriedFrom--; } });
     ui.lastDeleted = { sid: s.id, ei, si, set: x }; ui.lastEi = ei; s.lastEi = ei;
     if (ui.sheet && ui.sheet.ei === ei) { ui.sheet = null; renderSheet(); }
+    toast(`${x.kind === 'warm' ? 'Warm-up' : 'Set'} removed. Undo is under ${e.name}.`);
     if (x.kind !== 'warm') recalcExercise(ei, true);
     afterSetChange();
     save(); render();
@@ -925,8 +869,9 @@
     const tips = { 4: '6+ left', 5: '5 left', 6: '4 left', 7: '3 left', 8: '2 left', 9: '1 left', 10: 'max' };
     ov.innerHTML = `<div class="sheet-bg" data-action="sheet-close"><div class="sheet" data-stop="1">
       <div class="row between"><h2>How hard was that set?</h2><button class="btn sm quiet" data-action="sheet-close">Close</button></div>
+      ${ui.sheet.fromTick ? `<p class="small">An RPE lets the next sets adjust and feeds your max. If you did not notice, skip it: the set still counts.</p>` : ''}
       <p class="small muted">${esc(e.name)} · ${x.kind === 'single' ? 'opener' : `set ${si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}`}${x.rpeTarget != null ? ` · planned about RPE ${x.rpeTarget}` : ''}. RPE 8 means two clean reps were left.</p>
-      <div class="rpegrid">${opts.map(v => `<button class="${v === x.rpeTarget ? 'target' : ''}" data-action="rpe-pick" data-v="${v}">${v}<small>${tips[v] || ''}</small></button>`).join('')}<button data-action="rpe-pick" data-v="">—<small>clear</small></button></div>
+      <div class="rpegrid">${opts.map(v => `<button class="${v === x.rpeTarget ? 'target' : ''}" data-action="rpe-pick" data-v="${v}">${v}<small>${tips[v] || ''}</small></button>`).join('')}${ui.sheet.fromTick ? `<button data-action="rpe-pick" data-v="skip">—<small>skip</small></button>` : `<button data-action="rpe-pick" data-v="">—<small>clear</small></button>`}</div>
     </div></div>`;
   }
   function swapExercise(ei, exId) {
@@ -940,6 +885,9 @@
     fresh.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; });
     s.exercises[ei] = fresh;
     addLog(`${E.exerciseName(state, exId)} now fills the ${e.slotKey.replace(/_/g, ' ')} slot.`);
+    if (ui.lastDeleted && ui.lastDeleted.ei === ei) ui.lastDeleted = null;
+    if (ui.editSets) delete ui.editSets[ei];
+    afterSetChange();
     save(); render();
   }
   function finishLifting(force) {
@@ -1026,9 +974,10 @@
   function completeSession() {
     const s = state.current; s.phase = 'done'; delete s.phase;
     // Accessory double progression.
+    const reducedDay = s.isDeload || s.isRest || s.isTest || s.mode === 'light';
     for (const e of s.exercises) {
       if (e.lift || s.skippedSlots.includes(e.slotKey)) continue;
-      const p = E.accessoryProgress(state, { load: e.load, repRange: e.repRange, sets: e.sets.map(x => ({ done: x.done, w: x.actualW != null ? x.actualW : x.w, reps: x.reps, actualReps: x.actualReps })) });
+      const p = reducedDay ? null : E.accessoryProgress(state, { load: e.load, repRange: e.repRange, sets: e.sets.map(x => ({ done: x.done, w: x.actualW != null ? x.actualW : x.w, reps: x.reps, actualReps: x.actualReps })) });
       if (p) { state.acc[e.ex] = { weight: p.weight, updated: s.date }; }
       else { const d = e.sets.find(x => x.done && x.actualW != null); if (d && !state.acc[e.ex]) state.acc[e.ex] = { weight: d.actualW, updated: s.date }; }
     }
@@ -1037,6 +986,7 @@
     cal.forEach(addLog);
     delete s.cardioRun; delete s.setLightRest;
     s.exercises.forEach(e => { delete e.fold; }); delete s.lastEi;
+    s.savedAt = Date.now();
     state.current = null; state.undo = null; stopTimer();
     state.sessions.push(s); Store.pushSession(s);
     if (s.backfill) { state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); addLog(`${s.dayName} logged after the fact for ${fmtDate(s.date)}.`); }
@@ -1044,6 +994,7 @@
     if (cal.length) { const rep = state.lastReport || { title: 'After today', lines: [] }; rep.lines = cal.concat(rep.lines); rep.title = state.lastReport ? rep.title : 'Maxes calibrated from today'; state.lastReport = rep; }
     try { if (wakeLock) wakeLock.release(); } catch (e) { /* ignore */ }
     save(); render(); scrollToY(0);
+    setTimeout(() => applyUpdateIfSafe(false), 1500);
   }
   function afterSession() {
     const P = state.program, pos = E.position(state);
@@ -1119,7 +1070,7 @@
       <div class="card"><h3>Maxes and adjustments</h3>
         <div class="tablewrap"><table><tr><th>Lift</th><th class="num">1RM</th><th class="num">TM</th><th class="num">Sets</th><th class="num">Load</th><th>Flags</th></tr>${adj}</table></div>
         <p class="small muted">Sets and load are the adaptive offsets in effect this week. A flag means a week where you missed reps, got crushed or stayed sore; two flags on two lifts suggests a deload.</p>
-        <div class="btnrow">${pos.isRest || pos.isDeload || pos.isTest ? '' : '<button class="btn" data-action="deload-now-confirm">Deload now</button>'}<button class="btn" data-action="rest-now-confirm">Easy week</button></div>
+        ${state.current ? '<p class="small muted">Deload and easy-week changes wait until the open session is finished.</p>' : `<div class="btnrow">${pos.isRest || pos.isDeload || pos.isTest ? '' : '<button class="btn" data-action="deload-now-confirm">Deload now</button>'}${pos.isRest || pos.isDeload ? '' : '<button class="btn" data-action="rest-now-confirm">Easy week</button>'}</div>`}
         ${ui.confirm === 'deload' ? `<div class="callout warn">Take a deload week now? The block picks up where it left off afterwards.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="deload-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
         ${ui.confirm === 'rest' ? `<div class="callout warn">Insert one easy week (half sets, half loads, variations) before continuing? Use it once or twice a year or when life gets heavy.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="rest-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
         <label class="f">After this block, run<select id="next-block" data-action="next-block"><option value="">the normal sequence</option>${E.BLOCKS.map((b, i) => `<option value="${i}" ${P.nextBlockOverride === i ? 'selected' : ''}>${b.name}</option>`).join('')}</select></label>
@@ -1186,7 +1137,7 @@
     s.cardio = cm > 0 ? { min: cm, watts: cw, kcal: E.cardioKcal(cm, cw || state.settings.cardioWatts) } : { min: 0 };
     s.exercises.forEach(e => { delete e.fold; }); delete s.lastEi;
     delete s.phase; delete s.editOf; delete s.editDate; delete s.startedAt; delete s.finishedAt; delete s.cardioRun; delete s.setLightRest;
-    s.edited = true; s.calibrated = true;
+    s.edited = true; s.calibrated = true; s.savedAt = Date.now();
     snapshot(`Edited ${s.dayName} (${fmtDate(s.date)})`, { removeSessionId: s.id, restoreSession: original });
     state.sessions[idx] = s; state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); Store.pushSession(s);
     state.current = null; view = 'history';
@@ -1293,13 +1244,13 @@
         <div class="grid3"><label class="f">Rest, main (s)<input id="set-r1" type="number" inputmode="numeric" data-setting="restPrimary" value="${s.restPrimary}"></label><label class="f">Rest, second (s)<input id="set-r2" type="number" inputmode="numeric" data-setting="restSecondary" value="${s.restSecondary}"></label><label class="f">Rest, accessory (s)<input id="set-r3" type="number" inputmode="numeric" data-setting="restAccessory" value="${s.restAccessory}"></label></div>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-peak" data-setting="includePeak" ${s.includePeak === true ? 'checked' : ''} style="width:22px;height:22px"> Include the Peak &amp; Test block</label>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-warm" data-setting="warmupSets" ${s.warmupSets !== false ? 'checked' : ''} style="width:22px;height:22px"> Show warm-up sets in each session</label>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> Notify me when a rest ends <span class="muted small" style="font-weight:500">(iPhone: only from the home-screen app, and only while it is still running)</span></label>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> Notify me when a rest ends <span class="muted small" style="font-weight:500">(iPhone: from the home-screen app. With the screen locked or another app in front, iOS may hold the alert until Readyset is next active; keeping it open during a session is the reliable option)</span></label>
         <label class="f">Extra easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
       </div>
       <div class="card"><h3>Data and backups</h3>
         ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
         <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Keep a backup on, and never delete or re-add the icon without one.</div>
-        ${renderCloud()}`}
+        <p class="small">Save a backup file to Files (iCloud Drive keeps it off the phone) whenever the red banner shows, and before any change to the home-screen icon. Restore it from the setup screen or below.</p>`}
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
         <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
@@ -1307,25 +1258,7 @@
         <button class="btn danger block" data-action="reset-confirm">Start over</button>
         ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every logged session, and it cannot be undone. Tap Copy backup first if there is anything worth keeping. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}
       </div>
-      <p class="small muted" style="text-align:center">Readyset · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.</p>`;
-  }
-  function renderCloud() {
-    const s = state.settings;
-    if (s.gistToken) return `<div class="stack"><div class="row between"><b>Cloud backup: on</b><span class="pill ${state.cloudError ? 'red' : 'green'}">${state.cloudError ? 'error' : 'GitHub Gist'}</span></div>
-      <p class="small muted">${state.cloudError ? esc(state.cloudError) + '. It will retry after the next change.' : state.lastCloudBackup ? `Written ${new Date(state.lastCloudBackup).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}, about 15 s after every change, to a private gist in your GitHub account.` : 'Writing the first copy…'}</p>
-      <div class="btnrow"><button class="btn sm" data-action="cloud-backup-now">Back up now</button><button class="btn sm quiet" data-action="cloud-off">Turn off</button></div></div>`;
-    return `<details><summary class="btn block" style="display:flex">Turn on automatic cloud backup</summary>
-      <div class="stack" style="margin-top:10px">
-      <p class="small">Backs up to a private gist in your own GitHub account about 15 seconds after every change, and restores from it in one tap on a new phone. Create a token once:</p>
-      <ol class="small muted" style="margin:0;padding-left:18px">
-        <li>On github.com: profile photo → Settings → Developer settings → Personal access tokens → <b>Fine-grained tokens</b> → Generate new token.</li>
-        <li>Name it "Readyset", set expiration to the longest option, and under <b>Account permissions</b> set <b>Gists</b> to <b>Read and write</b>. Nothing else.</li>
-        <li>Generate, copy the token (it starts with github_pat_), paste it here.</li>
-      </ol>
-      <label class="f">GitHub token<input id="gist-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
-      <div class="btnrow"><button class="btn primary" data-action="cloud-connect" ${ui.cloudBusy ? 'disabled' : ''}>Turn on</button><button class="btn" data-action="cloud-restore" ${ui.cloudBusy ? 'disabled' : ''}>Restore from cloud</button></div>
-      <p class="small muted">The token stays in this app only and is never written into the backup itself. It can only read and write gists.</p>
-      </div></details>`;
+      <p class="small muted" style="text-align:center">Readyset${BUILD ? ` · build ${esc(BUILD.slice(0, 7))}` : ''} · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.${BUILD ? ` <button class="btn sm quiet" data-action="check-update">Check for updates</button>` : ''}</p>`;
   }
   function tmLine() {
     return `Training maxes: squat ${state.lifts.squat.tm}, bench ${state.lifts.bench.tm}, deadlift ${state.lifts.deadlift.tm}. Every barbell load in the plan is a percentage of these.${LIFTS.some(l => state.lifts[l].est) ? ` Recent estimates from your sets: ${LIFTS.filter(l => state.lifts[l].est).map(l => `${LIFTNAME[l].toLowerCase()} ~${Math.round(state.lifts[l].est)}`).join(', ')}.` : ''}`;
@@ -1398,14 +1331,15 @@
         const sh = ui.sheet, e = sh && state.current && state.current.exercises[sh.ei], x = e && e.sets[sh.si];
         ui.sheet = null; renderSheet();
         if (!x) { render(); break; }
+        if (d.v === 'skip') { if (!x.done) { ui.sheet = { ei: sh.ei, si: sh.si, fromTick: true }; toggleDone(sh.ei, sh.si); ui.sheet = null; } break; }
         x.rpe = d.v === '' ? null : Number(d.v);
-        if (!x.done && x.rpe != null) markDone(sh.ei, sh.si);
+        if (!x.done && x.rpe != null && !markDone(sh.ei, sh.si)) { const b = document.querySelector(`.ex[data-ei="${sh.ei}"] .set[data-si="${sh.si}"] [data-action="rpe"]`); if (b) { b.textContent = x.rpe; b.classList.remove('empty'); } save(); break; }
         recalcExercise(sh.ei); afterSetChange(); save(); render(); break;
       }
       case 'cut-sets': cutSets(Number(d.ei)); break;
       case 'restore-sets': restoreSets(Number(d.ei)); break;
       case 'sheet-close': if (ev.target === t || ev.target.closest('[data-stop]') == null || t.tagName === 'BUTTON') { ui.sheet = null; renderSheet(); } break;
-      case 'toggle-skip': { const s = state.current, e = s.exercises[Number(d.ei)]; const i = s.skippedSlots.indexOf(e.slotKey); if (i >= 0) s.skippedSlots.splice(i, 1); else s.skippedSlots.push(e.slotKey); save(); render(); break; }
+      case 'toggle-skip': { const s = state.current, e = s.exercises[Number(d.ei)]; const i = s.skippedSlots.indexOf(e.slotKey); if (i >= 0) s.skippedSlots.splice(i, 1); else s.skippedSlots.push(e.slotKey); afterSetChange(); save(); render(); break; }
       case 'finish-lifting': finishLifting(false); break;
       case 'finish-confirm': finishLifting(true); break;
       case 'abandon': ui.confirm = 'abandon'; render(); break;
@@ -1426,36 +1360,34 @@
       case 'cardio-resume': { const r = state.current.cardioRun; if (r && r.paused) { r.pausedTotal += Date.now() - (r.pausedAt || Date.now()); r.paused = false; r.pausedAt = null; save(); render(); } break; }
       case 'cardio-save': saveCardio(false); break;
       case 'cardio-skip': saveCardio(true); break;
-      case 'timer-add': if (ui.timer) { ui.timer.end += 30000; ui.timer.fired = false; if (state.timer) state.timer.end = ui.timer.end; tickTimer(); Store.saveLocal(state); } break;
+      case 'timer-add': if (ui.timer) { ui.timer.end += 30000; ui.timer.fired = false; if (state.timer) { state.timer.end = ui.timer.end; ui.timer.viaSw = swNotify(state.timer); } tickTimer(); Store.saveLocal(state); } break;
       case 'timer-stop': stopTimer(); Store.saveLocal(state); break;
       case 'dismiss-report': state.lastReport = null; save(); render(); break;
       case 'undo': undoLast(); break;
+      case 'apply-update': applyUpdateIfSafe(true); break;
+      case 'check-update': { lastUpdateCheck = 0; checkForUpdate(true).then(r => { if (r === 'latest') toast('You have the latest version'); else if (r === 'guarded') toast('An update is waiting: close the app fully and reopen it'); else if (r === 'failed') toast('Could not reach the server. Try again with a connection'); }); break; }
       case 'deload-now-confirm': ui.confirm = 'deload'; render(); break;
       case 'rest-now-confirm': ui.confirm = 'rest'; render(); break;
-      case 'deload-now': { snapshot('Deload started early'); const ok = E.startDeloadNow(state); ui.confirm = null; if (ok) addLog('Deload started early.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
+      case 'deload-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Deload started early'); const ok = E.startDeloadNow(state); ui.confirm = null; if (ok) addLog('Deload started early.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
       case 'deload-later': snapshot('Deload suggestion dismissed'); state.program.pendingDeload = false; state.program.pushOn = true; addLog('Deload suggestion declined; pushing on with the week trimmed (no bonus reps or earned sets, loads one step down).'); save(); render(); break;
-      case 'rest-now': snapshot('Easy week inserted'); E.startActiveRest(state, 1); ui.confirm = null; addLog('Easy week inserted.'); save(); render(); break;
+      case 'rest-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Easy week inserted'); const ok = E.startActiveRest(state, 1); ui.confirm = null; if (ok) addLog('Easy week inserted.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
       case 'set-plate': { const s = state.settings, p = Number(d.p); s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); save(); render(); break; }
       case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
-      case 'extra-cardio': { const m = Number($('#extra-cardio').value) || 0; if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
+      case 'extra-cardio': { const m = Math.min(600, Math.max(0, Math.round(Number($('#extra-cardio').value) || 0))); if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
       case 'export': copyBackup(); break;
       case 'share-backup': shareBackup(); break;
       case 'import-toggle': ui.showImport = !ui.showImport; render(); break;
       case 'import': restoreFromText(($('#import-text') || {}).value || ''); break;
       case 'restore-confirm': if (ui.pendingRestore) applyRestore(ui.pendingRestore); break;
       case 'restore-cancel': ui.pendingRestore = null; render(); break;
-      case 'cloud-connect': connectCloud($('#gist-token').value, false); break;
-      case 'cloud-restore': connectCloud($('#gist-token').value, true); break;
-      case 'cloud-backup-now': Cloud.backup().then(ok => toast(ok ? 'Backed up' : (state.cloudError || 'A backup is already running'))); break;
-      case 'cloud-off': state.settings.gistToken = null; state.settings.gistId = null; state.cloudError = null; save(); render(); break;
       case 'setup-restore': ui.setupRestore = !ui.setupRestore; render(); break;
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
       case 'reset': { stopTimer(); for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; renderSheet(); save(); render(); break; }
-      case 'delete-session': { const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
+      case 'delete-session': { if (state.current) { toast('Finish or discard the open session first'); break; } const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
     }
   });
   // Restore a backup (pasted text or a chosen file). Untrusted: it goes through the sanitizer and can
-  // never carry a cloud token, a gist id or an undo snapshot; only this device's own token survives.
+  // never carry an undo snapshot or anything outside the whitelist.
   function restoreFromText(txt) {
     let fresh;
     try {
@@ -1488,10 +1420,8 @@
     ui.pendingRestore = null;
     fresh.lastBackupAt = Date.now(); fresh.lastBackupKind = 'restore';
     try {
-      const keepToken = state.settings.gistToken, keepGist = state.settings.gistId;
       const oldIds = state.sessions.map(x => x.id);
       stopTimer(); state = fresh; state.current = null;
-      if (keepToken) { state.settings.gistToken = keepToken; state.settings.gistId = keepGist; }
       migrate(); Store.pushAll(state);
       for (const id of oldIds) if (!state.sessions.some(x => x.id === id)) Store.deleteSession(id);
       save(); ui.showImport = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null;
@@ -1541,6 +1471,34 @@
   // fixed controls, so they act on the touch itself: a touch that lifts within 10px of where it
   // started, on the same button, is a tap. preventDefault stops the browser's own click from
   // following, so it never fires twice.
+  // Swipe a set row left to reveal Delete. Horizontal moves only; vertical ones scroll as usual
+  // (touch-action: pan-y on the row). One row open at a time; any other touch closes it.
+  const SWIPE_W = 84;
+  let swipe = null;
+  function closeSwipes(except) { document.querySelectorAll('.set.open').forEach(r => { if (r !== except) { r.classList.remove('open'); r.style.removeProperty('--sx'); } }); }
+  document.addEventListener('touchstart', (ev) => {
+    const row = ev.target.closest && ev.target.closest('.set[data-si]');
+    closeSwipes(row);
+    if (!row || ev.touches.length !== 1 || ev.target.closest('.swipe-del')) { swipe = null; return; }
+    swipe = { row, x: ev.touches[0].clientX, y: ev.touches[0].clientY, base: row.classList.contains('open') ? -SWIPE_W : 0, mode: null };
+  }, { passive: true });
+  document.addEventListener('touchmove', (ev) => {
+    if (!swipe) return;
+    const p = ev.touches[0], dx = p.clientX - swipe.x, dy = p.clientY - swipe.y;
+    if (!swipe.mode) { if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; swipe.mode = Math.abs(dx) > Math.abs(dy) ? 'swipe' : 'scroll'; if (swipe.mode === 'swipe') swipe.row.classList.add('swiping'); }
+    if (swipe.mode !== 'swipe') return;
+    const sx = Math.max(-SWIPE_W - 16, Math.min(0, swipe.base + dx));
+    swipe.row.style.setProperty('--sx', sx + 'px');
+  }, { passive: true });
+  const endSwipe = () => {
+    const s = swipe; swipe = null; if (!s || s.mode !== 'swipe') return;
+    const sx = parseFloat(s.row.style.getPropertyValue('--sx')) || 0;
+    s.row.classList.remove('swiping');
+    if (sx < -SWIPE_W / 2) { s.row.classList.add('open'); s.row.style.setProperty('--sx', -SWIPE_W + 'px'); }
+    else { s.row.classList.remove('open'); s.row.style.removeProperty('--sx'); }
+  };
+  document.addEventListener('touchend', endSwipe, { passive: true });
+  document.addEventListener('touchcancel', endSwipe, { passive: true });
   const FAST = '#tabbar button, #timer button';
   let fastTap = null;
   document.addEventListener('touchstart', (ev) => {
@@ -1584,6 +1542,57 @@
   // Only once the stored data has loaded cleanly: before that (or on the recovery screen) the
   // in-memory state is a blank default, and saving it would overwrite what is on the device.
   let booted = false;
+  // ---------- Self-update ----------
+  // iOS keeps a home-screen web app alive for days, so it keeps running old code long after a new
+  // version is published. Each time the app comes to the front it asks the server which build is
+  // current; a different one is loaded by reloading the page, which keeps every bit of data (it all
+  // lives in storage). The reload waits for a safe moment: not while typing, and not mid-session
+  // unless you tap the banner.
+  const BUILD = ((document.querySelector('meta[name="readyset-build"]') || {}).content || '').trim();
+  let lastUpdateCheck = 0, reloading = false;
+  // Resolves to 'latest' | 'update' | 'guarded' | 'failed' | 'off' | 'throttled'.
+  function checkForUpdate(force) {
+    if (!BUILD || !location.protocol.startsWith('http') || reloading) return Promise.resolve('off');
+    if (!force && Date.now() - lastUpdateCheck < 60000) return Promise.resolve('throttled');
+    lastUpdateCheck = Date.now();
+    return fetch('./version.txt', { cache: 'no-store' }).then(r => (r.ok ? r.text() : '')).then(v => {
+      v = (v || '').trim();
+      if (!/^[a-f0-9]{6,64}$/.test(v)) return 'failed';
+      if (v === BUILD) return 'latest';
+      // Reloaded for this version already and still running the old one (a stale cache in the way):
+      // do not loop. The next launch, or the next change on the server, tries again.
+      try { if (sessionStorage.getItem('rs-reloaded-for') === v) return 'guarded'; } catch (e) { /* ignore */ }
+      ui.updateReady = v;
+      try { if (navigator.serviceWorker) navigator.serviceWorker.getRegistration().then(reg => reg && reg.update()).catch(() => {}); } catch (e) { /* ignore */ }
+      applyUpdateIfSafe();
+      return 'update';
+    }).catch(() => 'failed');
+  }
+  // Anything that lives only in memory (a check-in in progress, a half-filled setup, a session, the
+  // RPE sheet, a restore waiting for confirmation, a focused field) makes the update wait for a tap.
+  function updateBusy() {
+    const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    return !!(typing || !state || state.current || !state.setupDone || ui.checkin || ui.backfill || ui.pendingRestore || ui.sheet || ui.confirm);
+  }
+  function applyUpdateIfSafe(byTap) {
+    if (!ui.updateReady || reloading) return;
+    if (!byTap && document.visibilityState !== 'visible') return;
+    if (!byTap && updateBusy()) { renderUpdateBar(); return; }
+    reloading = true; saveNow();
+    try { sessionStorage.setItem('rs-reloaded-for', String(ui.updateReady)); } catch (e) { /* ignore */ }
+    setTimeout(() => location.reload(), 50);
+  }
+  function renderUpdateBar() {
+    if (!ui.updateReady || $('#update-bar')) return;
+    const bar = document.createElement('div'); bar.id = 'update-bar'; bar.className = 'update-bar';
+    bar.innerHTML = '<span>A new version of Readyset is ready. Everything is saved; what you are doing carries on after the update.</span><button class="btn sm" data-action="apply-update">Update now</button>';
+    const app = $('#app'); if (app) app.insertBefore(bar, app.firstChild);
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(false); });
+  setInterval(() => { if (document.visibilityState === 'visible') checkForUpdate(false); }, 30 * 60000);
+  // A new service worker taking over is a hint, not proof (the first install and a page that already
+  // loaded the new build both fire it): confirm against version.txt before doing anything.
+  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', () => { lastUpdateCheck = 0; checkForUpdate(true); });
   function saveNow() {
     if (!state || !booted) return;
     try {
@@ -1622,8 +1631,8 @@
       return;
     }
     if (state.current && state.current.phase === 'lift') { resumeTimer(); keepAwake(); }
-    if (state.current && state.current.phase === 'cardio' && state.current.cardioRun) requestAnimationFrame(tickCardio);
-    if (Cloud.available() && (state.cloudError || sessionsSinceBackup())) Cloud.schedule();
+    setTimeout(() => checkForUpdate(true), 3000);
+    if (state.current && state.current.phase === 'cardio' && state.current.cardioRun) tickCardio();
   }
   function recoveryCard(err) {
     const raw = (() => { try { return localStorage.getItem(Store.key) || ''; } catch (e) { return ''; } })();

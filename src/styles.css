@@ -144,7 +144,13 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .ex-head .meta { font-size: .85rem; color: var(--muted); }
 .ex-note { padding: 0 14px 8px; font-size: .9rem; color: var(--muted); }
 .sets { display: flex; flex-direction: column; }
-.set { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr) 60px 46px; align-items: center; gap: 6px; padding: 7px 10px 7px 12px; border-top: 1px solid var(--line); min-height: 52px; }
+.set { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr) 60px 46px; align-items: center; gap: 6px; padding: 7px 10px 7px 12px; border-top: 1px solid var(--line); min-height: 52px; position: relative; overflow: hidden; touch-action: pan-y; }
+/* Swipe to delete: the row's cells slide left by --sx and the Delete button follows them in. */
+.set > *:not(.swipe-del) { transform: translateX(var(--sx, 0px)); transition: transform .18s ease; }
+.set.swiping > *:not(.swipe-del) { transition: none; }
+.set .swipe-del { position: absolute; top: 0; bottom: 0; right: calc(-84px - var(--sx, 0px)); width: 84px; border: 0; background: var(--bad); color: #fff; font-family: var(--display); font-weight: 700; font-size: .95rem; text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; justify-content: center; transition: right .18s ease; }
+.set.swiping .swipe-del { transition: none; }
+.set .swipe-del:active { filter: brightness(.9); }
 .set.is-warm { min-height: 46px; padding-block: 4px; }
 .set.is-warm .field input { font-weight: 500; }
 .set.next { box-shadow: inset 3px 0 0 var(--accent); }
@@ -255,6 +261,8 @@ canvas { width: 100%; height: auto; display: block; }
 .empty { text-align: center; color: var(--muted); padding: 20px 10px; }
 .callout { border-left: 3px solid var(--accent); padding: 6px 12px; background: var(--surface-2); border-radius: 0 8px 8px 0; font-size: .92rem; }
 .callout.good { border-color: var(--good); } .callout.warn { border-color: var(--warn); } .callout.bad { border-color: var(--bad); }
+.update-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px max(var(--gutter), env(safe-area-inset-right, 0px)) 8px max(var(--gutter), env(safe-area-inset-left, 0px)); background: var(--accent-soft); color: var(--fg); font-size: .9rem; border-bottom: 1px solid var(--line); }
+.update-bar .btn { flex: none; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(12px + env(safe-area-inset-top, 0px)); z-index: 30; background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 600; box-shadow: var(--shadow); }
 .steps { display: flex; gap: 6px; }
 .steps i { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }

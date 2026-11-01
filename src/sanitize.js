@@ -1,5 +1,5 @@
 /* Readyset state sanitizer. Every state object that comes from outside the running page
-   (localStorage, a pasted backup, the cloud gist, the artifact store) passes through here before
+   (localStorage, a pasted or chosen backup, the artifact store) passes through here before
    use. It rebuilds a fresh state from a whitelist of fields, coerces every value to its type and
    range, and drops anything unknown, so a corrupted or tampered backup can neither crash the page
    nor inject markup, and no prototype keys ever reach the live state. */
@@ -68,7 +68,7 @@
       readiness: isObj(r) ? { score: int(get(r, 'score'), 0, 100, 50), color: oneOf(get(r, 'color'), ['green', 'yellow', 'red'], 'yellow') } : null,
       post: isObj(p) ? { difficulty: int(get(p, 'difficulty'), 0, 4, 0) } : null,
       cardio: isObj(c) ? { min: int(get(c, 'min'), 0, 600, 0), watts: numOrNull(get(c, 'watts'), 0, 2000), kcal: int(get(c, 'kcal'), 0, 10000, 0) } : null,
-      durationMin: int(get(s, 'durationMin'), 0, 600, 0), notes: str(get(s, 'notes'), 1000), calibrated: bool(get(s, 'calibrated')),
+      durationMin: int(get(s, 'durationMin'), 0, 600, 0), notes: str(get(s, 'notes'), 1000), calibrated: bool(get(s, 'calibrated')), savedAt: numOrNull(get(s, 'savedAt'), 0, 4e12),
       skippedSlots: (Array.isArray(get(s, 'skippedSlots')) ? get(s, 'skippedSlots') : []).filter(k => SLOT_KEYS.includes(k)).slice(0, 10),
       soreness: isObj(so) ? { legs: int(get(so, 'legs'), 1, 4, 1), push: int(get(so, 'push'), 1, 4, 1), hinge: int(get(so, 'hinge'), 1, 4, 1) } : null,
       exercises: (Array.isArray(get(s, 'exercises')) ? get(s, 'exercises') : []).slice(0, 12).map(e => sanitizeExercise(e, state)).filter(Boolean),
@@ -92,7 +92,7 @@
     return out;
   }
   // opts.trusted: true only for the device's own storage; anything pasted, shared or fetched is
-  // untrusted and can never carry a cloud token, a gist id or an undo snapshot.
+  // untrusted and can never carry an undo snapshot.
   function sanitizeState(raw, opts) {
     const trusted = !!(opts && opts.trusted);
     const d = E.defaultState();
@@ -121,8 +121,6 @@
     s.restPrimary = int(get(S, 'restPrimary'), 30, 600, 180); s.restSecondary = int(get(S, 'restSecondary'), 30, 600, 120); s.restAccessory = int(get(S, 'restAccessory'), 15, 600, 90);
     s.age = numOrNull(get(S, 'age'), 10, 100);
     s.name = str(get(S, 'name'), 40);
-    const tok = get(S, 'gistToken'); s.gistToken = trusted && typeof tok === 'string' && /^[A-Za-z0-9_]{20,255}$/.test(tok) ? tok : null;
-    const gid = get(S, 'gistId'); s.gistId = trusted && typeof gid === 'string' && /^[a-f0-9]{8,64}$/.test(gid) ? gid : null;
 
     const L = isObj(get(raw, 'lifts')) ? get(raw, 'lifts') : {};
     for (const k of LIFTS) {
@@ -195,9 +193,6 @@
     d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(0, 2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
     d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);
-    d.lastCloudBackup = numOrNull(get(raw, 'lastCloudBackup'), 0, 4e12);
-    d.cloudError = trusted ? (str(get(raw, 'cloudError'), 200, null) || null) : null;
-    d.lastCloudBackup = trusted ? d.lastCloudBackup : null;
     d.migratedV2 = bool(get(raw, 'migratedV2'));
     d.setupDone = bool(get(raw, 'setupDone')) && LIFTS.every(k => d.lifts[k].oneRM > 0);
     d.updatedAt = num(get(raw, 'updatedAt'), 0, 4e12, 0);

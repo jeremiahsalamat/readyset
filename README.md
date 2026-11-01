@@ -27,8 +27,12 @@ git commit -m "describe the change"
 git push
 ```
 
-Pages rebuilds in about a minute. The phone picks up the new version the next time the app is
-opened with a connection (the service worker is network-first).
+Pages rebuilds in about a minute. The installed app checks `version.txt` every time it comes to
+the front and reloads itself when a new build is there (immediately when idle, after a tap on the
+banner mid-session); all data lives in storage and survives the reload. Each build carries a
+content hash (`meta readyset-build`, `docs/version.txt`, the service-worker cache name), so an
+unchanged build never triggers a reload. Never ask the owner to delete and re-add the icon: that
+deletes the data.
 
 ## Files
 
@@ -59,13 +63,11 @@ python -m http.server 8765 --directory docs
 Everything is one JSON state object plus one document per session, stored in the browser.
 
 **On an iPhone, the home-screen app has its own storage, separate from Safari. Deleting the icon
-deletes the data.** Never delete or re-add the icon without a backup. Three backups exist:
+deletes the data.** Never delete or re-add the icon without a backup. Two backups exist:
 
-- **Cloud (recommended):** Settings → *Turn on automatic cloud backup*. It writes a private gist
-  in your GitHub account about 15 s after every change, and *Restore from cloud* brings it back on
-  a new phone or a re-added icon. Needs a fine-grained GitHub token with only the Gists permission.
-- **Save backup file:** opens the share sheet (Files, Notes, AirDrop).
-- **Copy backup:** the same JSON on the clipboard.
+- **Save backup file:** opens the share sheet (Files, Notes, AirDrop). Saving to iCloud Drive keeps
+  the copy off the phone. Restore from the setup screen or Settings with the file picker.
+- **Copy backup:** the same JSON on the clipboard, to paste into Notes and back.
 
 Today shows a red banner whenever there are sessions newer than the last backup. *Start over*
 erases everything and cannot be undone.
@@ -99,24 +101,19 @@ kept as the yardstick. The three review reports the rules came from are in `dev/
 
 ## Security
 
-- No server, no accounts, no analytics, no third-party scripts. Network use: GitHub's API for the
-  optional gist backup, Google Fonts for type (cached by the service worker for offline use).
-- Every state object from outside the running page (storage, a pasted backup, the cloud backup)
+- No server, no accounts, no analytics, no third-party scripts. Network use: Google Fonts for type
+  (cached by the service worker for offline use), nothing else.
+- Every state object from outside the running page (storage, a pasted or chosen backup)
   is rebuilt through `src/sanitize.js`: whitelisted fields, typed and clamped values, enumerations
   coerced, unknown exercise ids and prototype keys dropped. Rendering escapes all text.
 - `docs/index.html` carries a Content Security Policy that allows only the page's own scripts by
-  hash, so injected markup cannot execute, and only the GitHub hosts for network calls.
-- The GitHub token is a fine-grained token limited to Gists, stored only in the app's storage on
-  the device, sent only to api.github.com over HTTPS, and never written into any backup.
+  hash, so injected markup cannot execute, and no network calls except to its own origin and fonts.
 - The service worker caches same-origin GET responses and font files only.
-- A backup pasted or fetched from the cloud is never allowed to carry a cloud token or gist id,
-  so a tampered backup cannot redirect future backups elsewhere. Backups themselves omit both.
 - If the saved data ever fails to load, the app shows a recovery card (copy the stored data,
   start over) instead of a dead page.
 - Known limits: `username.github.io` is one origin for every GitHub Pages project under that
   account, so do not host other projects there (they would share this app's storage); a meta
-  CSP cannot stop framing, so the app blanks itself when framed; the Gists permission covers all
-  gists in the account, so use a token with a short expiry and revoke it if a phone is lost.
+  CSP cannot stop framing, so the app blanks itself when framed.
 
 ## Changing the program
 

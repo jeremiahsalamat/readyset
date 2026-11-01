@@ -166,7 +166,7 @@
     // In-session: a hard first set counts in full (RPE rises set to set at a fixed load, so a hard
     // first set predicts harder later sets); an easy day may push the remaining sets up by at most
     // 2.5% (never in Peak). Stop rules: a miss, a non-first set 2+ over target, or the floor.
-    correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, minRpe: 4, lowRpeWeight: 0.35, stopOver: 2, stopMin: 8.5 },
+    correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, minRpe: 4, lowRpeWeight: 0.35, stopOver: 2, stopMin: 8.5, floorStep: 0.925, floorHard: 1 },
     sessionCapMin: 70,
     calibrate: { downAt: 0.97, downMax: 0.95, downConfHigh: 1.5, downSure: 0.95, upAt: 1.02, upMax: 1.025, upFastAt: 1.04, allowance: 0.03, blockFloor: 0.90, blockFloorMissed: 0.85, minRpe: 6.5 },
     review: { add: 2, cut: -2, bigCut: -4, onTarget: 1 },
@@ -359,7 +359,7 @@
         if (S.warmupSets !== false) for (const st of warmups(w, bar, inc, schemeRole)) item.sets.push({ w: st.w, reps: st.reps, kind: 'warm' });
         if (base.opener && slot.role === 'primary' && mode !== 'light' && !isDeload && !isTest && !rest) {
           const ow = Math.max(bar, roundTo(tmOf(state, lift) * ex.mult * base.opener.pct * (mode === 'trim' ? TUNE.trim.load : 1), inc));
-          item.sets.push({ w: ow, reps: 1, pct: base.opener.pct, kind: 'single', rpeTarget: base.opener.rpe });
+          item.sets.push({ w: ow, reps: 1, pct: base.opener.pct * (mode === 'trim' ? TUNE.trim.load : 1), kind: 'single', rpeTarget: base.opener.rpe });
           item.note = `Opener: one single at about RPE ${base.opener.rpe} (two clean reps left), then the working sets. Set the safeties.`;
         }
         for (let i = 0; i < sets; i++) {
@@ -448,7 +448,15 @@
     const ideal = est * pctForRTF(reps + Math.max(0, 10 - targetRPE));
     const conf = Math.min(1, den);
     let w = plannedW + (ideal - plannedW) * conf;
-    const floor = plannedW * caps.down, ceil = plannedW * caps.up;
+    // The floor starts at 85% of the plan. Carrying on at the floor and finding a set still too hard
+    // (a full RPE over target) lowers it another step, and again for each such set: the floor is a
+    // brake on one bad reading, not a weight the exercise is stuck at.
+    let floor = plannedW * caps.down;
+    const ceil = plannedW * caps.up;
+    for (const x of rows) {
+      const tgt = x.target != null ? x.target : targetRPE;
+      if (!x.first && x.w <= floor * 1.01 && (x.missed || x.rpe >= tgt + C.floorHard)) floor *= C.floorStep;
+    }
     const hitFloor = w < floor - 1e-9;
     w = Math.max(floor, Math.min(ceil, w));
     // RTS-style stop: a miss, a later set still 2+ over target after a correction, or the floor.
@@ -474,8 +482,9 @@
       if ((sess.skippedSlots || []).includes(e.slotKey)) continue;
       const work = (e.sets || []).filter(x => (x.kind === 'work' || x.kind === 'single') && x.done);
       work.forEach((x, i) => {
-        const reps = x.actualReps != null ? x.actualReps : x.reps;
+        let reps = x.actualReps != null ? x.actualReps : x.reps;
         let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
+        if (reps === 0) { reps = 1; rpe = 10; } // a set that did not go up: the weight is at least a max
         const w = x.actualW != null ? x.actualW : x.w;
         if (!Number.isFinite(rpe) || rpe < TUNE.calibrate.minRpe || rpe > 10 || !(reps > 0) || reps > MAX_EVIDENCE_REPS || !(w > 0)) return;
         let implied = e1rm(w, reps, rpe) / EX[e.ex].mult;
@@ -917,9 +926,11 @@
   // An easy week inserted mid-week resumes the interrupted week at the same day afterwards.
   function startActiveRest(state, weeks) {
     const P = clampProgram(state);
+    if (P.special) return false; // already in an easy or deload week
     P.pendingDeload = false; P.lightRestOfWeek = false;
     P.special = { type: 'rest', weeksLeft: weeks > 0 ? Math.min(4, Math.round(weeks)) : 1, resumeDayIdx: P.dayIdx > 0 ? P.dayIdx : 0 };
     P.dayIdx = 0;
+    return true;
   }
   function positionLabel(state) {
     const { block, rest, isDeload, isTest, inserted } = position(state), P = state.program;

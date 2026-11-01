@@ -62,13 +62,27 @@ for (let i = 0; i < 2000; i++) {
   for (let k = 0; k < n; k++) ev.push({ w: planned * (0.7 + rnd() * 0.6), reps: pick([reps, reps, reps + 1, Math.max(1, reps - 3), 50, 0]), rpe: pick([null, 5, 6, 7, 8, 9, 10, 11, -1]), first: k === 0 });
   const r = E.liftCorrection(ev, planned, reps, target);
   if (r) {
-    expect(finite(r.w) && r.w >= planned * 0.85 - 1e-6 && r.w <= planned * 1.05 + 1e-6, 'correction within caps', { planned, w: r.w });
+    // The floor is 85% of the plan, stepping down 7.5% for each later set that was still too hard at the floor.
+    expect(finite(r.w) && r.w >= planned * 0.85 * Math.pow(0.925, ev.length) - 1e-6 && r.w <= planned * 1.05 + 1e-6, 'correction within caps', { planned, w: r.w });
     expect(finite(r.est) && r.est > 0, 'estimate finite', r.est);
     expect(r.conf > 0 && r.conf <= 1, 'confidence range', r.conf);
   }
 }
 expect(E.liftCorrection([], 200, 5, 7) === null, 'no evidence -> null');
 expect(E.liftCorrection([{ w: 200, reps: 5, rpe: 3.5, first: true }], 200, 5, 7) === null, 'RPE under 4 only -> null');
+// The floor steps down when a set performed at the floor is still a full RPE over target, and holds otherwise.
+{
+  const p = 255, f0 = p * 0.85;
+  const bad = [{ w: 255, reps: 3, rpe: 10, first: true, missed: true }, { w: 255, reps: 2, rpe: 10, missed: true }];
+  const atFloor = E.liftCorrection(bad, p, 8, 8);
+  expect(atFloor && Math.abs(atFloor.w - f0) < 1e-6 && atFloor.hitFloor, 'two bad sets land on the 85% floor', atFloor);
+  const stillHard = E.liftCorrection(bad.concat([{ w: Math.round(f0), reps: 4, rpe: 9.5 }]), p, 8, 8);
+  expect(stillHard && Math.abs(stillHard.w - f0 * 0.925) < 1e-6, 'still hard at the floor: floor steps down once', stillHard);
+  const onTarget = E.liftCorrection(bad.concat([{ w: Math.round(f0), reps: 8, rpe: 8 }]), p, 8, 8);
+  expect(onTarget && Math.abs(onTarget.w - f0) < 1e-6, 'on target at the floor: floor holds', onTarget);
+  const again = E.liftCorrection(bad.concat([{ w: Math.round(f0), reps: 4, rpe: 9.5 }, { w: Math.round(f0 * 0.925), reps: 4, rpe: 9.5 }]), p, 8, 8);
+  expect(again && again.w < f0 * 0.925 - 1 && again.w >= f0 * 0.925 * 0.925 - 1e-6, 'hard again: floor steps down twice', again);
+}
 // Low RPEs (4-5.5) count, lightly: an easier-than-planned set nudges the rest up, never past the +2.5% cap.
 {
   const easy = E.liftCorrection([{ w: 200, reps: 8, rpe: 5, first: true }, { w: 200, reps: 8, rpe: 5 }], 200, 8, 7);
@@ -132,7 +146,7 @@ for (const includePeak of [true, false]) {
   const st = E.sanitizeState(hostile);
   expect(({}).polluted === undefined, 'no prototype pollution');
   expect(Object.getPrototypeOf(st) === Object.prototype, 'state prototype intact');
-  expect(st.settings.name === '<img src=x onerror=alert(1)>' && st.settings.gistToken === null, 'name kept as text, bad token dropped');
+  expect(st.settings.name === '<img src=x onerror=alert(1)>' && !('gistToken' in st.settings), 'name kept as text, unknown settings dropped');
   expect(st.sessions.length === 1 && st.sessions[0].id === 'ok1', 'bad session id dropped', st.sessions.map(s => s.id));
   expect(st.sessions[0].dayName === 'Squat day' && st.sessions[0].readiness.color === 'yellow' && st.sessions[0].mode === 'full', 'enumerations coerced', st.sessions[0]);
   expect(st.sessions[0].exercises.length === 1 && st.sessions[0].exercises[0].name !== '<i>', 'unknown exercise dropped, name regenerated', st.sessions[0].exercises);

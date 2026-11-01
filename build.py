@@ -43,7 +43,7 @@ with open(os.path.join(ROOT, 'readyset.html'), 'w', encoding='utf-8', newline='\
 # 2) Standalone PWA.
 sw_reg_js = """
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => {}); });
+  window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).catch(() => {}); });
 }
 """
 sw_reg = '<script>' + sw_reg_js + '</script>\n'
@@ -51,10 +51,9 @@ import hashlib, base64
 def sha(x): return "'sha256-" + base64.b64encode(hashlib.sha256(x.encode('utf-8')).digest()).decode() + "'"
 script_hashes = ' '.join(sha(x) for x in inline_scripts + [sw_reg_js])
 # Every inline script is hashed, so an injected <script> or on* attribute cannot run. Styles keep
-# 'unsafe-inline' for the few style="" attributes (no script risk). Network: only GitHub for the
-# gist backup, Google Fonts for type.
+# 'unsafe-inline' for the few style="" attributes (no script risk). Network: Google Fonts only.
 csp = ("default-src 'self'; script-src " + script_hashes + "; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-       "font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; "
+       "font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; "
        "manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'")
 
 index = (
@@ -73,23 +72,36 @@ index = (
     '<link rel="manifest" href="./manifest.webmanifest">\n'
     '<link rel="apple-touch-icon" href="./icon-180.png">\n'
     '<link rel="icon" href="./icon-192.png">\n'
+    '<meta name="readyset-build" content="__BUILD__">\n'
     + head_common +
     '</head>\n<body>\n' + body + scripts + sw_reg + '</body>\n</html>\n'
 )
-with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(index)
-
-with open(os.path.join(DIST, 'manifest.webmanifest'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write('{"name":"Readyset","short_name":"Readyset","start_url":"./index.html","scope":"./","display":"standalone",'
+manifest = ('{"name":"Readyset","short_name":"Readyset","start_url":"./index.html","scope":"./","display":"standalone",'
             '"background_color":"#0f1216","theme_color":"#d9530e",'
             '"icons":[{"src":"icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icon-512.png","sizes":"512x512","type":"image/png"}]}')
 
-with open(os.path.join(DIST, 'sw.js'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write("""const CACHE = 'readyset-v3';
+SW_TEMPLATE = """const CACHE = 'readyset-' + BUILD;
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
-self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(a => new Request(a, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
+// Rest-timer alert: the page asks for it at a given time; iOS keeps this worker alive a while after
+// the page is suspended, so the alert can still fire with another app in front. The tag makes this
+// and the page's own alert a single notification.
+let restTimer = null;
+self.addEventListener('message', e => {
+  const m = e.data || {};
+  if (restTimer) { clearTimeout(restTimer); restTimer = null; }
+  if (m.type === 'rest-schedule' && m.at) {
+    const delay = Math.max(0, m.at - Date.now());
+    const fire = new Promise(res => { restTimer = setTimeout(() => { restTimer = null; self.registration.showNotification('Rest done', { body: String(m.body || 'Next set').slice(0, 80), tag: 'readyset-rest', renotify: true, vibrate: [200, 100, 200] }).catch(() => {}).then(res, res); }, delay); });
+    if (e.waitUntil) { try { e.waitUntil(fire); } catch (err) { /* some browsers refuse long waits */ } }
+  }
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => { const c = cs.find(x => 'focus' in x); return c ? c.focus() : self.clients.openWindow('./'); }));
+});
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
@@ -104,9 +116,28 @@ self.addEventListener('fetch', e => {
   // 10 minutes), so a fix reaches the phone on the very next open. A navigation needs a fresh
   // Request, because one in 'navigate' mode cannot be copied with new options.
   const net = e.request.mode === 'navigate' ? new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }) : new Request(e.request, { cache: 'no-cache' });
-  e.respondWith(fetch(net).then(r => { if (r && r.ok) { const c = r.clone(); caches.open(CACHE).then(x => x.put(e.request, c)); } return r; }).catch(() => caches.match(e.request).then(m => m || (e.request.mode === 'navigate' ? caches.match('./index.html') : undefined))));
+  // A slow network (one bar at the gym) must not leave a blank page: after 4 s the cached copy is
+  // served if there is one, and the network answer still refreshes the cache when it arrives.
+  const fromNet = fetch(net);
+  if (!url.search) e.waitUntil(fromNet.then(r => { if (!(r && r.ok)) return null; const c = r.clone(); return caches.open(CACHE).then(x => x.put(e.request, c)); }).catch(() => {}));
+  const cached = () => caches.match(e.request).then(m => m || (e.request.mode === 'navigate' ? caches.match('./index.html') : undefined));
+  const timeout = new Promise(res => setTimeout(() => res('timeout'), 4000));
+  e.respondWith(Promise.race([fromNet.catch(() => 'failed'), timeout]).then(r => (r === 'timeout' || r === 'failed') ? cached().then(m => m || fromNet) : r).catch(() => cached()));
 });
-""")
+"""
+
+# The build id covers everything a phone could be running: page, worker and manifest. An unchanged
+# build keeps its id, so phones only reload for real changes.
+build_id = hashlib.sha256((index + SW_TEMPLATE + manifest).encode('utf-8')).hexdigest()[:12]
+index = index.replace('__BUILD__', build_id)
+with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write(index)
+with open(os.path.join(DIST, 'manifest.webmanifest'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write(manifest)
+with open(os.path.join(DIST, 'version.txt'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write(build_id + '\n')
+with open(os.path.join(DIST, 'sw.js'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write("const BUILD = '" + build_id + "';\n" + SW_TEMPLATE)
 
 # 3) Icons: a loaded barbell (sleeves, collars, three plates a side) in cream on a warm orange
 #    ground, full-bleed (iOS and Android apply their own corner masks). Rendered with 3x

@@ -207,10 +207,9 @@ until your sets say otherwise.
 ### Your data
 
 On an iPhone the home-screen app keeps its own storage, separate from Safari, and iOS deletes it
-when the icon is deleted. The app therefore keeps an off-device copy: an automatic backup to a
-private gist in your GitHub account after every change (Settings), plus a share-sheet file and a
-clipboard copy, and it shows a red banner on Today whenever a session has not been backed up.
-Restore is one tap on a new phone.
+when the icon is deleted. The app therefore offers a backup file (share sheet to Files, iCloud
+Drive or AirDrop) and a clipboard copy, and shows a red banner on Today whenever a session has not
+been backed up. Restore from the file picker on the setup screen or in Settings.
 
 Forgot to log a session, or logged it wrong? **Log a past session** on the Today tab builds the
 next planned session on the date you choose (no check-in, no timer) and then runs it through the
