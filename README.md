@@ -71,9 +71,10 @@ deletes the data.** Never delete or re-add the icon without a backup. Two backup
 
 Backups are a manual decision by default. Two optional Settings toggles help: one offers a one-tap
 backup card on Today after each completed session, the other shows a reminder once five or more
-sessions are newer than the last backup. Both banners can be dismissed. The file always uses the same
-name (`readyset-backup.json`) so Files replaces the previous copy, and it is written compactly
-(about 10 KB per session). *Start over*
+sessions are newer than the last backup. Both banners can be dismissed. Each file is a complete,
+dated snapshot (`readyset-backup-YYYY-MM-DD-HHMM.json`; iOS cannot overwrite a file from the share
+sheet), so only the newest is needed and older ones can be deleted. Files are written compactly
+(about 10 KB per session) and the share sheet receives the file alone, so no stray text file is saved. *Start over*
 erases everything and cannot be undone.
 
 ## Tests

@@ -109,7 +109,7 @@
     s.tmPct = oneOf(num(get(S, 'tmPct'), 0.5, 1, 0.9), [0.85, 0.875, 0.9, 0.925], 0.9);
     s.deadliftStyle = oneOf(get(S, 'deadliftStyle'), ['conventional', 'sumo'], 'conventional');
     s.squatStyle = oneOf(get(S, 'squatStyle'), ['lowbar', 'highbar'], 'lowbar');
-    s.cardioMin = int(get(S, 'cardioMin'), 0, 240, 60);
+    s.cardioMin = int(get(S, 'cardioMin'), 0, 240, 40);
     s.cardioWatts = int(get(S, 'cardioWatts'), 30, 600, 110);
     s.warmupSets = get(S, 'warmupSets') !== false;
     s.autoCalibrate = get(S, 'autoCalibrate') !== false;

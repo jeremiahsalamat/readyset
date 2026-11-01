@@ -773,7 +773,10 @@
   // the macro an easy week is queued (one week, two after a rough macro) before it starts again.
   function nextBlockIdx(state) {
     const P = state.program;
-    if (P.nextBlockOverride != null) { const i = P.nextBlockOverride; P.nextBlockOverride = null; if (BLOCKS[i]) { P.variantSet = 'A'; return i; } }
+    if (P.nextBlockOverride != null) {
+      const i = P.nextBlockOverride; P.nextBlockOverride = null;
+      if (BLOCKS[i]) { P.variantSet = 'A'; const mp = MACRO.findIndex(m => m.block === BLOCKS[i].id); if (mp >= 0) P.macroPos = mp; return i; }
+    }
     let pos = (Number.isInteger(P.macroPos) ? P.macroPos : -1) + 1;
     const endMacro = () => { const rough = (P.macroRough || 0) >= 2 || (P.stallRest || 0) >= 2; P.special = { type: 'rest', weeksLeft: rough ? 2 : 1, resumeDayIdx: 0 }; P.macroRough = 0; P.stallRest = 0; };
     if (pos >= MACRO.length) { pos = 0; endMacro(); }

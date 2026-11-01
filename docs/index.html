@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-CiQGtJ1TdAoHA97hlnLgEwsQUu77sLOwNRZ4V3wfFzE=' 'sha256-4/l51qf06NaEBKE3u4hkK/b6WiffTKsNP73hReH9EAE=' 'sha256-cqWEgcK2CFNl/lyH2FGSV5wmR9MLfTGIFH/491kcGcA=' 'sha256-myCgPvpz7UKblPsgSt8RG+dvhaAx2YEDzOR8uzFLh+k='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-C6bZTJ5Fc1hWaDuFqL8aQgKQKInUuTZRJBNJi79FLWw=' 'sha256-3TiE+thnOD4Y/tCVo5AenYuazsWrx6n7r7pka4drJRk=' 'sha256-9UakI2+fOeQAer5nF2RikddZa59uMH6yeU7B96W2Tqs=' 'sha256-myCgPvpz7UKblPsgSt8RG+dvhaAx2YEDzOR8uzFLh+k='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -13,7 +13,7 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="icon" href="./icon-192.png">
-<meta name="readyset-build" content="618ab26be7d0">
+<meta name="readyset-build" content="33a11f9678c2">
 <title>Readyset</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -1118,7 +1118,10 @@ canvas { width: 100%; height: auto; display: block; }
   // the macro an easy week is queued (one week, two after a rough macro) before it starts again.
   function nextBlockIdx(state) {
     const P = state.program;
-    if (P.nextBlockOverride != null) { const i = P.nextBlockOverride; P.nextBlockOverride = null; if (BLOCKS[i]) { P.variantSet = 'A'; return i; } }
+    if (P.nextBlockOverride != null) {
+      const i = P.nextBlockOverride; P.nextBlockOverride = null;
+      if (BLOCKS[i]) { P.variantSet = 'A'; const mp = MACRO.findIndex(m => m.block === BLOCKS[i].id); if (mp >= 0) P.macroPos = mp; return i; }
+    }
     let pos = (Number.isInteger(P.macroPos) ? P.macroPos : -1) + 1;
     const endMacro = () => { const rough = (P.macroRough || 0) >= 2 || (P.stallRest || 0) >= 2; P.special = { type: 'rest', weeksLeft: rough ? 2 : 1, resumeDayIdx: 0 }; P.macroRough = 0; P.stallRest = 0; };
     if (pos >= MACRO.length) { pos = 0; endMacro(); }
@@ -1439,7 +1442,7 @@ canvas { width: 100%; height: auto; display: block; }
     s.tmPct = oneOf(num(get(S, 'tmPct'), 0.5, 1, 0.9), [0.85, 0.875, 0.9, 0.925], 0.9);
     s.deadliftStyle = oneOf(get(S, 'deadliftStyle'), ['conventional', 'sumo'], 'conventional');
     s.squatStyle = oneOf(get(S, 'squatStyle'), ['lowbar', 'highbar'], 'lowbar');
-    s.cardioMin = int(get(S, 'cardioMin'), 0, 240, 60);
+    s.cardioMin = int(get(S, 'cardioMin'), 0, 240, 40);
     s.cardioWatts = int(get(S, 'cardioWatts'), 30, 600, 110);
     s.warmupSets = get(S, 'warmupSets') !== false;
     s.autoCalibrate = get(S, 'autoCalibrate') !== false;
@@ -1635,7 +1638,12 @@ canvas { width: 100%; height: auto; display: block; }
   // and a banner on Today whenever a session is newer than the last backup.
   // kind: how this copy is being saved. The copy records its own time, so data restored from it
   // knows that everything in it was backed up.
-  const BACKUP_NAME = 'readyset-backup.json'; // one fixed name, so Files offers to replace the old copy
+  // iOS never replaces a file from the share sheet (it saves "name 2"), so each backup gets a dated
+  // name that sorts by time. Every file is a complete snapshot: only the newest is ever needed.
+  function backupName() {
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    return `readyset-backup-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`;
+  }
   const REMIND_AT = 5; // sessions without a backup before the (opt-in) reminder shows
   // Nulls and empty strings are dropped from the copy: the sanitizer puts the defaults back on
   // restore, and a year of sessions stays a few hundred KB.
@@ -1658,12 +1666,21 @@ canvas { width: 100%; height: auto; display: block; }
   }
   function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; state.backupOffer = false; state.backupNudgeSeen = 0; Store.saveLocal(state); }
   function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.savedAt || s.ts || 0) > t).length; }
+  // Share the backup file. A backup counts only when the share sheet reports success; a share that
+  // fails for any reason (one already open, not allowed) just says so. The download fallback is for
+  // browsers without a share sheet, where it is the only way to hand over a file.
+  let sharing = false;
   async function shareBackup() {
-    const json = backupJSON('file'), name = BACKUP_NAME;
-    try {
-      const file = new File([json], name, { type: 'application/json' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Readyset backup' }); noteBackup('file'); toast('Backup shared'); render(); return; }
-    } catch (e) { if (e && e.name === 'AbortError') return; }
+    if (sharing) return;
+    const json = backupJSON('file'), name = backupName();
+    const file = new File([json], name, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      sharing = true;
+      try { await navigator.share({ files: [file] }); /* file only: a title or text is saved as a second file */ noteBackup('file'); toast('Backup shared'); render(); }
+      catch (e) { if (!(e && e.name === 'AbortError')) toast('The share sheet did not open. Try again.'); }
+      sharing = false;
+      return;
+    }
     try {
       const url = URL.createObjectURL(new Blob([json], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
       noteBackup('file'); toast('Backup file saved'); render();
@@ -1751,6 +1768,7 @@ canvas { width: 100%; height: auto; display: block; }
     const a = Math.abs(left), txt = left <= 0 ? `Rest done ${a >= 60 ? '+' + Math.floor(a / 60) + ':' + String(a % 60).padStart(2, '0') : '+' + a + 's'}` : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
     if (!el.firstChild) el.innerHTML = `<span></span><button data-action="timer-add">+30s</button><button data-action="timer-stop">Done</button>`;
     if (el.firstChild.textContent !== txt) el.firstChild.textContent = txt; // update text only, so a tap mid-tick still lands on its button
+    if (left <= 0 && ui.timer.iv && !ui.timer.slow) { clearInterval(ui.timer.iv); ui.timer.iv = setInterval(tickTimer, 1000); ui.timer.slow = true; }
     if (left <= -900) { stopTimer(); save(); }
   }
   // Notifications: best effort. iOS shows them only for a home-screen web app, and only while the
@@ -1798,8 +1816,10 @@ canvas { width: 100%; height: auto; display: block; }
   }
   // One-line summary of an exercise's working sets (warm-ups excluded).
   function summ(e) {
-    const work = e.sets.filter(x => x.kind !== 'warm' && x.kind !== 'single'), f = work[0] || e.sets[0];
+    const tests = e.sets.filter(x => x.kind === 'test');
+    const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff'), f = work[0] || e.sets[0];
     const opener = e.sets.find(x => x.kind === 'single');
+    if (tests.length) return `${esc(e.name)} work up to a single, then ${work.length}×${f.reps}${f.w ? ' @ ' + f.w : ''}`;
     return `${esc(e.name)} ${work.length}×${f.reps}${f.w ? ' @ ' + f.w : ''}${opener ? ` (opener ${opener.w})` : ''}`;
   }
   function platesShort(w) {
@@ -1943,7 +1963,7 @@ canvas { width: 100%; height: auto; display: block; }
     const last = lastSession();
     let html = '';
     const unbacked = Store.db ? 0 : sessionsSinceBackup();
-    if (state.backupOffer && !Store.db && state.settings.backupOffer) html += `<div class="card"><div class="row between"><h3>Back up today's session?</h3><button class="btn sm quiet" data-action="offer-dismiss">Not now</button></div><p class="small muted">One tap saves the whole log as ${BACKUP_NAME} (${backupSizeText()}). Save it to the same folder each time and Files offers to replace the old copy.</p><button class="btn primary block" data-action="share-backup">Save backup</button></div>`;
+    if (state.backupOffer && !Store.db && state.settings.backupOffer) html += `<div class="card"><div class="row between"><h3>Back up today's session?</h3><button class="btn sm quiet" data-action="offer-dismiss">Not now</button></div><p class="small muted">One tap saves the whole log (${backupSizeText()}) as a dated file. Each file holds everything, so you only need the newest; delete older ones in Files whenever you like.</p><button class="btn primary block" data-action="share-backup">Save backup</button></div>`;
     else if (state.settings.backupRemind && unbacked >= REMIND_AT && unbacked >= (state.backupNudgeSeen || 0) + REMIND_AT) html += `<div class="callout warn row between"><span>${unbacked} sessions haven't been backed up.</span><span class="row nowrap" style="gap:6px"><button class="btn sm" data-action="share-backup">Save backup</button><button class="btn sm quiet icon" data-action="remind-dismiss" aria-label="Dismiss">✕</button></span></div>`;
     if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
     if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up this week (the review on the Program tab says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
@@ -2286,7 +2306,7 @@ canvas { width: 100%; height: auto; display: block; }
     const e = state.current && state.current.exercises[ei], x = e && e.sets[si];
     if (!x) { render(); return; }
     if (x.done) { x.done = false; recalcExercise(ei, true); save(); render(); return; }
-    if (x.kind !== 'warm' && e.lift && e.pctTM != null && x.rpe == null && !(ui.sheet && ui.sheet.fromTick)) { applyPendingType(); ui.sheet = { ei, si, fromTick: true }; renderSheet(); return; }
+    if (x.kind !== 'warm' && e.lift && (e.pctTM != null || x.kind === 'test') && x.rpe == null && !(ui.sheet && ui.sheet.fromTick)) { applyPendingType(); ui.sheet = { ei, si, fromTick: true }; renderSheet(); return; }
     if (!markDone(ei, si)) return;
     recalcExercise(ei);
     afterSetChange();
@@ -2527,7 +2547,7 @@ canvas { width: 100%; height: auto; display: block; }
 
   // ---------- Completing a session, reviews ----------
   function completeSession() {
-    const s = state.current; s.phase = 'done'; delete s.phase;
+    const s = state.current;
     // Accessory double progression.
     const reducedDay = s.isDeload || s.isRest || s.isTest || s.mode === 'light';
     for (const e of s.exercises) {
@@ -2541,7 +2561,7 @@ canvas { width: 100%; height: auto; display: block; }
     cal.forEach(addLog);
     delete s.cardioRun; delete s.setLightRest;
     s.exercises.forEach(e => { delete e.fold; }); delete s.lastEi;
-    s.savedAt = Date.now();
+    s.savedAt = Date.now(); delete s.phase;
     state.current = null; state.undo = null; stopTimer();
     state.sessions.push(s); Store.pushSession(s);
     if (s.backfill) { state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); addLog(`${s.dayName} logged after the fact for ${fmtDate(s.date)}.`); }
@@ -2633,7 +2653,7 @@ canvas { width: 100%; height: auto; display: block; }
       </div>
       <div class="card"><h3>Exercise choices</h3>
         <p class="small muted">Variations rotate each block automatically. Pin a choice here if your equipment or joints prefer it; clear it to go back to the rotation.</p>
-        ${slotKeys.map(k => { const def = (blk && blk.variation && blk.variation[k]) || E.SWAPS[k][0]; const defName = E.exerciseName(state, (def === 'high_bar_squat' || def === 'low_bar_squat') ? (state.settings.squatStyle === 'highbar' ? 'low_bar_squat' : 'high_bar_squat') : def); return `<label class="f">${k.replace(/_/g, ' ')}<select id="swap-${k}" data-action="pin-swap" data-k="${k}"><option value="">Block default (${esc(defName)})</option>${E.swapOptions(state, k).map(x => `<option value="${x}" ${P.swaps[k] === x ? 'selected' : ''}>${esc(E.exerciseName(state, x))}</option>`).join('')}</select></label>`; }).join('')}
+        ${slotKeys.map(k => { const vset = blk && ((P.variantSet === 'B' && blk.variationB) || blk.variation); const def = (vset && vset[k]) || E.SWAPS[k][0]; const defName = E.exerciseName(state, (def === 'high_bar_squat' || def === 'low_bar_squat') ? (state.settings.squatStyle === 'highbar' ? 'low_bar_squat' : 'high_bar_squat') : def); return `<label class="f">${k.replace(/_/g, ' ')}<select id="swap-${k}" data-action="pin-swap" data-k="${k}"><option value="">Block default (${esc(defName)})</option>${E.swapOptions(state, k).map(x => `<option value="${x}" ${P.swaps[k] === x ? 'selected' : ''}>${esc(E.exerciseName(state, x))}</option>`).join('')}</select></label>`; }).join('')}
       </div>
       <div class="card"><h3>Why things changed</h3>${state.log.length ? `<div class="loglist">${state.log.slice(0, 25).map(l => `<div class="item"><span class="d">${fmtDate(l.date)}</span><span>${esc(l.msg)}</span></div>`).join('')}</div>` : '<p class="muted small">Nothing yet. After each full week the review lands here.</p>'}</div>`;
   }
@@ -2807,10 +2827,11 @@ canvas { width: 100%; height: auto; display: block; }
       <div class="card"><h3>Data and backups</h3>
         ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
         <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Never delete or re-add the icon without a backup.</div>
-        <p class="small">A backup is the whole log in one file, ${BACKUP_NAME} (${backupSizeText()} now). Save it to Files; iCloud Drive keeps it off the phone, and saving to the same folder lets Files replace the old copy. Restore it from the setup screen or below.</p>
+        <p class="small">A backup is the whole log in one dated file (${backupSizeText()} now). Save it to Files; iCloud Drive keeps it off the phone. Each file holds everything, so only the newest matters and older ones can be deleted. Restore it from the setup screen or below.</p>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupOffer" ${s.backupOffer ? 'checked' : ''} style="width:22px;height:22px"> Offer a one-tap backup after each session</label>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupRemind" ${s.backupRemind ? 'checked' : ''} style="width:22px;height:22px"> Remind me when ${REMIND_AT} or more sessions are not backed up</label>`}
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
+        ${Store.lastError ? `<div class="callout bad">${esc(Store.lastError)}</div>` : ''}
         <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
         ${ui.showImport ? `${filePick('Choose a backup file', 'primary block')}<label class="f">Or paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn" data-action="import">Restore from text</button>` : ''}
@@ -3143,6 +3164,7 @@ canvas { width: 100%; height: auto; display: block; }
     if (!byTap && document.visibilityState !== 'visible') return;
     if (!byTap && updateBusy()) { renderUpdateBar(); return; }
     reloading = true; saveNow();
+    try { sessionStorage.setItem('rs-view', view); } catch (e) { /* ignore */ }
     try { sessionStorage.setItem('rs-reloaded-for', String(ui.updateReady)); } catch (e) { /* ignore */ }
     setTimeout(() => location.reload(), 50);
   }
@@ -3152,7 +3174,7 @@ canvas { width: 100%; height: auto; display: block; }
     bar.innerHTML = '<span>A new version of Readyset is ready. Everything is saved; what you are doing carries on after the update.</span><button class="btn sm" data-action="apply-update">Update now</button>';
     const app = $('#app'); if (app) app.insertBefore(bar, app.firstChild);
   }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(false); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') return; if (ui.updateReady) applyUpdateIfSafe(); else checkForUpdate(false); });
   setInterval(() => { if (document.visibilityState === 'visible') checkForUpdate(false); }, 30 * 60000);
   // A new service worker taking over is a hint, not proof (the first install and a page that already
   // loaded the new build both fire it): confirm against version.txt before doing anything.
@@ -3178,7 +3200,8 @@ canvas { width: 100%; height: auto; display: block; }
 
   // ---------- Boot ----------
   async function boot() {
-    const h = (location.hash || '').replace('#', '');
+    let h = (location.hash || '').replace('#', '');
+    try { const v = sessionStorage.getItem('rs-view'); if (v) { h = v; sessionStorage.removeItem('rs-view'); } } catch (e) { /* ignore */ }
     if (['today', 'program', 'history', 'settings'].includes(h)) view = h;
     state = E.defaultState();
     $('#main').innerHTML = '<p class="empty">Loading…</p>';
