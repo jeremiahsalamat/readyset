@@ -110,7 +110,8 @@ self.addEventListener('fetch', e => {
     e.respondWith(caches.open(CACHE).then(c => c.match(e.request).then(m => { const net = fetch(e.request).then(r => { if (r && (r.ok || r.type === 'opaque')) c.put(e.request, r.clone()); return r; }).catch(() => m); return m || net; })));
     return;
   }
-  if (url.origin !== location.origin) return; // never cache or serve other origins (GitHub API etc.)
+  if (url.origin !== location.origin) return; // never cache or serve other origins
+  if (url.pathname.endsWith('/version.txt')) return; // the update check must see the network or fail, never a cached copy
   // App files: network first, cache fallback, so updates arrive at once and offline still works.
   // The network request skips the browser's HTTP cache (GitHub Pages lets it keep a copy for up to
   // 10 minutes), so a fix reaches the phone on the very next open. A navigation needs a fresh

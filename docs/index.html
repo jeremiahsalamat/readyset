@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-C6bZTJ5Fc1hWaDuFqL8aQgKQKInUuTZRJBNJi79FLWw=' 'sha256-3TiE+thnOD4Y/tCVo5AenYuazsWrx6n7r7pka4drJRk=' 'sha256-9UakI2+fOeQAer5nF2RikddZa59uMH6yeU7B96W2Tqs=' 'sha256-myCgPvpz7UKblPsgSt8RG+dvhaAx2YEDzOR8uzFLh+k='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'sha256-L6RLHdhLd75qT8SeL1zbRfkCRE1PxUNoTU8LWPMxqM8=' 'sha256-1C4r95ZLnEfyPvZ9Du4y1P3Pa0kMrHuOnCyRB2f5Dzk=' 'sha256-2tUDXmV2EMzYoKVJrjlElCCEJna3uyUymnbIJNlk8sQ=' 'sha256-myCgPvpz7UKblPsgSt8RG+dvhaAx2YEDzOR8uzFLh+k='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; child-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -13,7 +13,7 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="icon" href="./icon-192.png">
-<meta name="readyset-build" content="33a11f9678c2">
+<meta name="readyset-build" content="b1bbdb532f3b">
 <title>Readyset</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -512,7 +512,7 @@ canvas { width: 100%; height: auto; display: block; }
     // first set predicts harder later sets); an easy day may push the remaining sets up by at most
     // 2.5% (never in Peak). Stop rules: a miss, a non-first set 2+ over target, or the floor.
     correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, minRpe: 4, lowRpeWeight: 0.35, stopOver: 2, stopMin: 8.5, floorStep: 0.925, floorHard: 1 },
-    sessionCapMin: 70,
+    sessionCapMin: 75, // the top of the owner's 60-75 minute budget; estimates assume a full rest after every set
     calibrate: { downAt: 0.97, downMax: 0.95, downConfHigh: 1.5, downSure: 0.95, upAt: 1.02, upMax: 1.025, upFastAt: 1.04, allowance: 0.03, blockFloor: 0.90, blockFloorMissed: 0.85, minRpe: 6.5 },
     review: { add: 2, cut: -2, bigCut: -4, onTarget: 1 },
     // Deload-now triggers: within the week, and across the block (chronic under-recovery that
@@ -957,11 +957,12 @@ canvas { width: 100%; height: auto; display: block; }
         const soft = why.includes('every set on target') && !why.includes('session rated easy') && !why.includes('felt easier than planned');
         const addedLastWeek = P.lastAddWeek && P.lastAddWeek[lift] === P.week - 1;
         const hypo = { setAdj: setAdj[lift] + 1, week: P.week + 1 };
-        const canAdd = setAdj[lift] < ceil && weeklySetsWith(state, lift, hypo) <= cap && weeklyMaxMinutesWith(state, lift, hypo) <= TUNE.sessionCapMin && !(soft && addedLastWeek);
+        const underCeil = setAdj[lift] < ceil, underCap = weeklySetsWith(state, lift, hypo) <= cap, inTime = weeklyMaxMinutesWith(state, lift, hypo) <= TUNE.sessionCapMin;
+        const canAdd = underCeil && underCap && inTime && !(soft && addedLastWeek);
         if (canAdd) { setAdj[lift] += 1; P.lastAddWeek = Object.assign({}, P.lastAddWeek || {}, { [lift]: P.week }); log.push(`${names[lift]}: +1 set next week (${why.join(', ')}).`); }
         else if (soft && addedLastWeek) log.push(`${names[lift]}: on target; a set was added last week, so holding to let it settle.`);
         else if (score >= 3 && !calib && loadAdj[lift] < 0.05) { loadAdj[lift] += 0.025; log.push(`${names[lift]}: at the set cap, so a bigger jump next week (+2.5%).`); }
-        else log.push(`${names[lift]}: recovering well, holding at the weekly set cap.`);
+        else log.push(`${names[lift]}: recovering well, holding (${!inTime ? `another set would push a session past ${TUNE.sessionCapMin} minutes` : !underCap ? 'at the weekly set cap' : 'at this block\'s set ceiling'}).`);
         flags[lift] = 0;
       } else if (score <= -4) {
         setAdj[lift] = Math.max(-2, setAdj[lift] - 1); if (!calib) loadAdj[lift] = Math.max(-0.10, loadAdj[lift] - 0.05); flags[lift] += 1;
@@ -976,7 +977,11 @@ canvas { width: 100%; height: auto; display: block; }
     }
     const anyFlag = Object.values(flags).some(f => f > 0);
     const trained = weekSessions.some(s => s && !s.skipped && s.mode !== 'light');
-    if (block.id === 'build' && trained && !anyFlag && crushed === 0 && !lastWeek && setAdj.acc < 1) { setAdj.acc += 1; log.push('Accessories: +1 set next week.'); }
+    if (block.id === 'build' && trained && !anyFlag && crushed === 0 && !lastWeek && setAdj.acc < 1) {
+      // Accessories take the time budget into account too, so they cannot crowd out a main-lift set.
+      if (weeklyMaxMinutesWith(state, 'acc', { setAdj: setAdj.acc + 1, week: P.week + 1 }) <= TUNE.sessionCapMin) { setAdj.acc += 1; log.push('Accessories: +1 set next week.'); }
+      else log.push(`Accessories: holding (another set would push a session past ${TUNE.sessionCapMin} minutes).`);
+    }
     if (anyFlag && setAdj.acc > 0) { setAdj.acc -= 1; log.push('Accessories: -1 set to free up recovery.'); }
 
     const flaggedLifts = Object.keys(flags).filter(l => flags[l] >= 2);
@@ -1037,12 +1042,21 @@ canvas { width: 100%; height: auto; display: block; }
 
   function weeklySets(state, lift) { return weeklySetsWith(state, lift, null); }
   // Longest session of the week (minutes) under a hypothetical adjustment: the time budget gate.
+  // Longest session, in minutes, among the days that the hypothetical change actually lengthens
+  // (a set added to the deadlift must not be blocked by a long bench day).
   function weeklyMaxMinutesWith(state, lift, hypo) {
-    const P = JSON.parse(JSON.stringify(state.program));
-    if (hypo) { if (hypo.setAdj != null) P.setAdj = Object.assign({}, P.setAdj, { [lift]: hypo.setAdj }); if (hypo.week != null) P.week = Math.min(hypo.week, BLOCKS[P.blockIdx].weeks); }
-    const probe = Object.assign({}, state, { program: P });
+    const base = JSON.parse(JSON.stringify(state.program)), P = JSON.parse(JSON.stringify(state.program));
+    if (hypo) {
+      if (hypo.week != null) { base.week = Math.min(hypo.week, BLOCKS[base.blockIdx].weeks); P.week = base.week; }
+      if (hypo.setAdj != null) P.setAdj = Object.assign({}, P.setAdj, { [lift]: hypo.setAdj });
+    }
+    const probeBase = Object.assign({}, state, { program: base }), probe = Object.assign({}, state, { program: P });
     let m = 0;
-    for (let d = 0; d < DAYS.length; d++) { P.dayIdx = d; m = Math.max(m, buildSession(probe, 'full').estMinutes); }
+    for (let d = 0; d < DAYS.length; d++) {
+      base.dayIdx = d; P.dayIdx = d;
+      const before = buildSession(probeBase, 'full').estMinutes, after = buildSession(probe, 'full').estMinutes;
+      if (after > before) m = Math.max(m, after);
+    }
     return m;
   }
   // Count a week's working sets for a lift pattern, optionally under a hypothetical set adjustment
@@ -1217,8 +1231,8 @@ canvas { width: 100%; height: auto; display: block; }
     P.pendingDeload = false; P.lightRestOfWeek = false; P.special = null;
     if (days < 14) {
       for (const k of ['squat', 'bench', 'deadlift']) P.setAdj[k] = Math.min(0, P.setAdj[k] || 0);
-      P.setAdj.acc = Math.min(0, P.setAdj.acc || 0); P.dayIdx = 0; P.layoffPct = -0.05;
-      lines.push(`${days} days off: this week repeats 5% lighter with earned sets cleared.`);
+      P.setAdj.acc = Math.min(0, P.setAdj.acc || 0); const midWeek = P.dayIdx > 0; P.dayIdx = 0; P.layoffPct = -0.05;
+      lines.push(`${days} days off: ${midWeek ? 'this week starts again' : 'the coming week runs'} 5% lighter with earned sets cleared.`);
     } else if (days < 21) {
       P.week = 1; P.dayIdx = 0; P.setAdj = { squat: 0, bench: 0, deadlift: 0, acc: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 }; P.layoffPct = 0; cut(0.05);
       lines.push(`${days} days off: the block restarts at week 1 with maxes 5% lower.`);
@@ -1446,7 +1460,7 @@ canvas { width: 100%; height: auto; display: block; }
     s.cardioWatts = int(get(S, 'cardioWatts'), 30, 600, 110);
     s.warmupSets = get(S, 'warmupSets') !== false;
     s.autoCalibrate = get(S, 'autoCalibrate') !== false;
-    s.notify = bool(get(S, 'notify')); s.backupOffer = bool(get(S, 'backupOffer')); s.backupRemind = bool(get(S, 'backupRemind'));
+    s.notify = bool(get(S, 'notify')); s.backupOffer = bool(get(S, 'backupOffer'));
     s.includePeak = get(S, 'includePeak') === true;
     const DAYS7 = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const days = Array.isArray(get(S, 'days')) ? get(S, 'days').filter(x => DAYS7.includes(x)) : [];
@@ -1513,7 +1527,7 @@ canvas { width: 100%; height: auto; display: block; }
     d.current = cur && cur.phase ? cur : null;
     d.log = (Array.isArray(get(raw, 'log')) ? get(raw, 'log') : []).slice(0, 300).filter(isObj).map(l => ({ date: dateStr(get(l, 'date'), '2000-01-01'), msg: str(get(l, 'msg'), 300) })).filter(l => l.msg);
     const LR = get(raw, 'lastReport');
-    d.lastReport = isObj(LR) && Array.isArray(get(LR, 'lines')) ? { title: str(get(LR, 'title'), 100, 'Update'), lines: get(LR, 'lines').slice(0, 30).map(l => str(l, 300)).filter(Boolean) } : null;
+    d.lastReport = isObj(LR) && Array.isArray(get(LR, 'lines')) ? { title: str(get(LR, 'title'), 100, 'Update'), lines: get(LR, 'lines').slice(0, 30).map(l => str(l, 300)).filter(Boolean), sessionId: idStr(get(LR, 'sessionId'), null) } : null;
     const U = trusted ? get(raw, 'undo') : null;
     if (isObj(U) && typeof get(U, 'snap') === 'string' && get(U, 'snap').length < 400000) {
       let ok = false; try { const sn = JSON.parse(get(U, 'snap')); ok = isObj(sn) && isObj(get(sn, 'program')); } catch (e) { ok = false; }
@@ -1526,7 +1540,7 @@ canvas { width: 100%; height: auto; display: block; }
     d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(0, 2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
     d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);
-    d.backupOffer = bool(get(raw, 'backupOffer')); d.backupNudgeSeen = int(get(raw, 'backupNudgeSeen'), 0, 100000, 0);
+    d.backupOffer = bool(get(raw, 'backupOffer'));
     d.migratedV2 = bool(get(raw, 'migratedV2'));
     d.setupDone = bool(get(raw, 'setupDone')) && LIFTS.every(k => d.lifts[k].oneRM > 0);
     d.updatedAt = num(get(raw, 'updatedAt'), 0, 4e12, 0);
@@ -1644,7 +1658,6 @@ canvas { width: 100%; height: auto; display: block; }
     const d = new Date(), p = (n) => String(n).padStart(2, '0');
     return `readyset-backup-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`;
   }
-  const REMIND_AT = 5; // sessions without a backup before the (opt-in) reminder shows
   // Nulls and empty strings are dropped from the copy: the sanitizer puts the defaults back on
   // restore, and a year of sessions stays a few hundred KB.
   function compact(v) {
@@ -1654,17 +1667,18 @@ canvas { width: 100%; height: auto; display: block; }
   }
   function backupJSON(kind) {
     const copy = Object.assign({}, state); copy.settings = Object.assign({}, state.settings);
-    for (const k of ['current', 'undo', 'timer', 'backupOffer', 'backupNudgeSeen']) delete copy[k];
+    for (const k of ['current', 'undo', 'timer', 'backupOffer']) delete copy[k];
     copy.lastBackupAt = Date.now(); copy.lastBackupKind = kind || 'file';
     return JSON.stringify(compact(copy));
   }
   let sizeCache = { key: '', text: '' };
   function backupSizeText() {
-    const key = `${state.updatedAt || 0}:${state.sessions.length}`;
+    const last = state.sessions[state.sessions.length - 1];
+    const key = `${state.sessions.length}:${last ? (last.savedAt || last.ts || 0) : 0}:${state.lastBackupAt || 0}`;
     if (sizeCache.key !== key) { const n = backupJSON('file').length; sizeCache = { key, text: n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB` }; }
     return sizeCache.text;
   }
-  function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; state.backupOffer = false; state.backupNudgeSeen = 0; Store.saveLocal(state); }
+  function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; state.backupOffer = false; Store.saveLocal(state); }
   function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.savedAt || s.ts || 0) > t).length; }
   // Share the backup file. A backup counts only when the share sheet reports success; a share that
   // fails for any reason (one already open, not allowed) just says so. The download fallback is for
@@ -1941,7 +1955,7 @@ canvas { width: 100%; height: auto; display: block; }
     s.name = d.name.trim(); s.tmPct = Number(d.tmPct); s.barWeight = Number(d.barWeight) || 45; s.plates = d.plates.slice().sort((a, b) => b - a);
     s.increment = d.plates.includes(1.25) ? 2.5 : d.plates.includes(2.5) ? 5 : 10; s.dbIncrement = Number(d.dbIncrement); s.days = d.days.slice();
     s.cardioMin = Math.max(0, Number(d.cardioMin) || 0); s.cardioWatts = Number(d.cardioWatts) || 110; s.deadliftStyle = d.deadliftStyle; s.squatStyle = d.squatStyle; s.includePeak = !!d.includePeak;
-    for (const l of LIFTS) E.applyTM(state, l, Number(d[l]));
+    for (const l of LIFTS) E.applyTM(state, l, Math.round(Number(d[l]) * 2) / 2);
     state.program.startedAt = todayISO();
     if (d.easyWeek) E.startActiveRest(state, 1);
     state.setupDone = true; state.migratedV2 = true; // a fresh program has nothing to migrate
@@ -1962,10 +1976,8 @@ canvas { width: 100%; height: auto; display: block; }
     const plan = E.buildSession(state, 'full');
     const last = lastSession();
     let html = '';
-    const unbacked = Store.db ? 0 : sessionsSinceBackup();
     if (state.backupOffer && !Store.db && state.settings.backupOffer) html += `<div class="card"><div class="row between"><h3>Back up today's session?</h3><button class="btn sm quiet" data-action="offer-dismiss">Not now</button></div><p class="small muted">One tap saves the whole log (${backupSizeText()}) as a dated file. Each file holds everything, so you only need the newest; delete older ones in Files whenever you like.</p><button class="btn primary block" data-action="share-backup">Save backup</button></div>`;
-    else if (state.settings.backupRemind && unbacked >= REMIND_AT && unbacked >= (state.backupNudgeSeen || 0) + REMIND_AT) html += `<div class="callout warn row between"><span>${unbacked} sessions haven't been backed up.</span><span class="row nowrap" style="gap:6px"><button class="btn sm" data-action="share-backup">Save backup</button><button class="btn sm quiet icon" data-action="remind-dismiss" aria-label="Dismiss">✕</button></span></div>`;
-    if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
+    if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') || /(\d+(?:\.\d+)?) -> (\d+(?:\.\d+)?)/.test(l) && Number(RegExp.$2) < Number(RegExp.$1) ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
     if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up this week (the review on the Program tab says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
     if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
     else if (P.pushOn) html += `<div class="callout warn">Pushing on past a deload suggestion: this week runs without bonus reps or earned sets, loads one step down. If it still feels heavy, "Deload now" is on the Program tab.</div>`;
@@ -2018,7 +2030,7 @@ canvas { width: 100%; height: auto; display: block; }
   }
   function renderWeekBrief() {
     const P = state.program, pos = E.positionLabel(state);
-    const done = sessionsOfWeek();
+    const done = state.sessions.filter(s => s.mesoCount === P.mesoCount && s.blockIdx === P.blockIdx && s.week === P.week);
     const dots = E.DAYS.map((d, i) => { const s = done.find(x => x.dayIdx === i); return `<span class="pill ${s ? (s.skipped ? '' : 'green') : i === P.dayIdx ? 'accent' : ''}">${d.id}</span>`; }).join(' ');
     const sets = LIFTS.map(l => `<div class="kpi"><span class="tiny">${LIFTNAME[l]} sets</span><span class="v num">${E.weeklySets(state, l)}<small>/ ${E.capFor(state, l)}</small></span></div>`).join('');
     const kcal = weekCardio();
@@ -2566,7 +2578,7 @@ canvas { width: 100%; height: auto; display: block; }
     state.sessions.push(s); Store.pushSession(s);
     if (s.backfill) { state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); addLog(`${s.dayName} logged after the fact for ${fmtDate(s.date)}.`); }
     afterSession();
-    if (cal.length) { const rep = state.lastReport || { title: 'After today', lines: [] }; rep.lines = cal.concat(rep.lines); rep.title = state.lastReport ? rep.title : 'Maxes calibrated from today'; state.lastReport = rep; }
+    if (cal.length) { const fresh = state.lastReport && state.lastReport.sessionId === s.id; const rep = fresh ? state.lastReport : { title: 'Maxes calibrated from today', lines: [], sessionId: s.id }; rep.lines = cal.concat(rep.lines); state.lastReport = rep; }
     try { if (wakeLock) wakeLock.release(); } catch (e) { /* ignore */ }
     if (state.settings.backupOffer && !Store.db) state.backupOffer = true; // the one-tap offer on Today
     save(); render(); scrollToY(0);
@@ -2602,7 +2614,7 @@ canvas { width: 100%; height: auto; display: block; }
     if (res.dialUp) { lines.push(P.volumeDial > 0 ? `Volume dial up to +${P.volumeDial}: a clean block while adding sets everywhere earns one more set per lift from here.` : `Volume dial back up to ${P.volumeDial}: a clean block earns a set back on every lift.`); addLog(`Volume dial up to ${P.volumeDial > 0 ? '+' : ''}${P.volumeDial}.`); }
     if (res.stall) { for (const l of res.stall.lines) { lines.push(l); addLog(l); } }
     if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(P.special ? `Macro complete: ${P.special.weeksLeft}-week easy ${P.special.weeksLeft > 1 ? 'break' : 'week'} first, then ${nb.name} starts again.` : `Next up: ${nb.name} block (${nb.focus.toLowerCase()}), variation set ${P.variantSet || 'A'}.`); }
-    if (lines.length) state.lastReport = { title: title || 'Update', lines };
+    if (lines.length) state.lastReport = { title: title || 'Update', lines, sessionId: state.sessions.length ? state.sessions[state.sessions.length - 1].id : null };
   }
 
   // ---------- Program ----------
@@ -2640,7 +2652,7 @@ canvas { width: 100%; height: auto; display: block; }
       </div>
       <div class="card"><h3>This week's plan</h3>
         ${week.map(s => `<details ${s.dayIdx === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 0"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
-          <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind !== 'warm' && x.kind !== 'single'), f = work[0], op = e.sets.find(x => x.kind === 'single'); return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${op ? `1×1 + ` : ''}${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${op ? `${op.w} / ` : ''}${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join('')}
+          <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff'), f = work[0] || e.sets[0], op = e.sets.find(x => x.kind === 'single'), tst = e.sets.some(x => x.kind === 'test'); return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${tst ? 'single + ' : op ? `1×1 + ` : ''}${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${op ? `${op.w} / ` : ''}${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join('')}
       </div>
       <div class="card"><h3>Weekly working sets</h3>${sets}<p class="small muted">Counts the competition lift plus its close barbell variations. The caps are the ceiling the adaptive rules can climb to; the book's advice for someone coming off too much volume is to start low and only add when you are clearly recovering.</p></div>
       <div class="card"><h3>Maxes and adjustments</h3>
@@ -2828,8 +2840,7 @@ canvas { width: 100%; height: auto; display: block; }
         ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
         <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Never delete or re-add the icon without a backup.</div>
         <p class="small">A backup is the whole log in one dated file (${backupSizeText()} now). Save it to Files; iCloud Drive keeps it off the phone. Each file holds everything, so only the newest matters and older ones can be deleted. Restore it from the setup screen or below.</p>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupOffer" ${s.backupOffer ? 'checked' : ''} style="width:22px;height:22px"> Offer a one-tap backup after each session</label>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupRemind" ${s.backupRemind ? 'checked' : ''} style="width:22px;height:22px"> Remind me when ${REMIND_AT} or more sessions are not backed up</label>`}
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupOffer" ${s.backupOffer ? 'checked' : ''} style="width:22px;height:22px"> Offer a one-tap backup after each session</label>`}
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
         ${Store.lastError ? `<div class="callout bad">${esc(Store.lastError)}</div>` : ''}
         <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
@@ -2862,7 +2873,6 @@ canvas { width: 100%; height: auto; display: block; }
     else if (key === 'warmupSets') s.warmupSets = !!val;
     else if (key === 'notify') { if (val) enableNotify(); else s.notify = false; }
     else if (key === 'backupOffer') { s.backupOffer = !!val; if (!val) state.backupOffer = false; }
-    else if (key === 'backupRemind') { s.backupRemind = !!val; state.backupNudgeSeen = 0; }
     else if (key === 'squatStyle') { if (['lowbar', 'highbar'].includes(val)) s.squatStyle = val; }
     else if (key === 'deadliftStyle') { if (['conventional', 'sumo'].includes(val)) s.deadliftStyle = val; }
     else if (key === 'dbIncrement') { if ([2.5, 5].includes(n)) s.dbIncrement = n; }
@@ -2942,12 +2952,11 @@ canvas { width: 100%; height: auto; display: block; }
       case 'cardio-resume': { const r = state.current.cardioRun; if (r && r.paused) { r.pausedTotal += Date.now() - (r.pausedAt || Date.now()); r.paused = false; r.pausedAt = null; save(); render(); } break; }
       case 'cardio-save': saveCardio(false); break;
       case 'cardio-skip': saveCardio(true); break;
-      case 'timer-add': if (ui.timer) { ui.timer.end += 30000; ui.timer.fired = false; if (state.timer) { state.timer.end = ui.timer.end; ui.timer.viaSw = swNotify(state.timer); } tickTimer(); Store.saveLocal(state); } break;
+      case 'timer-add': if (ui.timer) { ui.timer.end += 30000; ui.timer.fired = false; if (ui.timer.slow) { clearInterval(ui.timer.iv); ui.timer.iv = setInterval(tickTimer, 250); ui.timer.slow = false; } if (state.timer) { state.timer.end = ui.timer.end; ui.timer.viaSw = swNotify(state.timer); } tickTimer(); Store.saveLocal(state); } break;
       case 'timer-stop': stopTimer(); Store.saveLocal(state); break;
       case 'dismiss-report': state.lastReport = null; save(); render(); break;
       case 'undo': undoLast(); break;
       case 'undo-dismiss': state.undo = null; save(); render(); break;
-      case 'remind-dismiss': state.backupNudgeSeen = sessionsSinceBackup(); save(); render(); break;
       case 'offer-dismiss': state.backupOffer = false; save(); render(); break;
       case 'apply-update': applyUpdateIfSafe(true); break;
       case 'check-update': { lastUpdateCheck = 0; checkForUpdate(true).then(r => { if (r === 'latest') toast('You have the latest version'); else if (r === 'guarded') toast('An update is waiting: close the app fully and reopen it'); else if (r === 'failed') toast('Could not reach the server. Try again with a connection'); }); break; }
@@ -2956,7 +2965,7 @@ canvas { width: 100%; height: auto; display: block; }
       case 'deload-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Deload started early'); const ok = E.startDeloadNow(state); ui.confirm = null; if (ok) addLog('Deload started early.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
       case 'deload-later': snapshot('Deload suggestion dismissed'); state.program.pendingDeload = false; state.program.pushOn = true; addLog('Deload suggestion declined; pushing on with the week trimmed (no bonus reps or earned sets, loads one step down).'); save(); render(); break;
       case 'rest-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Easy week inserted'); const ok = E.startActiveRest(state, 1); ui.confirm = null; if (ok) addLog('Easy week inserted.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
-      case 'set-plate': { const s = state.settings, p = Number(d.p); s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); save(); render(); break; }
+      case 'set-plate': { const s = state.settings, p = Number(d.p); if (s.plates.includes(p) && s.plates.length === 1) { toast('Keep at least one plate size'); break; } s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); save(); render(); break; }
       case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
       case 'extra-cardio': { const m = Math.min(600, Math.max(0, Math.round(Number($('#extra-cardio').value) || 0))); if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
       case 'export': copyBackup(); break;

@@ -113,7 +113,7 @@
     s.cardioWatts = int(get(S, 'cardioWatts'), 30, 600, 110);
     s.warmupSets = get(S, 'warmupSets') !== false;
     s.autoCalibrate = get(S, 'autoCalibrate') !== false;
-    s.notify = bool(get(S, 'notify')); s.backupOffer = bool(get(S, 'backupOffer')); s.backupRemind = bool(get(S, 'backupRemind'));
+    s.notify = bool(get(S, 'notify')); s.backupOffer = bool(get(S, 'backupOffer'));
     s.includePeak = get(S, 'includePeak') === true;
     const DAYS7 = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     const days = Array.isArray(get(S, 'days')) ? get(S, 'days').filter(x => DAYS7.includes(x)) : [];
@@ -180,7 +180,7 @@
     d.current = cur && cur.phase ? cur : null;
     d.log = (Array.isArray(get(raw, 'log')) ? get(raw, 'log') : []).slice(0, 300).filter(isObj).map(l => ({ date: dateStr(get(l, 'date'), '2000-01-01'), msg: str(get(l, 'msg'), 300) })).filter(l => l.msg);
     const LR = get(raw, 'lastReport');
-    d.lastReport = isObj(LR) && Array.isArray(get(LR, 'lines')) ? { title: str(get(LR, 'title'), 100, 'Update'), lines: get(LR, 'lines').slice(0, 30).map(l => str(l, 300)).filter(Boolean) } : null;
+    d.lastReport = isObj(LR) && Array.isArray(get(LR, 'lines')) ? { title: str(get(LR, 'title'), 100, 'Update'), lines: get(LR, 'lines').slice(0, 30).map(l => str(l, 300)).filter(Boolean), sessionId: idStr(get(LR, 'sessionId'), null) } : null;
     const U = trusted ? get(raw, 'undo') : null;
     if (isObj(U) && typeof get(U, 'snap') === 'string' && get(U, 'snap').length < 400000) {
       let ok = false; try { const sn = JSON.parse(get(U, 'snap')); ok = isObj(sn) && isObj(get(sn, 'program')); } catch (e) { ok = false; }
@@ -193,7 +193,7 @@
     d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(0, 2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
     d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);
-    d.backupOffer = bool(get(raw, 'backupOffer')); d.backupNudgeSeen = int(get(raw, 'backupNudgeSeen'), 0, 100000, 0);
+    d.backupOffer = bool(get(raw, 'backupOffer'));
     d.migratedV2 = bool(get(raw, 'migratedV2'));
     d.setupDone = bool(get(raw, 'setupDone')) && LIFTS.every(k => d.lifts[k].oneRM > 0);
     d.updatedAt = num(get(raw, 'updatedAt'), 0, 4e12, 0);

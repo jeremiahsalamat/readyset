@@ -167,7 +167,7 @@
     // first set predicts harder later sets); an easy day may push the remaining sets up by at most
     // 2.5% (never in Peak). Stop rules: a miss, a non-first set 2+ over target, or the floor.
     correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, minRpe: 4, lowRpeWeight: 0.35, stopOver: 2, stopMin: 8.5, floorStep: 0.925, floorHard: 1 },
-    sessionCapMin: 70,
+    sessionCapMin: 75, // the top of the owner's 60-75 minute budget; estimates assume a full rest after every set
     calibrate: { downAt: 0.97, downMax: 0.95, downConfHigh: 1.5, downSure: 0.95, upAt: 1.02, upMax: 1.025, upFastAt: 1.04, allowance: 0.03, blockFloor: 0.90, blockFloorMissed: 0.85, minRpe: 6.5 },
     review: { add: 2, cut: -2, bigCut: -4, onTarget: 1 },
     // Deload-now triggers: within the week, and across the block (chronic under-recovery that
@@ -612,11 +612,12 @@
         const soft = why.includes('every set on target') && !why.includes('session rated easy') && !why.includes('felt easier than planned');
         const addedLastWeek = P.lastAddWeek && P.lastAddWeek[lift] === P.week - 1;
         const hypo = { setAdj: setAdj[lift] + 1, week: P.week + 1 };
-        const canAdd = setAdj[lift] < ceil && weeklySetsWith(state, lift, hypo) <= cap && weeklyMaxMinutesWith(state, lift, hypo) <= TUNE.sessionCapMin && !(soft && addedLastWeek);
+        const underCeil = setAdj[lift] < ceil, underCap = weeklySetsWith(state, lift, hypo) <= cap, inTime = weeklyMaxMinutesWith(state, lift, hypo) <= TUNE.sessionCapMin;
+        const canAdd = underCeil && underCap && inTime && !(soft && addedLastWeek);
         if (canAdd) { setAdj[lift] += 1; P.lastAddWeek = Object.assign({}, P.lastAddWeek || {}, { [lift]: P.week }); log.push(`${names[lift]}: +1 set next week (${why.join(', ')}).`); }
         else if (soft && addedLastWeek) log.push(`${names[lift]}: on target; a set was added last week, so holding to let it settle.`);
         else if (score >= 3 && !calib && loadAdj[lift] < 0.05) { loadAdj[lift] += 0.025; log.push(`${names[lift]}: at the set cap, so a bigger jump next week (+2.5%).`); }
-        else log.push(`${names[lift]}: recovering well, holding at the weekly set cap.`);
+        else log.push(`${names[lift]}: recovering well, holding (${!inTime ? `another set would push a session past ${TUNE.sessionCapMin} minutes` : !underCap ? 'at the weekly set cap' : 'at this block\'s set ceiling'}).`);
         flags[lift] = 0;
       } else if (score <= -4) {
         setAdj[lift] = Math.max(-2, setAdj[lift] - 1); if (!calib) loadAdj[lift] = Math.max(-0.10, loadAdj[lift] - 0.05); flags[lift] += 1;
@@ -631,7 +632,11 @@
     }
     const anyFlag = Object.values(flags).some(f => f > 0);
     const trained = weekSessions.some(s => s && !s.skipped && s.mode !== 'light');
-    if (block.id === 'build' && trained && !anyFlag && crushed === 0 && !lastWeek && setAdj.acc < 1) { setAdj.acc += 1; log.push('Accessories: +1 set next week.'); }
+    if (block.id === 'build' && trained && !anyFlag && crushed === 0 && !lastWeek && setAdj.acc < 1) {
+      // Accessories take the time budget into account too, so they cannot crowd out a main-lift set.
+      if (weeklyMaxMinutesWith(state, 'acc', { setAdj: setAdj.acc + 1, week: P.week + 1 }) <= TUNE.sessionCapMin) { setAdj.acc += 1; log.push('Accessories: +1 set next week.'); }
+      else log.push(`Accessories: holding (another set would push a session past ${TUNE.sessionCapMin} minutes).`);
+    }
     if (anyFlag && setAdj.acc > 0) { setAdj.acc -= 1; log.push('Accessories: -1 set to free up recovery.'); }
 
     const flaggedLifts = Object.keys(flags).filter(l => flags[l] >= 2);
@@ -692,12 +697,21 @@
 
   function weeklySets(state, lift) { return weeklySetsWith(state, lift, null); }
   // Longest session of the week (minutes) under a hypothetical adjustment: the time budget gate.
+  // Longest session, in minutes, among the days that the hypothetical change actually lengthens
+  // (a set added to the deadlift must not be blocked by a long bench day).
   function weeklyMaxMinutesWith(state, lift, hypo) {
-    const P = JSON.parse(JSON.stringify(state.program));
-    if (hypo) { if (hypo.setAdj != null) P.setAdj = Object.assign({}, P.setAdj, { [lift]: hypo.setAdj }); if (hypo.week != null) P.week = Math.min(hypo.week, BLOCKS[P.blockIdx].weeks); }
-    const probe = Object.assign({}, state, { program: P });
+    const base = JSON.parse(JSON.stringify(state.program)), P = JSON.parse(JSON.stringify(state.program));
+    if (hypo) {
+      if (hypo.week != null) { base.week = Math.min(hypo.week, BLOCKS[base.blockIdx].weeks); P.week = base.week; }
+      if (hypo.setAdj != null) P.setAdj = Object.assign({}, P.setAdj, { [lift]: hypo.setAdj });
+    }
+    const probeBase = Object.assign({}, state, { program: base }), probe = Object.assign({}, state, { program: P });
     let m = 0;
-    for (let d = 0; d < DAYS.length; d++) { P.dayIdx = d; m = Math.max(m, buildSession(probe, 'full').estMinutes); }
+    for (let d = 0; d < DAYS.length; d++) {
+      base.dayIdx = d; P.dayIdx = d;
+      const before = buildSession(probeBase, 'full').estMinutes, after = buildSession(probe, 'full').estMinutes;
+      if (after > before) m = Math.max(m, after);
+    }
     return m;
   }
   // Count a week's working sets for a lift pattern, optionally under a hypothetical set adjustment
@@ -872,8 +886,8 @@
     P.pendingDeload = false; P.lightRestOfWeek = false; P.special = null;
     if (days < 14) {
       for (const k of ['squat', 'bench', 'deadlift']) P.setAdj[k] = Math.min(0, P.setAdj[k] || 0);
-      P.setAdj.acc = Math.min(0, P.setAdj.acc || 0); P.dayIdx = 0; P.layoffPct = -0.05;
-      lines.push(`${days} days off: this week repeats 5% lighter with earned sets cleared.`);
+      P.setAdj.acc = Math.min(0, P.setAdj.acc || 0); const midWeek = P.dayIdx > 0; P.dayIdx = 0; P.layoffPct = -0.05;
+      lines.push(`${days} days off: ${midWeek ? 'this week starts again' : 'the coming week runs'} 5% lighter with earned sets cleared.`);
     } else if (days < 21) {
       P.week = 1; P.dayIdx = 0; P.setAdj = { squat: 0, bench: 0, deadlift: 0, acc: 0 }; P.flags = { squat: 0, bench: 0, deadlift: 0 }; P.layoffPct = 0; cut(0.05);
       lines.push(`${days} days off: the block restarts at week 1 with maxes 5% lower.`);

@@ -56,7 +56,8 @@ Sessions are sized to about 50-65 minutes of lifting with 3 / 2 / 1.5 minute res
 Strength and Peak blocks the main lift gets 4 minutes, because heavy triples and singles are
 limited by the nervous system and short rests there turn strength work into conditioning. The
 book gives no rest-period numbers; those are conventional. A session is never allowed to grow past
-about 70 minutes of lifting: the weekly review will not add a set that would push it over.
+about 75 minutes of lifting: the weekly review will not add a set, to a main lift or to the
+accessories, on a day that would run past it.
 
 ### Variations rotate once per block
 
@@ -209,8 +210,8 @@ until your sets say otherwise.
 On an iPhone the home-screen app keeps its own storage, separate from Safari, and iOS deletes it
 when the icon is deleted. The app therefore offers a backup file (share sheet to Files, iCloud
 Drive or AirDrop) and a clipboard copy. Backing up is your decision: Settings can offer a one-tap
-backup after each session, and can remind you once five or more sessions are unbacked; both
-banners can be dismissed. Restore from the file picker on the setup screen or in Settings.
+backup card after each session, and shows how many sessions are newer than your last backup.
+Restore from the file picker on the setup screen or in Settings.
 
 Forgot to log a session, or logged it wrong? **Log a past session** on the Today tab builds the
 next planned session on the date you choose (no check-in, no timer) and then runs it through the
@@ -244,7 +245,7 @@ For each competition lift the app scores the week:
 - Fully recovered by the next session: +1. Still sore: −1. Very sore: −2.
 
 Score +2 or better adds a set next week on the competition lift (until the run's ceiling, the
-phase cap, or the 70-minute session budget; at the ceiling a very easy week earns a bigger load
+phase cap, or the 75-minute session budget; at the ceiling a very easy week earns a bigger load
 jump instead). When "on target" is the only good news, a set is added at most every second week,
 so a lifter who simply hits the numbers climbs slowly rather than in a straight line (p.164).
 Score −2 or worse removes a set, takes 2.5% off next week's loads (−5% at −4) and raises a flag.
