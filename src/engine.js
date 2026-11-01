@@ -476,23 +476,28 @@
   // Returns the confidence-weighted estimate, plus confHigh (weight from sets near failure: reported
   // RPE >= 7.5 or planned >= 7), which the drop rule requires so that far-from-failure sets can lower
   // a max only when the shortfall is large.
-  function sessionEstimate(sess, lift, ref) {
+  // opts.minRpe: the calibration ignores sets under RPE 6.5 (vague evidence of a max); the History
+  // chart passes a lower floor so every rated set shows, with far-from-failure sets weighted low.
+  // opts.clamp: how far an implied max may sit from ref before it is pulled in (a typo guard).
+  function sessionEstimate(sess, lift, ref, opts) {
+    const minRpe = opts && opts.minRpe != null ? opts.minRpe : TUNE.calibrate.minRpe;
+    const clamp = (opts && opts.clamp) || [0.7, 1.3];
     let num = 0, den = 0, n = 0, confHigh = 0;
     for (const e of sess.exercises || []) {
       if (e.lift !== lift || !EX[e.ex] || !EX[e.ex].tm || EX[e.ex].mult < 0.8) continue;
       if ((sess.skippedSlots || []).includes(e.slotKey)) continue;
-      const work = (e.sets || []).filter(x => (x.kind === 'work' || x.kind === 'single') && x.done);
+      const work = (e.sets || []).filter(x => (x.kind === 'work' || x.kind === 'single' || x.kind === 'test') && x.done);
       const firstWork = work.find(x => x.kind === 'work');
       work.forEach((x, i) => {
         let reps = x.actualReps != null ? x.actualReps : x.reps;
         let rpe = x.rpe; if (rpe == null && reps < x.reps) rpe = 10;
         if (reps === 0) { reps = 1; rpe = 10; } // a set that did not go up: the weight is at least a max
         const w = x.actualW != null ? x.actualW : x.w;
-        if (!Number.isFinite(rpe) || rpe < TUNE.calibrate.minRpe || rpe > 10 || !(reps > 0) || reps > MAX_EVIDENCE_REPS || !(w > 0)) return;
+        if (!Number.isFinite(rpe) || rpe < minRpe || rpe > 10 || !(reps > 0) || reps > MAX_EVIDENCE_REPS || !(w > 0)) return;
         let implied = e1rm(w, reps, rpe) / EX[e.ex].mult;
-        if (ref > 0) implied = Math.min(ref * 1.3, Math.max(ref * 0.7, implied));
-        const single = x.kind === 'single';
-        const wt = (EX[e.ex].mult === 1 ? 1 : 0.5) * (x === firstWork ? 0.5 : 1) * (rpe < 7 ? 0.5 : 1);
+        if (ref > 0) implied = Math.min(ref * clamp[1], Math.max(ref * clamp[0], implied));
+        const comp = String(e.ex).startsWith('comp_'); // the competition lift itself; a same-multiplier variation (the other bar position) is still a variation
+        const wt = (comp ? 1 : 0.5) * (x === firstWork ? 0.5 : 1) * (rpe < 6 ? 0.35 : rpe < 7 ? 0.5 : 1);
         num += wt * implied; den += wt; n++;
         if (rpe >= 7.5 || (x.rpeTarget != null && x.rpeTarget >= 7)) confHigh += wt;
       });
@@ -518,12 +523,12 @@
       const cur = L.oneRM;
       if (!(cur > 0)) continue;
       const r = sessionEstimate(sess, lift, cur);
-      if (!r) continue;
+      if (!r) { if (sessionEstimate(sess, lift, cur, { minRpe: 4 })) log.push(`${names[lift]}: every set was under RPE 6.5, too easy to read a max from; 1RM held at ${cur}.`); continue; }
       const K = TUNE.calibrate;
       // The fatigue allowance applies to the rise test only: a late-block decline is still acted on
       // from the raw estimate (fatigue management is the priority), while the smoothed estimate that
       // can raise the max reads late-block sets a little higher.
-      const raw = r.est, est = r.est * allow;
+      const raw = r.est, est = r.est * (L.est == null ? 1 : allow);
       L.est = L.est == null ? est : 0.5 * L.est + 0.5 * est;
       L.est = Math.min(cur * 1.15, Math.max(cur * 0.7, L.est)); L.estDate = sess.date;
       let next = cur, how = '';
@@ -570,7 +575,7 @@
       if (s.mode === 'light') lights++;
       if (s.post && s.post.difficulty === 4) crushed++;
       for (const e of s.exercises) {
-        if (!e.lift || e.role === 'accessory') continue;
+        if (!e.lift || e.role === 'accessory' || !EX[e.ex] || EX[e.ex].mult < 0.8) continue; // RDL, OHP and the like do not speak for the lift
         const work = e.sets.filter(x => x.kind === 'work' && x.done);
         if (!work.length) continue;
         const missed = work.filter(x => (x.actualReps != null ? x.actualReps : x.reps) < x.reps).length;

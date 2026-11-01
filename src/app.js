@@ -475,7 +475,7 @@
   }
   function renderWeekBrief() {
     const P = state.program, pos = E.positionLabel(state);
-    const done = state.sessions.filter(s => s.mesoCount === P.mesoCount && s.blockIdx === P.blockIdx && s.week === P.week);
+    const done = state.sessions.filter(s => s.mesoCount === P.mesoCount && s.blockIdx === P.blockIdx && s.week === P.week && !(P.chronicSince && (s.ts || 0) < P.chronicSince));
     const dots = E.DAYS.map((d, i) => { const s = done.find(x => x.dayIdx === i); return `<span class="pill ${s ? (s.skipped ? '' : 'green') : i === P.dayIdx ? 'accent' : ''}">${d.id}</span>`; }).join(' ');
     const sets = LIFTS.map(l => `<div class="kpi"><span class="tiny">${LIFTNAME[l]} sets</span><span class="v num">${E.weeklySets(state, l)}<small>/ ${E.capFor(state, l)}</small></span></div>`).join('');
     const kcal = weekCardio();
@@ -596,7 +596,7 @@
     snapshot(`Skipped ${pos.day.name}`, { removeSessionId: s.id });
     state.sessions.push(s); Store.pushSession(s);
     addLog(`Skipped ${pos.day.name}.`);
-    afterSession();
+    afterSession(s.id);
     save(); render();
   }
 
@@ -945,20 +945,17 @@
     const est = bestE1rm(s);
     return `<div class="card">
       <h2>How did that go?</h2>
-      <div class="small muted">${s.backfill ? `Logged for ${fmtDate(s.date)}` : `${s.durationMin} min of lifting`}${est.length ? ' · ' + est.map(x => `${LIFTNAME[x.lift]} est. 1RM ${Math.round(x.e1rm)}`).join(' · ') : ''}</div>
+      <div class="small muted">${s.backfill ? `Logged for ${fmtDate(s.date)}` : `${s.durationMin} min of lifting`}${est.length ? ' · ' + est.map(x => `${LIFTNAME[x.lift]} today's estimate ~${Math.round(x.e1rm)}`).join(' · ') : ''}</div>
       <div class="q"><span class="label">Overall, that session was</span>
         <div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${s.post.difficulty === v}">${DIFF[v]}<small>${['', 'left plenty in the tank', 'hard work, felt right', 'barely got through it', 'should have gone light'][v]}</small></button>`).join('')}</div></div>
       <p class="small muted">This answer, your RPEs and how recovered you are next time decide whether next week adds a set, holds, or backs off.</p>
       <button class="btn primary block" data-action="post-next">${state.settings.cardioMin ? 'Next: easy bike' : 'Save session'}</button>
     </div>`;
   }
+  // Today's estimate per lift, the same statistic the calibration reads (weighted mean of the rated sets).
   function bestE1rm(s) {
     const out = [];
-    for (const l of LIFTS) {
-      let best = 0;
-      for (const e of s.exercises) if (e.lift === l && E.EX[e.ex].mult === 1) for (const x of e.sets) if (x.done && x.rpe != null && x.rpe >= 7 && x.kind !== 'warm') { const w = x.actualW != null ? x.actualW : x.w, r = x.actualReps != null ? x.actualReps : x.reps; if (w && r) best = Math.max(best, E.e1rm(w, r, x.rpe)); }
-      if (best) out.push({ lift: l, e1rm: best });
-    }
+    for (const l of LIFTS) { const r = E.sessionEstimate(s, l, state.lifts[l].oneRM); if (r) out.push({ lift: l, e1rm: r.est }); }
     return out;
   }
 
@@ -1022,14 +1019,14 @@
     state.current = null; state.undo = null; stopTimer();
     state.sessions.push(s); Store.pushSession(s);
     if (s.backfill) { state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); addLog(`${s.dayName} logged after the fact for ${fmtDate(s.date)}.`); }
-    afterSession();
+    afterSession(s.id);
     if (cal.length) { const fresh = state.lastReport && state.lastReport.sessionId === s.id; const rep = fresh ? state.lastReport : { title: 'Maxes calibrated from today', lines: [], sessionId: s.id }; rep.lines = cal.concat(rep.lines); state.lastReport = rep; }
     try { if (wakeLock) wakeLock.release(); } catch (e) { /* ignore */ }
     if (state.settings.backupOffer && !Store.db) state.backupOffer = true; // the one-tap offer on Today
     save(); render(); scrollToY(0);
     setTimeout(() => applyUpdateIfSafe(false), 1500);
   }
-  function afterSession() {
+  function afterSession(sid) {
     const P = state.program, pos = E.position(state);
     const wasLastDay = P.dayIdx === E.DAYS.length - 1;
     const lines = [];
@@ -1048,7 +1045,7 @@
       }
       if (willEndMeso) {
         const mr = E.mesoReview(state, sessionsOfMeso(), !!pos.block.test);
-        for (const l of LIFTS) if (mr.oneRM[l]) E.applyTM(state, l, mr.oneRM[l]);
+        for (const l of LIFTS) if (mr.oneRM[l]) { E.applyTM(state, l, mr.oneRM[l]); if (pos.block.test) state.lifts[l].est = mr.oneRM[l]; }
         mr.log.forEach(l => { addLog(l); lines.push(l); });
         title = `${pos.block.name} block complete`;
         P.pendingDeload = false;
@@ -1059,7 +1056,7 @@
     if (res.dialUp) { lines.push(P.volumeDial > 0 ? `Volume dial up to +${P.volumeDial}: a clean block while adding sets everywhere earns one more set per lift from here.` : `Volume dial back up to ${P.volumeDial}: a clean block earns a set back on every lift.`); addLog(`Volume dial up to ${P.volumeDial > 0 ? '+' : ''}${P.volumeDial}.`); }
     if (res.stall) { for (const l of res.stall.lines) { lines.push(l); addLog(l); } }
     if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(P.special ? `Macro complete: ${P.special.weeksLeft}-week easy ${P.special.weeksLeft > 1 ? 'break' : 'week'} first, then ${nb.name} starts again.` : `Next up: ${nb.name} block (${nb.focus.toLowerCase()}), variation set ${P.variantSet || 'A'}.`); }
-    if (lines.length) state.lastReport = { title: title || 'Update', lines, sessionId: state.sessions.length ? state.sessions[state.sessions.length - 1].id : null };
+    if (lines.length) state.lastReport = { title: title || 'Update', lines, sessionId: sid || null };
   }
 
   // ---------- Program ----------
@@ -1118,9 +1115,10 @@
   // ---------- History ----------
   function renderHistory() {
     const done = state.sessions.filter(s => !s.skipped).slice().reverse();
-    const trend = LIFTS.map(l => { const w = weeklyEst(l); const last = w[w.length - 1], prev = w[w.length - 2]; return `<div class="stack"><div class="row between"><b>${LIFTNAME[l]}</b><span class="small muted num">1RM ${state.lifts[l].oneRM} · TM ${state.lifts[l].tm}${last ? ` · this week ~${Math.round(last.y)}${prev ? ` (${last.y >= prev.y ? '+' : ''}${Math.round(last.y - prev.y)} vs last)` : ''}` : ''}</span></div><canvas id="c-${l}" height="130"></canvas></div>`; }).join('');
+    const thisWeek = weekStart(Date.now()), WEEK = 7 * 864e5;
+    const trend = LIFTS.map(l => { const w = weeklyEst(l); const last = w[w.length - 1], prev = w[w.length - 2]; const lastWk = last ? weekStart(last.x) : 0; const label = lastWk === thisWeek ? 'this week' : lastWk === thisWeek - WEEK ? 'last week' : last ? `week of ${fmtDate(new Date(lastWk).toISOString().slice(0, 10))}` : ''; const adjacent = prev && weekStart(prev.x) === lastWk - WEEK; return `<div class="stack"><div class="row between"><b>${LIFTNAME[l]}</b><span class="small muted num">1RM ${state.lifts[l].oneRM} · TM ${state.lifts[l].tm}${last ? ` · ${label} ~${Math.round(last.y)}${adjacent ? ` (${last.y >= prev.y ? '+' : ''}${Math.round(last.y - prev.y)} vs the week before)` : ''}` : ''}</span></div><canvas id="c-${l}" height="130"></canvas></div>`; }).join('');
     return `
-      <div class="card"><h3>Estimated 1RM, week by week</h3>${trend}<div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> weekly average</span><span><span class="dot" style="background:var(--muted)"></span> single sessions</span><span>dashed: current 1RM</span></div><p class="small muted">Every logged set with an RPE on a competition lift (or a close barbell variation) implies a max; the line is the weekly average of those. It moves with how you are doing and feeling, not with what you entered at setup.</p></div>
+      <div class="card"><h3>Estimated 1RM, week by week</h3>${trend}<div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> weekly average</span><span><span class="dot" style="background:var(--muted)"></span> single sessions</span><span>dashed: current 1RM</span></div><p class="small muted">Every logged set with an RPE on a competition lift (or a close barbell variation) implies a max; the line is the weekly average of those, with easy sets (under RPE 6.5) counting lightly. The max itself calibrates only from sets at RPE 6.5 and up, so the line can sit below or above the dashed 1RM. It moves with how you are doing and feeling, not with what you entered at setup.</p></div>
       <div class="card"><h3>Readiness</h3><canvas id="c-ready" height="140"></canvas></div>
       <div class="card"><h3>Sessions</h3>${done.length ? done.slice(0, 60).map((s, i) => `<details class="session-item" style="display:block"><summary class="hist-row"><span class="hist-main"><b>${esc(s.dayName)}</b><span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></span><span class="hist-ready">${s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '<span class="muted small" aria-label="No check-in">–</span>'}</span><span class="hist-diff">${s.post && s.post.difficulty ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</span></summary>
           <div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
@@ -1204,7 +1202,10 @@
   // Per-session max estimates (confidence-weighted) and their weekly averages.
   function sessionEsts(lift) {
     const out = [];
-    for (const s of state.sessions) { if (s.skipped || s.isDeload || s.isRest) continue; const r = E.sessionEstimate(s, lift); if (r) out.push({ x: s.ts, y: r.est, conf: r.conf }); }
+    // Every rated set shows on the chart (RPE 4 and up, low ratings weighted low); a wide clamp
+    // around the current max keeps one mistyped weight from flattening the whole scale.
+    const ref = state.lifts[lift].oneRM;
+    for (const s of state.sessions) { if (s.skipped || s.isDeload || s.isRest) continue; const r = E.sessionEstimate(s, lift, ref, { minRpe: 4, clamp: [0.5, 1.5] }); if (r) out.push({ x: s.ts, y: r.est, conf: r.conf }); }
     return out;
   }
   function weekStart(ts) { const d = new Date(ts); const day = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - day); return d.getTime(); }
@@ -1422,7 +1423,9 @@
       case 'setup-restore': ui.setupRestore = !ui.setupRestore; render(); break;
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
       case 'reset': { stopTimer(); for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; ui.pendingRestore = null; ui.backfill = null; ui.showImport = false; ui.editSets = {}; ui.lastDeleted = null; ui.lastEi = null; renderSheet(); save(); render(); break; }
-      case 'delete-session': { if (state.current) { toast('Finish or discard the open session first'); break; } const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id); save(); render(); } break; }
+      case 'delete-session': { if (state.current) { toast('Finish or discard the open session first'); break; } const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id);
+        if (!s.skipped && inBlock(s) && (s.ts || 0) > (state.program.calibBaseTs || 0)) { const lines = [`${s.dayName} (${fmtDate(s.date)}) deleted.`].concat(recalibrateBlock()); lines.forEach(addLog); state.lastReport = { title: 'Session deleted', lines, sessionId: null }; }
+        save(); render(); } break; }
     }
   });
   // Restore a backup (pasted text or a chosen file). Untrusted: it goes through the sanitizer and can
