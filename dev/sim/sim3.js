@@ -83,6 +83,7 @@ for (let i = 0; i < WEEKS * 4; i++) {
   for (const k in r) r[k] = Math.max(1, Math.min(5, r[k]));
   const rs = E.readinessScore(r); M.readinessSum += rs.score;
   if (rs.color === 'red') M.reds++;
+  const forced = !!P.lightRestOfWeek;
   let mode = P.lightRestOfWeek ? 'light' : rs.color === 'green' ? 'full' : rs.color === 'yellow' ? 'trim' : 'light';
   if (pos.isDeload || pos.rest) mode = 'full';
   if (mode === 'light') M.lightSessions++;
@@ -123,7 +124,9 @@ for (let i = 0; i < WEEKS * 4; i++) {
   s.soreness = { legs: Math.max(1, Math.min(4, Math.round(1 + 12 * f + Math.max(0, gauss())))), push: Math.max(1, Math.min(4, Math.round(1 + 10 * f + Math.max(0, gauss())))), hinge: Math.max(1, Math.min(4, Math.round(1 + 12 * f + Math.max(0, gauss())))) };
   s.cardio = { min: 45 };
   const cal = E.calibrate(st, s); s.calibrated = true; if (cal.length && verbose) log.push(`w${week} [cal] ` + cal.join(' | '));
+  if (forced && mode === 'light') s.forcedLight = true;
   st.sessions.push(s);
+  if (rs.color === 'red' && !forced && !pos.isDeload && !pos.rest && !pos.isTest && P.dayIdx < 3 && sessionsOfWeek().filter(x => x.readiness && x.readiness.color === 'red').length >= 2) P.lightRestOfWeek = true; // the app's two-red rule
   const wasLastDay = P.dayIdx === 3;
   if (wasLastDay) {
     P.lightRestOfWeek = false;

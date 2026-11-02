@@ -133,6 +133,7 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 /* Pills */
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
 .pill.green { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.pill.skipped { text-decoration: line-through; opacity: .7; border-style: dashed; }
 .pill.yellow { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .pill.red { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 .pill.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
@@ -194,7 +195,7 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .set .field input::-webkit-outer-spin-button, .set .field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .set .field { min-width: 0; }
 .set .field .u { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.set .rpe { border: 1px solid var(--line); border-radius: 6px; padding: 6px 4px; background: var(--surface); text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; width: 100%; }
+.set .rpe { min-height: 40px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 4px; background: var(--surface); text-align: center; font-weight: 600; font-variant-numeric: tabular-nums; width: 100%; }
 .set .rpe.empty { color: var(--muted); font-weight: 500; }
 .set .ok { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); display: inline-flex; align-items: center; justify-content: center; }
 .set .ok svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -260,6 +261,23 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .bar { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--line); }
 .bar i { display: block; height: 100%; background: var(--accent); }
 canvas { width: 100%; height: auto; display: block; }
+canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: pan-y; }
+.pt-card { margin-top: 8px; padding: 10px 12px 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0; background: var(--surface-2); display: flex; flex-direction: column; gap: 8px; }
+.pt-head { display: flex; align-items: center; gap: 8px; }
+.pt-title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.pt-head .btn.icon { min-width: 36px; flex: none; }
+.pt-head .btn.icon svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2.2; fill: none; stroke-linecap: round; }
+.pt-big { display: flex; align-items: baseline; gap: 10px; }
+.pt-num { font-family: var(--display); font-size: 2rem; font-weight: 700; line-height: 1; color: var(--accent); flex: none; }
+.pt-ex { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding-top: 6px; }
+.pt-set { display: grid; grid-template-columns: 1fr auto; column-gap: 10px; align-items: baseline; }
+.pt-imp { font-weight: 700; text-align: right; }
+.pt-imp::before { content: "→ "; color: var(--muted); font-weight: 500; }
+.pt-why { grid-column: 1 / -1; }
+.pt-card p { margin: 0; }
+.pt-nav { align-items: center; flex-wrap: wrap; }
+.pt-nav .btn { white-space: nowrap; }
+.pt-nav .btn[disabled] { opacity: .4; }
 .empty { text-align: center; color: var(--muted); padding: 20px 10px; }
 .callout { border-left: 3px solid var(--accent); padding: 6px 12px; background: var(--surface-2); border-radius: 0 8px 8px 0; font-size: .92rem; }
 .callout.good { border-color: var(--good); } .callout.warn { border-color: var(--warn); } .callout.bad { border-color: var(--bad); }

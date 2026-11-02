@@ -249,6 +249,7 @@ for (const includePeak of [true, false]) {
   expect(E.layoffAdjust(mk(), 3).length === 0, 'short gaps do nothing');
   // Stall check: an unflagged lift that gained under 1% gets a set next macro; a flagged one loses one.
   const st5 = mk(); st5.lifts.squat.macroEst = 365; st5.lifts.squat.est = 366; st5.lifts.bench.macroEst = 255; st5.lifts.bench.est = 256; st5.lifts.bench.macroWasFlagged = true; st5.lifts.deadlift.macroEst = 400; st5.lifts.deadlift.est = 430;
+  for (const k of ['squat', 'bench', 'deadlift']) st5.lifts[k].rated = 10;
   const stall = E.stallCheck(st5);
   expect(stall && stall.lines.length === 2 && st5.learned.build.squat === 1 && st5.learned.build.bench === -1 && stall.restWeeks === 2 && st5.learned.build.deadlift == null, 'stall rule', { stall, learned: st5.learned });
   expect(E.stallCheck(mk()) === null, 'no stall without a previous macro');
@@ -313,6 +314,58 @@ for (const includePeak of [true, false]) {
     expect(s3.program.chronicSince >= t0 && s3.program.calibBaseTs >= t0, 'layoff starts a fresh window', { days, p: s3.program.chronicSince });
     expect(['squat', 'bench', 'deadlift'].every(k => s3.lifts[k].blockStartRM === s3.lifts[k].oneRM), 'layoff rebases every lift', { days, squat: s3.lifts.squat });
   }
+}
+// ---------- Audit 8: whole-program pass ----------
+{
+  const mk8 = () => E.sanitizeState({ lifts: { squat: { oneRM: 300 }, bench: { oneRM: 200 }, deadlift: { oneRM: 350 } }, setupDone: true, settings: { tmPct: 0.9 } });
+  const easy = (date, week, w) => ({ exercises: [{ ex: 'comp_squat', lift: 'squat', slotKey: 'squat_primary', sets: [1, 2, 3, 4].map(() => ({ kind: 'work', done: true, w, reps: 8, rpe: 5, rpeTarget: 7 })) }], skippedSlots: [], post: { difficulty: 2 }, date, blockIdx: 0, week, mesoCount: 0 });
+  // An under-entered max rises from easy sets: held after one session, raised after the second.
+  const u = mk8(); const l1 = E.calibrate(u, easy('2026-01-05', 1, 235)); const m1 = u.lifts.squat.oneRM; E.calibrate(u, easy('2026-01-12', 2, 235)); const m2 = u.lifts.squat.oneRM;
+  expect(m1 === 300 && /at least/.test(l1.join(' ')) && m2 > 300 && m2 <= 307.5, 'easy sets prove a floor and raise an under-entered max slowly', { m1, m2, l1 });
+  // Easy sets at a sensible max do not raise it.
+  const v = mk8(); E.calibrate(v, easy('2026-01-05', 1, 200)); E.calibrate(v, easy('2026-01-12', 2, 200)); expect(v.lifts.squat.oneRM === 300, 'easy sets at a fair max change nothing', v.lifts.squat.oneRM);
+  // Sets without RPEs are not "on target".
+  const w = mk8(); w.program.week = 2;
+  const noRpe = [0, 1, 2, 3].map(d => { w.program.dayIdx = d; const s = E.buildSession(w, 'full'); s.exercises.forEach(e => e.sets.forEach(x => { x.done = true; x.actualReps = x.reps; })); return Object.assign(s, { mode: 'full', post: { difficulty: 2 }, soreness: { legs: 1, push: 1, hinge: 1 } }); });
+  w.program.dayIdx = 3; const rv = E.weeklyReview(w, noRpe, noRpe);
+  expect(!rv.log.some(l => /\+1 set/.test(l) && /Squat|Bench|Deadlift/.test(l)) && rv.log.some(l => /no RPEs logged/.test(l)), 'no RPEs, no earned sets', rv.log);
+  // Forced-light days are not a chronic signal.
+  const f = mk8(); f.program.week = 3;
+  const lightS = (red, forced) => ({ exercises: [], skippedSlots: [], mode: 'light', readiness: { score: red ? 30 : 70, color: red ? 'red' : 'green' }, forcedLight: forced || undefined, post: { difficulty: 2 }, ts: 1, blockIdx: 0, week: 3, mesoCount: 0 });
+  const wk = [lightS(true), lightS(true), lightS(false, true), lightS(false, true)];
+  const rf = E.weeklyReview(f, wk, wk);
+  expect(!rf.reasons.some(r => /light sessions this block/.test(r)), 'two reds then forced-light days do not count as chronic', rf.reasons);
+  // Deload now with one accumulation week left runs the block's own deload.
+  const d = mk8(); d.program.week = E.BLOCKS[0].weeks; d.program.dayIdx = 1; E.startDeloadNow(d);
+  expect(d.program.week === E.BLOCKS[0].weeks + 1 && !d.program.special && E.position(d).isDeload, 'deload now in the last week jumps to the planned deload', d.program);
+  // An inserted deload keeps the calibration floor and moves the replay base.
+  const g = mk8(); g.program.week = 2; g.lifts.squat.oneRM = 280; const t0 = Date.now(); E.startDeloadNow(g);
+  expect(g.lifts.squat.floorRM === 300 && g.program.calibBaseTs >= t0, 'inserted deload keeps the floor', g.lifts.squat);
+  // Test week: a single at 98% of the max does not bump it; a miss caps it; no RPE reads as RPE 9.
+  const tst = (wt, reps, rpe) => [{ exercises: [{ ex: 'comp_squat', lift: 'squat', role: 'primary', slotKey: 'squat_primary', sets: [{ kind: 'test', done: true, w: wt, reps: 1, actualReps: reps, rpe }] }], skippedSlots: [], mode: 'full' }];
+  const t1 = mk8(); t1.settings.autoCalibrate = false; const r1 = E.mesoReview(t1, tst(285, 1, 9), true);
+  expect(!(r1.oneRM.squat > 300), 'a test under the max does not bump it', r1);
+  const r2 = E.mesoReview(t1, tst(310, 0, null), true); expect(r2.oneRM.squat > 0 && r2.oneRM.squat < 310, 'a missed test single caps the max under it', r2);
+  const r3 = E.mesoReview(t1, tst(305, 1, null), true); expect(r3.oneRM.squat > 300, 'a test single without an RPE counts as RPE 9', r3);
+  // Small lifter: the bar never forces a set to failure (unless the bar itself is near the max, which gets a note).
+  const sm = E.sanitizeState({ lifts: { squat: { oneRM: 100 }, bench: { oneRM: 60 }, deadlift: { oneRM: 120 } }, setupDone: true, settings: { barWeight: 45 } });
+  let worst = 0; for (let wk2 = 1; wk2 <= 4; wk2++) for (let dd = 0; dd < 4; dd++) { sm.program.week = wk2; sm.program.dayIdx = dd; for (const e of E.buildSession(sm, 'full').exercises) for (const x of e.sets) if (x.kind === 'work' && e.pctTM != null && !e.note) worst = Math.max(worst, x.rpeTarget || 0); }
+  expect(worst <= 9, 'a light lifter is not prescribed sets to failure', worst);
+  // Bookkeeping survives a reload.
+  const cl8 = E.sanitizeState(JSON.parse(JSON.stringify({ lifts: { squat: { oneRM: 300, floorRM: 290, lbHits: 1, lbKey: '2026-01-05', rated: 7, macroRated: 3 } }, setupDone: true, settings: { tmPct: 0.875, tmPctChosen: 0.9 }, program: { stallMeso: 4, special: { type: 'rest', weeksLeft: 1, resumeDayIdx: 0, macroEnd: true } }, sessions: [{ id: 's1', ts: 1, date: '2026-01-01', exercises: [], forcedLight: true, calib: { squat: [300, 302.5] }, calibLines: ['Squat 1RM 300 -> 302.5.'] }] })), { trusted: false });
+  const L8 = cl8.lifts.squat;
+  expect(L8.floorRM === 290 && L8.lbHits === 1 && L8.lbKey === '2026-01-05' && L8.rated === 7 && L8.macroRated === 3, 'lift bookkeeping survives a reload', L8);
+  expect(cl8.settings.tmPctChosen === 0.9 && cl8.program.stallMeso === 4 && cl8.program.special && cl8.program.special.macroEnd === true, 'program bookkeeping survives a reload', { s: cl8.settings.tmPctChosen, p: cl8.program.stallMeso, sp: cl8.program.special });
+  expect(cl8.sessions[0].forcedLight === true && cl8.sessions[0].calib.squat[1] === 302.5 && cl8.sessions[0].calibLines.length === 1, 'session records survive a reload', cl8.sessions[0]);
+  // A compacted save (nulls dropped) loads back to the same state, mid-session included.
+  const full = E.sanitizeState({ lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true });
+  const cur = E.buildSession(full, 'full'); Object.assign(cur, { id: 's9', ts: 5, date: '2026-01-02', phase: 'lift', startedAt: 5, mesoCount: 0, blockIdx: 0, dayIdx: 0, notes: '', skippedSlots: [] });
+  cur.exercises.forEach(e => e.sets.forEach((x, i) => { x.done = i < 2; x.actualReps = i < 2 ? x.reps : null; x.rpe = i === 1 ? 7 : null; x.actualW = null; }));
+  full.current = cur; full.timer = { end: 99, total: 120, label: 'Squat' };
+  const comp = (val) => { if (Array.isArray(val)) return val.map(comp); if (val && typeof val === 'object') { const o = {}; for (const k of Object.keys(val)) { const x = val[k]; if (x == null || x === '') continue; o[k] = comp(x); } return o; } return val; };
+  const a1 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(full)), { trusted: true })), a2 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(comp(full))), { trusted: true }));
+  if (a1 !== a2) { let i = 0; while (a1[i] === a2[i]) i++; console.log('compact diff at', a1.slice(Math.max(0, i - 120), i + 60), '\n vs', a2.slice(Math.max(0, i - 120), i + 60)); }
+  expect(a1 === a2, 'a compacted save loads back identically', a1.length + ' vs ' + a2.length);
 }
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

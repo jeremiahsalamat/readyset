@@ -79,6 +79,16 @@
     out.planNotes = Array.isArray(pn) ? pn.slice(0, 4).map(x => str(x, 200)).filter(Boolean) : [];
     if (get(s, 'backfill') === true) out.backfill = true;
     if (get(s, 'edited') === true) out.edited = true;
+    if (get(s, 'forcedLight') === true) out.forcedLight = true;
+    // What the calibration did with this session: the 1RM before and after per lift, and its lines.
+    const cb = get(s, 'calib');
+    if (isObj(cb)) {
+      const o = {};
+      for (const l of ['squat', 'bench', 'deadlift']) { const v = get(cb, l); if (Array.isArray(v) && v.length === 2) { const a = numOrNull(v[0], 1, 5000), b = numOrNull(v[1], 1, 5000); if (a != null && b != null) o[l] = [a, b]; } }
+      if (Object.keys(o).length) out.calib = o;
+    }
+    const cl = get(s, 'calibLines');
+    if (Array.isArray(cl)) { const L = cl.slice(0, 6).map(x => str(x, 300)).filter(Boolean); if (L.length) out.calibLines = L; }
     const phase = oneOf(get(s, 'phase'), ['lift', 'post', 'cardio', 'edit'], null);
     if (phase) {
       out.phase = phase; out.startedAt = num(get(s, 'startedAt'), 0, 4e12, Date.now()); out.finishedAt = numOrNull(get(s, 'finishedAt'), 0, 4e12);
@@ -107,6 +117,7 @@
     s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10;
     s.dbIncrement = oneOf(num(get(S, 'dbIncrement'), 1, 10, 5), [2.5, 5], 5);
     s.tmPct = oneOf(num(get(S, 'tmPct'), 0.5, 1, 0.9), [0.85, 0.875, 0.9, 0.925], 0.9);
+    s.tmPctChosen = oneOf(num(get(S, 'tmPctChosen'), 0.5, 1, s.tmPct), [0.85, 0.875, 0.9, 0.925], s.tmPct); // the TM % the lifter picked; the program may lower tmPct and bring it back
     s.deadliftStyle = oneOf(get(S, 'deadliftStyle'), ['conventional', 'sumo'], 'conventional');
     s.squatStyle = oneOf(get(S, 'squatStyle'), ['lowbar', 'highbar'], 'lowbar');
     s.cardioMin = int(get(S, 'cardioMin'), 0, 240, 40);
@@ -127,7 +138,9 @@
       const src = isObj(get(L, k)) ? get(L, k) : {};
       const oneRM = num(get(src, 'oneRM'), 0, 2000, 0);
       d.lifts[k] = { oneRM, tm: oneRM ? E.roundTo(oneRM * s.tmPct, s.increment) : 0, est: numOrNull(get(src, 'est'), 0, 3000), estDate: dateStr(get(src, 'estDate'), null), blockStartRM: numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null,
-        estAtBlockStart: numOrNull(get(src, 'estAtBlockStart'), 0, 3000), upKey: str(get(src, 'upKey'), 20, null) || null, macroEst: numOrNull(get(src, 'macroEst'), 0, 3000), macroWasFlagged: bool(get(src, 'macroWasFlagged')) };
+        estAtBlockStart: numOrNull(get(src, 'estAtBlockStart'), 0, 3000), upKey: str(get(src, 'upKey'), 20, null) || null, macroEst: numOrNull(get(src, 'macroEst'), 0, 3000), macroWasFlagged: bool(get(src, 'macroWasFlagged')),
+        floorRM: numOrNull(get(src, 'floorRM'), 0, 2000) || numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null, lbHits: int(get(src, 'lbHits'), 0, 10, 0), lbKey: dateStr(get(src, 'lbKey'), null),
+        rated: int(get(src, 'rated'), 0, 1e6, 0), macroRated: int(get(src, 'macroRated'), 0, 1e6, 0), easyRun: int(get(src, 'easyRun'), 0, 1000, 0), easyKey: dateStr(get(src, 'easyKey'), null) };
     }
     const A = isObj(get(raw, 'acc')) ? get(raw, 'acc') : {};
     d.acc = {};
@@ -149,7 +162,7 @@
     p.swaps = {};
     for (const k of Object.keys(SW)) if (SLOT_KEYS.includes(k) && E.SWAPS[k].includes(SW[k])) p.swaps[k] = SW[k];
     const SP = get(P, 'special');
-    p.special = isObj(SP) && (get(SP, 'type') === 'rest' || get(SP, 'type') === 'deload') ? { type: get(SP, 'type'), weeksLeft: int(get(SP, 'weeksLeft'), 1, 4, 1), resumeDayIdx: int(get(SP, 'resumeDayIdx'), 0, 3, 0) } : null;
+    p.special = isObj(SP) && (get(SP, 'type') === 'rest' || get(SP, 'type') === 'deload') ? Object.assign({ type: get(SP, 'type'), weeksLeft: int(get(SP, 'weeksLeft'), 1, 4, 1), resumeDayIdx: int(get(SP, 'resumeDayIdx'), 0, 3, 0) }, get(SP, 'macroEnd') === true ? { macroEnd: true } : {}) : null;
     const nbo = get(P, 'nextBlockOverride'); p.nextBlockOverride = nbo == null ? null : int(nbo, 0, E.BLOCKS.length - 1, null);
     p.pendingDeload = bool(get(P, 'pendingDeload')); p.lightRestOfWeek = bool(get(P, 'lightRestOfWeek')); p.pushOn = bool(get(P, 'pushOn'));
     p.volumeDial = int(get(P, 'volumeDial'), -2, 2, 0); p.blockClean = get(P, 'blockClean') !== false; p.readinessBase = numOrNull(get(P, 'readinessBase'), 0, 100);
@@ -162,6 +175,7 @@
     const RC = isObj(get(P, 'runCeil')) ? get(P, 'runCeil') : {};
     p.runCeil = { squat: int(get(RC, 'squat'), 0, 3, 1), bench: int(get(RC, 'bench'), 0, 3, 1), deadlift: int(get(RC, 'deadlift'), 0, 3, 1) };
     p.macroRough = int(get(P, 'macroRough'), 0, 10, 0);
+    p.stallMeso = int(get(P, 'stallMeso'), 0, 100000, null);
     p.stallRest = int(get(P, 'stallRest'), 0, 2, 0); p.dialMovesBlock = int(get(P, 'dialMovesBlock'), 0, 20, 0); p.readinessLowWeeks = int(get(P, 'readinessLowWeeks'), 0, 20, 0);
     p.readinessHist = (Array.isArray(get(P, 'readinessHist')) ? get(P, 'readinessHist') : []).map(x => num(x, 0, 100, null)).filter(x => x != null).slice(-12);
     const LAW = isObj(get(P, 'lastAddWeek')) ? get(P, 'lastAddWeek') : {};

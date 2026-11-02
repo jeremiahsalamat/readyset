@@ -36,7 +36,7 @@
     key: 'readyset.v1', db: null, timer: null, chain: Promise.resolve(), remoteOk: false, lastError: null,
     loadLocal() { try { const t = localStorage.getItem(this.key); return t ? JSON.parse(t) : null; } catch (e) { return null; } },
     saveLocal(s) {
-      try { localStorage.setItem(this.key, JSON.stringify(s)); if (this.lastError) { this.lastError = null; } }
+      try { localStorage.setItem(this.key, JSON.stringify(compact(s))); if (this.lastError) { this.lastError = null; } }
       catch (e) { if (!this.lastError) { this.lastError = 'Saving to this device failed (storage full or blocked). Back up now.'; try { toast(this.lastError); } catch (e2) { /* before DOM */ } } }
     },
     async init() {
@@ -172,9 +172,11 @@
   }
   fitBottom();
   window.addEventListener('resize', fitBottom);
+  let chartRz = 0; window.addEventListener('resize', () => { clearTimeout(chartRz); chartRz = setTimeout(() => { if (view === 'history' && state && state.setupDone) drawCharts(); }, 150); });
+  document.addEventListener('toggle', (ev) => { const el = ev.target; if (el && el.classList && el.classList.contains('session-item') && el.dataset.id) { ui.histOpen = ui.histOpen || {}; if (el.open) ui.histOpen[el.dataset.id] = 1; else delete ui.histOpen[el.dataset.id]; } }, true);
   window.addEventListener('orientationchange', () => setTimeout(fitBottom, 250));
   try { if (window.ResizeObserver) new ResizeObserver(() => fitBottom()).observe(document.documentElement); } catch (e) { /* events above still cover it */ }
-  function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
+  function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
 
   // ---------- Audio / vibration for the rest timer ----------
   let audioCtx = null;
@@ -264,7 +266,7 @@
   function inBlock(s) { const P = state.program; return s.mesoCount === P.mesoCount && s.blockIdx === P.blockIdx && !s.isRest && !s.isDeload && !(P.chronicSince && (s.ts || 0) < P.chronicSince); }
   function sessionsOfWeek() { const P = state.program; return state.sessions.filter(s => inBlock(s) && s.week === P.week); }
   function sessionsOfMeso() { return state.sessions.filter(inBlock); }
-  function newestSessionDate() { let d = null; for (const s of state.sessions) if (!d || s.date > d) d = s.date; return d; }
+  function newestSessionDate() { let d = null; for (const s of state.sessions) if (!s.skipped && (!d || s.date > d)) d = s.date; return d; } // skipping days is not training: a run of skips is still a layoff
   function lastSession() { for (let i = state.sessions.length - 1; i >= 0; i--) if (!state.sessions[i].skipped) return state.sessions[i]; return null; }
   function plateText(w) {
     const r = E.plateLoad(w, state.settings.barWeight, state.settings.plates);
@@ -320,7 +322,7 @@
       if (el) { const dy = el.getBoundingClientRect().top - was; if (Math.abs(dy) >= 1) scroller().scrollTop += dy; }
       anchor = null;
     }
-    if (view === 'history') requestAnimationFrame(drawCharts);
+    if (view === 'history') drawCharts();
     if (view === 'today' && state.current && state.current.phase === 'cardio' && state.current.cardioRun) tickCardio(); // self-schedules; no animation frame needed, so it also starts while the page is hidden
   }
 
@@ -400,13 +402,14 @@
     s.name = d.name.trim(); s.tmPct = Number(d.tmPct); s.barWeight = Number(d.barWeight) || 45; s.plates = d.plates.slice().sort((a, b) => b - a);
     s.increment = d.plates.includes(1.25) ? 2.5 : d.plates.includes(2.5) ? 5 : 10; s.dbIncrement = Number(d.dbIncrement); s.days = d.days.slice();
     s.cardioMin = Math.max(0, Number(d.cardioMin) || 0); s.cardioWatts = Number(d.cardioWatts) || 110; s.deadliftStyle = d.deadliftStyle; s.squatStyle = d.squatStyle; s.includePeak = !!d.includePeak;
+    s.tmPctChosen = s.tmPct;
     for (const l of LIFTS) E.applyTM(state, l, Math.round(Number(d[l]) * 2) / 2);
     state.program.startedAt = todayISO();
     if (d.easyWeek) E.startActiveRest(state, 1);
     state.setupDone = true; state.migratedV2 = true; // a fresh program has nothing to migrate
     addLog(`Program started. 1RMs: squat ${state.lifts.squat.oneRM}, bench ${state.lifts.bench.oneRM}, deadlift ${state.lifts.deadlift.oneRM}. Training maxes at ${Math.round(s.tmPct * 100)}%.`);
     state = cleanState(state, true); // the same clamps a reload applies, so what you see is what is stored
-    ui.draft = null; save(); render();
+    ui.draft = null; view = 'today'; save(); render();
   }
 
   // ---------- Today ----------
@@ -421,15 +424,15 @@
     const plan = E.buildSession(state, 'full');
     const last = lastSession();
     let html = '';
-    if (state.backupOffer && !Store.db && state.settings.backupOffer) html += `<div class="card"><div class="row between"><h3>Back up today's session?</h3><button class="btn sm quiet" data-action="offer-dismiss">Not now</button></div><p class="small muted">One tap saves the whole log (${backupSizeText()}) as a dated file. Each file holds everything, so you only need the newest; delete older ones in Files whenever you like.</p><button class="btn primary block" data-action="share-backup">Save backup</button></div>`;
+    if (state.backupOffer && !Store.db && state.settings.backupOffer) html += `<div class="card"><div class="row between"><h3>Back up this session?</h3><button class="btn sm quiet" data-action="offer-dismiss">Not now</button></div><p class="small muted">One tap saves the whole log (${backupSizeText()}) as a dated file. Each file holds everything, so you only need the newest; delete older ones in Files whenever you like.</p><button class="btn primary block" data-action="share-backup">Save backup</button></div>`;
     if (state.lastReport) html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${state.lastReport.lines.map(l => `<div class="callout ${l.includes('-1 set') || l.includes('easing') || /(\d+(?:\.\d+)?) -> (\d+(?:\.\d+)?)/.test(l) && Number(RegExp.$2) < Number(RegExp.$1) ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : ''}">${esc(l)}</div>`).join('')}</div>`;
-    if (P.pendingDeload) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up this week (the review on the Program tab says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
+    if (P.pendingDeload && !pos.isDeload && !pos.isRest) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up in your weekly review (the Program tab's log says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
     if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
     else if (P.pushOn) html += `<div class="callout warn">Pushing on past a deload suggestion: this week runs without bonus reps or earned sets, loads one step down. If it still feels heavy, "Deload now" is on the Program tab.</div>`;
     // Coming back after a gap: offer the layoff rule once per gap (the book: ease back in, do not
     // resume where you left off, p.250).
     const newest = newestSessionDate(), gap = newest ? daysBetween(newest, todayISO()) : 0;
-    if (gap >= 7 && P.layoffHandled !== newest && !pos.isRest && !pos.isDeload) {
+    if (gap >= 7 && P.layoffHandled !== newest && (gap >= 14 || (!pos.isRest && !pos.isDeload))) { // a deload or easy week is light enough for a short gap, not for a long one
       const what = gap < 14 ? 'repeat this week 5% lighter with earned sets cleared' : gap < 21 ? 'restart this block at week 1 with maxes 5% lower' : 'start again from Build week 1 with maxes 10% lower (they recalibrate from your sets)';
       html += `<div class="card"><h3>${gap} days since your last session</h3><p>Coming back at the old loads after a layoff is how people get hurt. The program's rule for ${gap} days off: ${what}.</p>
         <div class="btnrow"><button class="btn primary" data-action="layoff-ease">Ease back in</button><button class="btn" data-action="layoff-skip">Carry on as planned</button></div></div>`;
@@ -475,14 +478,20 @@
   }
   function renderWeekBrief() {
     const P = state.program, pos = E.positionLabel(state);
-    const done = state.sessions.filter(s => s.mesoCount === P.mesoCount && s.blockIdx === P.blockIdx && s.week === P.week && !(P.chronicSince && (s.ts || 0) < P.chronicSince));
-    const dots = E.DAYS.map((d, i) => { const s = done.find(x => x.dayIdx === i); return `<span class="pill ${s ? (s.skipped ? '' : 'green') : i === P.dayIdx ? 'accent' : ''}">${d.id}</span>`; }).join(' ');
+    // An easy week or an inserted deload shares the week number with the week around it, so the
+    // kind of week has to match as well.
+    const done = state.sessions.filter(s => s.mesoCount === P.mesoCount && s.blockIdx === P.blockIdx && s.week === P.week && !!s.isRest === !!pos.isRest && !!s.isDeload === !!pos.isDeload && !(P.chronicSince && (s.ts || 0) < P.chronicSince));
+    const dots = E.DAYS.map((d, i) => { const s = done.find(x => x.dayIdx === i); const st = s ? (s.skipped ? 'skipped' : 'done') : i === P.dayIdx ? 'next' : 'to come'; return `<span class="pill ${s ? (s.skipped ? 'skipped' : 'green') : i === P.dayIdx ? 'accent' : ''}" title="${esc(d.name)}: ${st}" aria-label="${esc(d.name)}: ${st}">${d.id}</span>`; }).join(' ');
     const sets = LIFTS.map(l => `<div class="kpi"><span class="tiny">${LIFTNAME[l]} sets</span><span class="v num">${E.weeklySets(state, l)}<small>/ ${E.capFor(state, l)}</small></span></div>`).join('');
     const kcal = weekCardio();
     return `<div class="card"><div class="row between"><h3>This week</h3><div class="row" style="gap:4px">${dots}</div></div>
       <div class="grid3">${sets}</div>
       <div class="row between small"><span class="muted">Easy cardio this week</span><span class="num"><b>${kcal.min} min</b> · ~${kcal.kcal} kcal of a 1,500 guideline</span></div>
       <div class="bar"><i style="width:${Math.min(100, kcal.kcal / 15)}%;background:${kcal.kcal > 1500 ? 'var(--warn)' : 'var(--accent)'}"></i></div></div>`;
+  }
+  function extraThisWeek() {
+    const t = new Date(), day = (t.getDay() + 6) % 7; const mon = new Date(t); mon.setDate(t.getDate() - day); const monISO = todayISO(mon);
+    return (state.extraCardio || []).map((c, i) => ({ c, i })).filter(x => x.c.date >= monISO);
   }
   function weekCardio() {
     const t = new Date(), day = (t.getDay() + 6) % 7; const mon = new Date(t); mon.setDate(t.getDate() - day); const monISO = todayISO(mon);
@@ -505,7 +514,8 @@
       const r = c.result, pos = E.positionLabel(state);
       const lightWeek = pos.isDeload || pos.isRest || pos.isTest;
       const plan = E.buildSession(state, c.choice || r.mode);
-      const explain = lightWeek ? `${pos.isRest ? 'Easy week' : pos.isDeload ? 'Deload week' : 'Test week'}: this session is already as light as the program gets, so readiness is recorded for your trend but doesn't change it.${r.color === 'red' ? ' If you feel genuinely wrecked, resting today and keeping the session is fine.' : ''}`
+      const explain = pos.isTest ? `Test week: readiness doesn't change a test, it is recorded for your trend.${r.color === 'red' ? ' On a red day a max attempt will undersell you; resting today and testing another day is the better call.' : ''}`
+        : lightWeek ? `${pos.isRest ? 'Easy week' : 'Deload week'}: this session is already as light as the program gets, so readiness is recorded for your trend but doesn't change it.${r.color === 'red' ? ' If you feel genuinely wrecked, resting today and keeping the session is fine.' : ''}`
         : state.program.lightRestOfWeek ? 'The rest of this week is set to light sessions after two red check-ins, so today runs light whatever the score. Readiness is recorded for your trend.'
         : state.program.pushOn && r.color !== 'red' ? 'You chose to push on past a deload suggestion, so this week runs trimmed whatever the score: no bonus reps or earned sets, loads one step down.'
         : r.color === 'green' ? 'Good to go. Loads and sets as planned, and the first set of each main lift can take bonus reps if it moves well.'
@@ -559,12 +569,13 @@
     const planNotes = Array.isArray(sess.notes) ? sess.notes : [];
     Object.assign(sess, { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), phase: 'lift', startedAt: Date.now(), readiness: c ? c.result : null, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, notes: '', planNotes, skippedSlots: [] });
     if (back) { sess.backfill = true; sess.date = back.date; sess.ts = dayTs(back.date); }
+    if (P.lightRestOfWeek && mode === 'light' && !back) sess.forcedLight = true;
     if (c && c.result) { delete sess.readiness.mode; }
     sess.exercises.forEach(e => { e.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; }); const w0 = e.sets.find(x => x.kind === 'work'); if (w0 && e.lift) e.plannedW = w0.w; });
     state.current = sess; ui.checkin = null; ui.lastEi = null; ui.openWarm = {}; ui.editSets = {}; ui.lastDeleted = null; ui.todayScroll = 0;
     if (c && c.result && c.result.color === 'red') {
       const redsThisWeek = sessionsOfWeek().filter(s => s.readiness && s.readiness.color === 'red').length + 1;
-      if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.isRest && P.dayIdx < 3) { P.lightRestOfWeek = true; sess.setLightRest = true; addLog('Second red check-in this week: remaining sessions switched to light (the book: light sessions, not an unplanned deload).'); }
+      if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.rest && !pos.isTest && P.dayIdx < 3) { P.lightRestOfWeek = true; sess.setLightRest = true; addLog('Second red check-in this week: remaining sessions switched to light (the book: light sessions, not an unplanned deload).'); }
     }
     unlockAudio(); keepAwake(); save(); render(); scrollToY(0);
   }
@@ -572,7 +583,7 @@
   // General undo: snapshot everything a program-level action can change (position, maxes, learned
   // set counts, the report and log) before the action, and offer one Undo until the next session.
   function snapshot(label, extra) {
-    state.undo = Object.assign({ label, snap: JSON.stringify({ program: state.program, lifts: state.lifts, learned: state.learned, lastReport: state.lastReport || null, logLen: state.log.length, tmPct: state.settings.tmPct }) }, extra || {});
+    state.undo = Object.assign({ label, snap: JSON.stringify({ program: state.program, lifts: state.lifts, learned: state.learned, lastReport: state.lastReport || null, logLen: state.log.length, logHead: state.log[0] || null, tmPct: state.settings.tmPct }) }, extra || {});
   }
   function undoLast() {
     const u = state.undo; if (!u) return;
@@ -582,8 +593,11 @@
     const clean = E.sanitizeState({ settings, lifts: snap.lifts, program: snap.program, learned: snap.learned, lastReport: snap.lastReport, setupDone: true }, { trusted: false });
     state.settings.tmPct = clean.settings.tmPct;
     state.program = clean.program; state.lifts = clean.lifts; state.learned = clean.learned; state.lastReport = clean.lastReport;
-    const logLen = Number.isFinite(snap.logLen) ? Math.max(0, snap.logLen) : state.log.length;
-    state.log.splice(0, Math.max(0, state.log.length - logLen));
+    // New lines go on top, so everything above the entry that was on top at the snapshot is the action's.
+    const h = snap.logHead, hi = h ? state.log.findIndex(x => x && x.date === h.date && x.msg === h.msg) : -1;
+    if (hi >= 0) state.log.splice(0, hi);
+    else if (h === null) state.log.length = 0;
+    else { const logLen = Number.isFinite(snap.logLen) ? Math.max(0, snap.logLen) : state.log.length; state.log.splice(0, Math.max(0, state.log.length - logLen)); }
     if (u.removeSessionId) { const i = state.sessions.findIndex(x => x.id === u.removeSessionId); if (i >= 0) { state.sessions.splice(i, 1); Store.deleteSession(u.removeSessionId); } }
     if (u.restoreSession) { state.sessions.push(u.restoreSession); state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); Store.pushSession(u.restoreSession); }
     state.undo = null;
@@ -665,7 +679,7 @@
     if (sessionComplete(s)) html += `<div class="callout good">Every set is logged. Look over your numbers, fix anything that is off, then tap Finish lifting when you are ready.</div>`;
     html += `<div class="card"><label class="f">Notes<textarea id="sess-notes" data-action="notes" rows="2" placeholder="Anything worth remembering">${esc(s.notes)}</textarea></label>
       <button class="btn primary block" data-action="finish-lifting">Finish lifting</button>
-      ${ui.confirm === 'finish' ? `<div class="callout warn">${totalSets - doneSets} sets are not ticked. Finish anyway? <div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="finish-confirm">Yes, finish</button><button class="btn sm" data-action="confirm-cancel">Keep going</button></div></div>` : ''}
+      ${ui.confirm === 'finish' ? `<div class="callout warn">${totalSets - doneSets === 1 ? '1 set is' : `${totalSets - doneSets} sets are`} not ticked. Finish anyway? <div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="finish-confirm">Yes, finish</button><button class="btn sm" data-action="confirm-cancel">Keep going</button></div></div>` : ''}
       <button class="btn quiet block" data-action="abandon">Discard this session</button>
       ${ui.confirm === 'abandon' ? `<div class="callout bad">Throw away everything logged today? <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="abandon-confirm">Discard</button><button class="btn sm" data-action="confirm-cancel">Keep</button></div></div>` : ''}
     </div>`;
@@ -686,9 +700,9 @@
       const kind = x.kind === 'warm' ? 'warm-up' : x.kind === 'single' ? 'opener' : x.kind === 'test' ? (x.open ? 'top single' : 'single') : x.ind ? `top set` : '';
       return `<div class="set${x.done ? ' done' : ''}${x.kind === 'warm' ? ' is-warm' : ''}${si === nextSi ? ' next' : ''}" data-si="${si}"><button class="swipe-del" data-action="del-set" data-ei="${ei}" data-si="${si}" tabindex="-1" aria-label="Delete this set">Delete</button>
         <span class="n">${x.kind === 'warm' ? 'W' : x.kind === 'single' ? 'O' : si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}</span>
-        <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
-        <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" value="${reps}" placeholder="${x.reps}${x.plus ? '+' : ''}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
-        ${x.kind === 'warm' ? '<span></span>' : `<button class="rpe ${x.rpe == null ? 'empty' : ''}" data-action="rpe" data-ei="${ei}" data-si="${si}" aria-label="RPE">${x.rpe == null ? (x.rpeTarget != null ? `~${x.rpeTarget}` : 'RPE') : x.rpe}</button>`}
+        <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" aria-label="${esc(e.name)}, set ${si + 1} weight" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
+        <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" aria-label="${esc(e.name)}, set ${si + 1} reps" value="${reps}" placeholder="${x.reps}${x.plus ? '+' : ''}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
+        ${x.kind === 'warm' ? '<span></span>' : `<button class="rpe ${x.rpe == null ? 'empty' : ''}" data-action="rpe" data-ei="${ei}" data-si="${si}" aria-label="${x.rpe == null ? 'RPE not set' : `RPE ${x.rpe}`}">${x.rpe == null ? (x.rpeTarget != null ? `~${x.rpeTarget}` : 'RPE') : x.rpe}</button>`}
         ${editingSets ? `<button class="del" data-action="del-set" data-ei="${ei}" data-si="${si}" aria-label="Delete this set"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : `<button class="ok" data-action="done" data-ei="${ei}" data-si="${si}" aria-label="${x.done ? 'Undo set' : 'Set done'}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></button>`}
       </div>`;
     }).join('')}</div>`;
@@ -755,14 +769,17 @@
     x.done = true; x.doneAt = Date.now();
     if (state.current.backfill || state.current.phase === 'edit') return true; // nothing to rest for
     if (sessionComplete(state.current)) { stopTimer(); return true; } // the last set: lifting is over
-    if (x.kind === 'warm') { const lastWarm = !e.sets.slice(si + 1).some(y => y.kind === 'warm'); startTimer(lastWarm ? Math.min(120, e.rest) : 60, e.name); }
-    else startTimer(e.rest, e.name);
+    const sc = state.current; let label = e.name;
+    if (!e.sets.some(y => !y.done)) { const order = sc.exercises.map((n, k) => k).filter(k => k !== ei); const k = order.find(j => j > ei && !sc.skippedSlots.includes(sc.exercises[j].slotKey) && sc.exercises[j].sets.some(y => !y.done)); const k2 = k != null ? k : order.find(j => !sc.skippedSlots.includes(sc.exercises[j].slotKey) && sc.exercises[j].sets.some(y => !y.done)); if (k2 != null) label = sc.exercises[k2].name; }
+    if (x.kind === 'warm') { const lastWarm = !e.sets.slice(si + 1).some(y => y.kind === 'warm'); startTimer(lastWarm ? Math.min(120, e.rest) : 60, label); }
+    else startTimer(e.rest, label);
+    if (ui.timer) ui.timer.from = `${ei}:${si}`;
     return true;
   }
   function toggleDone(ei, si) {
     const e = state.current && state.current.exercises[ei], x = e && e.sets[si];
     if (!x) { render(); return; }
-    if (x.done) { x.done = false; recalcExercise(ei, true); save(); render(); return; }
+    if (x.done) { x.done = false; if (ui.timer && ui.timer.from === `${ei}:${si}`) stopTimer(); recalcExercise(ei, true); save(); render(); return; }
     if (x.kind !== 'warm' && e.lift && (e.pctTM != null || x.kind === 'test') && x.rpe == null && !(ui.sheet && ui.sheet.fromTick)) { applyPendingType(); ui.sheet = { ei, si, fromTick: true }; renderSheet(); return; }
     if (!markDone(ei, si)) return;
     recalcExercise(ei);
@@ -927,7 +944,10 @@
     const open = s.exercises.reduce((n, e) => n + (s.skippedSlots.includes(e.slotKey) ? 0 : e.sets.filter(x => !x.done && x.kind !== 'warm').length), 0);
     if (open > 0 && !force) { ui.confirm = 'finish'; render(); return; }
     ui.confirm = null; stopTimer();
-    s.phase = 'post'; s.finishedAt = Date.now(); s.durationMin = s.backfill ? 0 : Math.max(1, Math.round((s.finishedAt - s.startedAt) / 60000));
+    s.phase = 'post'; s.finishedAt = Date.now();
+    let lastDone = 0; s.exercises.forEach(e => e.sets.forEach(x => { if (x.done && x.doneAt) lastDone = Math.max(lastDone, x.doneAt); }));
+    const end = lastDone && s.finishedAt - lastDone > 30 * 60000 ? lastDone + 5 * 60000 : s.finishedAt; // left open long after the last set
+    s.durationMin = s.backfill ? 0 : Math.min(600, Math.max(1, Math.round((end - s.startedAt) / 60000)));
     s.post = { difficulty: 0 };
     save(); render(); scrollToY(0);
   }
@@ -950,6 +970,7 @@
         <div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${s.post.difficulty === v}">${DIFF[v]}<small>${['', 'left plenty in the tank', 'hard work, felt right', 'barely got through it', 'should have gone light'][v]}</small></button>`).join('')}</div></div>
       <p class="small muted">This answer, your RPEs and how recovered you are next time decide whether next week adds a set, holds, or backs off.</p>
       <button class="btn primary block" data-action="post-next">${state.settings.cardioMin ? 'Next: easy bike' : 'Save session'}</button>
+      <button class="btn quiet block" data-action="post-back">Back to the sets</button>
     </div>`;
   }
   // Today's estimate per lift, the same statistic the calibration reads (weighted mean of the rated sets).
@@ -969,7 +990,7 @@
       <h2>Easy bike</h2>
       <p class="small muted">Target ${target} min on the BikeErg at a conversational pace (you could talk in full sentences, nose breathing is comfortable). This is for health and recovery, not training stress. If your legs feel heavy, go easier, not shorter.</p>
       <div class="kpi" style="align-items:center"><span class="v num" id="cardio-clock" style="font-size:3.4rem">${mm}:${String(ss).padStart(2, '0')}</span><span class="tiny">${run && !run.paused ? 'running' : run && run.paused ? 'paused' : 'ready'}</span></div>
-      <div class="btnrow">${!run ? `<button class="btn primary" data-action="cardio-start">Start timer</button>` : run.paused ? `<button class="btn primary" data-action="cardio-resume">Resume</button>` : `<button class="btn" data-action="cardio-pause">Pause</button>`}</div>
+      <div class="btnrow">${s.backfill ? '' : !run ? `<button class="btn primary" data-action="cardio-start">Start timer</button>` : run.paused ? `<button class="btn primary" data-action="cardio-resume">Resume</button>` : `<button class="btn" data-action="cardio-pause">Pause</button>`}</div>
       <hr class="sep">
       <div class="grid2">
         <label class="f">Minutes done<input id="cardio-min" type="number" inputmode="numeric" value="${run ? Math.round(elapsed / 60) : (s.cardio && s.cardio.min) || ''}" placeholder="${target}"></label>
@@ -1002,6 +1023,8 @@
   // ---------- Completing a session, reviews ----------
   function completeSession() {
     const s = state.current;
+    let undoBackfill = null; // a past session moves the plan on and calibrates, so it gets an Undo like a skip
+    if (s.backfill) { snapshot(`Logged ${s.dayName} for ${fmtDate(s.date)}`, { removeSessionId: s.id }); undoBackfill = state.undo; }
     // Accessory double progression.
     const reducedDay = s.isDeload || s.isRest || s.isTest || s.mode === 'light';
     for (const e of s.exercises) {
@@ -1011,16 +1034,21 @@
       else { const d = e.sets.find(x => x.done && x.actualW != null); if (d && !state.acc[e.ex]) state.acc[e.ex] = { weight: d.actualW, updated: s.date }; }
     }
     // Calibrate the maxes from what was actually lifted today.
-    const cal = E.calibrate(state, s); s.calibrated = true;
+    const cal = calibrateSession(s);
     cal.forEach(addLog);
     delete s.cardioRun; delete s.setLightRest;
     s.exercises.forEach(e => { delete e.fold; }); delete s.lastEi;
     s.savedAt = Date.now(); delete s.phase;
-    state.current = null; state.undo = null; stopTimer();
+    state.current = null; state.undo = undoBackfill; stopTimer();
     state.sessions.push(s); Store.pushSession(s);
     if (s.backfill) { state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); addLog(`${s.dayName} logged after the fact for ${fmtDate(s.date)}.`); }
     afterSession(s.id);
-    if (cal.length) { const fresh = state.lastReport && state.lastReport.sessionId === s.id; const rep = fresh ? state.lastReport : { title: 'Maxes calibrated from today', lines: [], sessionId: s.id }; rep.lines = cal.concat(rep.lines); state.lastReport = rep; }
+    if (cal.length) {
+      const fresh = state.lastReport && state.lastReport.sessionId === s.id;
+      if (fresh) state.lastReport.lines = cal.concat(state.lastReport.lines).slice(0, 30);
+      else if (state.lastReport) state.lastReport.lines = state.lastReport.lines.concat(cal).slice(0, 30); // an unread review stays; today's lines join it
+      else { const moved = cal.some(l => / -> /.test(l)); state.lastReport = { title: moved ? (s.backfill ? `Maxes calibrated from ${fmtDate(s.date)}` : 'Maxes calibrated from today') : (s.backfill ? `Maxes held after ${fmtDate(s.date)}` : 'Maxes held after today'), lines: cal.slice(0, 30), sessionId: s.id }; }
+    }
     try { if (wakeLock) wakeLock.release(); } catch (e) { /* ignore */ }
     if (state.settings.backupOffer && !Store.db) state.backupOffer = true; // the one-tap offer on Today
     save(); render(); scrollToY(0);
@@ -1032,7 +1060,7 @@
     const lines = [];
     let title = null;
     if (wasLastDay) {
-      P.lightRestOfWeek = false; P.pushOn = false;
+      P.lightRestOfWeek = false; P.pushOn = false; P.pendingDeload = false; // a suggestion not taken lapses; this week's review can raise it again
       const willEndMeso = !pos.rest && P.week >= E.totalWeeks(pos.block);
       if (!pos.rest && !pos.isDeload && !pos.isTest) {
         const r = E.weeklyReview(state, sessionsOfWeek(), sessionsOfMeso());
@@ -1053,9 +1081,10 @@
     }
     const res = E.advanceDay(state);
     if (res.restDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(`${pos.inserted ? 'Deload' : 'Easy'} week done. ${nb.name} picks up next session.`); addLog(`${pos.inserted ? 'Deload' : 'Easy'} week complete.`); title = title || 'Light week complete'; }
+    if (res.tmUp) { lines.push(`A clean block: the Training Max comes back up to ${Math.round(res.tmUp * 1000) / 10}% of 1RM.`); addLog(`Training Max back up to ${Math.round(res.tmUp * 1000) / 10}%.`); }
     if (res.dialUp) { lines.push(P.volumeDial > 0 ? `Volume dial up to +${P.volumeDial}: a clean block while adding sets everywhere earns one more set per lift from here.` : `Volume dial back up to ${P.volumeDial}: a clean block earns a set back on every lift.`); addLog(`Volume dial up to ${P.volumeDial > 0 ? '+' : ''}${P.volumeDial}.`); }
     if (res.stall) { for (const l of res.stall.lines) { lines.push(l); addLog(l); } }
-    if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(P.special ? `Macro complete: ${P.special.weeksLeft}-week easy ${P.special.weeksLeft > 1 ? 'break' : 'week'} first, then ${nb.name} starts again.` : `Next up: ${nb.name} block (${nb.focus.toLowerCase()}), variation set ${P.variantSet || 'A'}.`); }
+    if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(P.special ? `Macro complete: ${P.special.weeksLeft > 1 ? `a ${P.special.weeksLeft}-week easy break` : 'an easy week'} first, then ${nb.name} starts again.` : `Next up: ${nb.name} block (${nb.focus.toLowerCase()}), variation set ${P.variantSet || 'A'}.`); }
     if (lines.length) state.lastReport = { title: title || 'Update', lines, sessionId: sid || null };
   }
 
@@ -1068,17 +1097,17 @@
       const b = E.BLOCKS.find(x => x.id === m.block);
       for (let w = 1; w <= E.totalWeeks(b); w++) {
         const isD = w > b.weeks;
-        const now = !pos.isRest && mi === (P.macroPos || 0) && w === P.week;
+        const now = !(pos.isRest && P.special && P.special.macroEnd) && mi === (P.macroPos || 0) && w === P.week; // an inserted easy week marks the week it pauses
         cells += `<div class="w ${isD ? 'deload' : b.id} ${now ? 'now' : ''}" title="${b.name} ${m.variant} week ${w}">${isD ? (b.test ? 'T' : 'D') : b.id[0].toUpperCase() + w}</div>`;
       }
     });
-    cells += `<div class="w deload ${pos.isRest ? 'now' : ''}" title="Easy week">E</div>`;
+    cells += `<div class="w deload ${pos.isRest && P.special && P.special.macroEnd ? 'now' : ''}" title="Easy week">E</div>`;
     const macroWeeks = macro.reduce((n, m) => n + E.totalWeeks(E.BLOCKS.find(x => x.id === m.block)), 0) + 1;
     const week = [0, 1, 2, 3].map(d => { const saved = P.dayIdx; P.dayIdx = d; const s = E.buildSession(state, 'full'); P.dayIdx = saved; return s; });
     const sets = LIFTS.map(l => { const n = E.weeklySets(state, l), cap = E.capFor(state, l); return `<div class="stack"><div class="row between small"><span>${LIFTNAME[l]} pattern</span><span class="num"><b>${n}</b> / ${cap} sets</span></div><div class="bar"><i style="width:${Math.min(100, n / cap * 100)}%"></i></div></div>`; }).join('');
     const adj = LIFTS.map(l => `<tr><td>${LIFTNAME[l]}</td><td class="num">${state.lifts[l].oneRM}</td><td class="num">${state.lifts[l].tm}</td><td class="num">${P.setAdj[l] > 0 ? '+' : ''}${P.setAdj[l]}</td><td class="num">${P.loadAdj[l] ? (P.loadAdj[l] > 0 ? '+' : '') + Math.round(P.loadAdj[l] * 1000) / 10 + '%' : '—'}</td><td>${P.flags[l] ? '⚑'.repeat(P.flags[l]) : ''}</td></tr>`).join('');
     const slotKeys = Object.keys(E.SWAPS).filter(k => E.SWAPS[k].length > 1);
-    const blk = pos.isRest ? null : pos.block;
+    const blk = pos.isRest || pos.isDeload ? null : pos.block;
     const blockText = {
       build: 'Sets of 7-8 at 70-77% of your 1RM (deadlift: sets of 5-6). Each week adds about 3% and, when you are recovering and hitting the numbers, a set on the competition lift. Two runs per macro with different variations (A: paused squat, close-grip, RDL; B: the other bar position, Larsen press, deficit deadlift).',
       strength: 'Sets of 3-5 from 76% up to about 86% of 1RM over three weeks, then a deload. Week 3 opens each main lift with one single at about RPE 8 before the triples. Two runs per macro (A: paused squat, long-pause bench, paused deadlift; B: the other bar position, Spoto press, block pull).',
@@ -1088,12 +1117,12 @@
     return `
       <div class="card"><h3>${macroWeeks}-week macro</h3><div class="timeline" style="grid-template-columns:repeat(${Math.min(12, macroWeeks)},1fr)">${cells}</div>
         <div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--good)"></span> Build ×2</span><span><span class="dot" style="background:var(--accent)"></span> Strength ×2</span>${state.settings.includePeak !== false ? '<span><span class="dot" style="background:var(--bad)"></span> Peak + test</span>' : ''}<span>D deload · E easy week</span></div>
-        ${blk ? `<p><b>${esc(blk.name)} ${esc(P.variantSet || 'A')}:</b> ${blockText[blk.id]}</p>` : `<p><b>${pos.inserted ? 'Deload week' : 'Easy week'}:</b> ${pos.inserted ? 'half the sets at reduced loads; the block resumes afterwards.' : 'half the sets at half the loads on variations, to clear what deloads do not.'}</p>`}
+        ${blk ? `<p><b>${esc(blk.name)} ${esc(P.variantSet || 'A')}:</b> ${blockText[blk.id]}</p>` : `<p><b>${pos.isDeload ? 'Deload week' : 'Easy week'}:</b> ${pos.isDeload ? `half the sets at reduced loads; ${pos.inserted ? 'the block resumes afterwards' : 'the next block starts afterwards'}.` : 'half the sets at half the loads on variations, to clear what deloads do not.'}</p>`}
         <div class="row between small"><span>Volume dial <b class="num">${dial > 0 ? '+' : ''}${dial}</b> <span class="muted">(lasting set offset on every lift; down one step per block on chronic fatigue, back up after a clean block, above zero only after a clean block that was adding sets everywhere)</span></span></div>
         <label class="f">Set the dial by hand<select id="dial" data-action="dial"><option value="-2" ${dial === -2 ? 'selected' : ''}>−2 (two sets fewer)</option><option value="-1" ${dial === -1 ? 'selected' : ''}>−1</option><option value="0" ${dial === 0 ? 'selected' : ''}>0 (as written)</option><option value="1" ${dial === 1 ? 'selected' : ''}>+1</option><option value="2" ${dial === 2 ? 'selected' : ''}>+2 (two sets more)</option></select></label>
       </div>
       <div class="card"><h3>This week's plan</h3>
-        ${week.map(s => `<details ${s.dayIdx === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 0"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
+        ${week.map((s, di) => `<details ${di === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 0"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
           <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff'), f = work[0] || e.sets[0], op = e.sets.find(x => x.kind === 'single'), tst = e.sets.some(x => x.kind === 'test'); return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${tst ? 'single + ' : op ? `1×1 + ` : ''}${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${op ? `${op.w} / ` : ''}${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join('')}
       </div>
       <div class="card"><h3>Weekly working sets</h3>${sets}<p class="small muted">Counts the competition lift plus its close barbell variations. The caps are the ceiling the adaptive rules can climb to; the book's advice for someone coming off too much volume is to start low and only add when you are clearly recovering.</p></div>
@@ -1116,14 +1145,15 @@
   function renderHistory() {
     const done = state.sessions.filter(s => !s.skipped).slice().reverse();
     const thisWeek = weekStart(Date.now()), WEEK = 7 * 864e5;
-    const trend = LIFTS.map(l => { const w = weeklyEst(l); const last = w[w.length - 1], prev = w[w.length - 2]; const lastWk = last ? weekStart(last.x) : 0; const label = lastWk === thisWeek ? 'this week' : lastWk === thisWeek - WEEK ? 'last week' : last ? `week of ${fmtDate(new Date(lastWk).toISOString().slice(0, 10))}` : ''; const adjacent = prev && weekStart(prev.x) === lastWk - WEEK; return `<div class="stack"><div class="row between"><b>${LIFTNAME[l]}</b><span class="small muted num">1RM ${state.lifts[l].oneRM} · TM ${state.lifts[l].tm}${last ? ` · ${label} ~${Math.round(last.y)}${adjacent ? ` (${last.y >= prev.y ? '+' : ''}${Math.round(last.y - prev.y)} vs the week before)` : ''}` : ''}</span></div><canvas id="c-${l}" height="130"></canvas></div>`; }).join('');
+    const trend = LIFTS.map(l => { const w = weeklyEst(l); const last = w[w.length - 1], prev = w[w.length - 2]; const lastWk = last ? weekStart(last.x) : 0; const label = lastWk === thisWeek ? 'this week' : lastWk === thisWeek - WEEK ? 'last week' : last ? `week of ${fmtDate(tsISO(lastWk))}` : ''; const adjacent = prev && weekStart(prev.x) === lastWk - WEEK; return `<div class="stack"><div class="row between"><b>${LIFTNAME[l]}</b><span class="small muted num">1RM ${state.lifts[l].oneRM} · TM ${state.lifts[l].tm}${last ? ` · ${label} ~${Math.round(last.y)}${adjacent ? ` (${last.y >= prev.y ? '+' : ''}${Math.round(last.y - prev.y)} vs the week before)` : ''}` : ''}</span></div><canvas id="c-${l}" height="130" class="tap-chart" data-action="chart-pick" data-lift="${l}" role="img" aria-label="${LIFTNAME[l]} estimated max by week. Tap a dot for that session's details."></canvas>${chartDetail(l)}</div>`; }).join('');
     return `
-      <div class="card"><h3>Estimated 1RM, week by week</h3>${trend}<div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> weekly average</span><span><span class="dot" style="background:var(--muted)"></span> single sessions</span><span>dashed: current 1RM</span></div><p class="small muted">Every logged set with an RPE on a competition lift (or a close barbell variation) implies a max; the line is the weekly average of those, with easy sets (under RPE 6.5) counting lightly. The max itself calibrates only from sets at RPE 6.5 and up, so the line can sit below or above the dashed 1RM. It moves with how you are doing and feeling, not with what you entered at setup.</p></div>
+      <div class="card"><h3>Estimated 1RM, week by week</h3>${trend}<div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> weekly average</span><span><span class="dot" style="background:var(--muted)"></span> single sessions</span><span>dashed: current 1RM</span></div><p class="small"><b>Tap any dot</b> to see the session behind it: each set, the max it implies and how much it counted.</p><p class="small muted">Every logged set with an RPE on a competition lift (or a close barbell variation) implies a max; the line is the weekly average of those, with easy sets (under RPE 6.5) counting lightly and bigger dots carrying more weight. The max itself calibrates only from sets at RPE 6.5 and up, so the line can sit below or above the dashed 1RM. It moves with how you are doing and feeling, not with what you entered at setup.</p></div>
       <div class="card"><h3>Readiness</h3><canvas id="c-ready" height="140"></canvas></div>
-      <div class="card"><h3>Sessions</h3>${done.length ? done.slice(0, 60).map((s, i) => `<details class="session-item" style="display:block"><summary class="hist-row"><span class="hist-main"><b>${esc(s.dayName)}</b><span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></span><span class="hist-ready">${s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '<span class="muted small" aria-label="No check-in">–</span>'}</span><span class="hist-diff">${s.post && s.post.difficulty ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</span></summary>
+      <div class="card"><h3>Sessions</h3>${done.length ? (ui.histAll ? done : done.slice(0, 60)).map((s, i) => `<details class="session-item" style="display:block" data-id="${s.id}" ${ui.histOpen && ui.histOpen[s.id] ? 'open' : ''}><summary class="hist-row"><span class="hist-main"><b>${esc(s.dayName)}</b><span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></span><span class="hist-ready">${s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '<span class="muted small" aria-label="No check-in">–</span>'}</span><span class="hist-diff">${s.post && s.post.difficulty ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</span></summary>
           <div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
           <div class="small muted" style="margin-top:6px">${s.durationMin ? s.durationMin + ' min' : ''}${s.cardio && s.cardio.min ? ` · bike ${s.cardio.min} min` : ''}${s.backfill ? ' · logged after the fact' : ''}${s.edited ? ' · edited' : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</div>
-          <div class="btnrow" style="margin-top:6px"><button class="btn sm" data-action="edit-session" data-id="${s.id}">Edit</button><button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="color:var(--bad)">Delete</button></div></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on the Today tab.</p>'}
+          <div class="btnrow" style="margin-top:6px">${ui.confirmDel === s.id ? `<span class="small">Delete this session for good?</span><button class="btn sm" data-action="delete-session" data-id="${s.id}" data-sure="1" style="background:var(--bad);color:#fff;border-color:transparent">Yes, delete</button><button class="btn sm" data-action="delete-cancel">Keep</button>` : `<button class="btn sm" data-action="edit-session" data-id="${s.id}">Edit</button><button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="color:var(--bad)">Delete</button>`}</div></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on the Today tab.</p>'}
+        ${done.length > 60 && !ui.histAll ? `<button class="btn sm" data-action="hist-all">Show all ${done.length} sessions</button>` : ''}
         <p class="small muted">Forgot a session? "Log a past session" is on the Today tab.</p></div>`;
   }
   // ---------- Editing a logged session ----------
@@ -1176,50 +1206,70 @@
     const lines = [`${s.dayName} (${fmtDate(s.date)}) edited.`];
     const sig = (x) => JSON.stringify({ d: x.date, sk: x.skippedSlots || [], p: x.post ? x.post.difficulty : 0, e: (x.exercises || []).map(e => [e.ex, (e.sets || []).map(y => [y.kind, y.done ? 1 : 0, y.actualW, y.actualReps, y.rpe])]) });
     if (sig(original) === sig(s)) lines.push('No sets changed, so the maxes stay as they are.');
+    else if (s.isDeload || s.isRest) lines.push('Deload and easy-week sessions do not calibrate the maxes, so they stay as they are.');
+    else if (s.isTest) lines.push('A test week sets the maxes once, at its end, so editing a test session now leaves them as they are.');
     else if (!inBlock(s) || (s.ts || 0) <= (P.calibBaseTs || 0)) lines.push('It comes before the maxes were last reset (a new block, a deload, a layoff or a max set by hand), so the maxes stay as they are.');
-    else lines.push(...recalibrateBlock());
+    else lines.push(...recalibrateBlock(sessionsOfWeek().some(x => x.id === s.id) ? 'This week\'s review will read the corrected session.' : 'Set counts and flags from past weekly reviews stay as they were.'));
     lines.forEach(addLog); state.lastReport = { title: 'Session edited', lines };
     save(); render(); toast('Session updated');
   }
   // After an edit inside the current block: put the maxes back to where the block started and
   // re-read every session of the block in date order, so the edit lands exactly as if it had been
   // logged that way. Set counts and flags from past weekly reviews are left as they were.
-  function recalibrateBlock() {
+  function recalibrateBlock(note) {
     const P = state.program, out = [];
     if (state.settings.autoCalibrate === false) return ['Auto-calibration is off, so the maxes are unchanged.'];
     const before = {}; LIFTS.forEach(l => { before[l] = state.lifts[l].oneRM; });
     for (const l of LIFTS) { const L = state.lifts[l]; if (!(L.blockStartRM > 0)) return ['No block start on record for the maxes, so they are unchanged.']; }
-    for (const l of LIFTS) { const L = state.lifts[l]; E.applyTM(state, l, L.blockStartRM); L.est = L.estAtBlockStart != null ? L.estAtBlockStart : null; L.upKey = null; }
+    for (const l of LIFTS) { const L = state.lifts[l]; E.applyTM(state, l, L.blockStartRM); L.est = L.estAtBlockStart != null ? L.estAtBlockStart : null; L.upKey = null; L.lbHits = 0; L.lbKey = null; L.easyRun = 0; L.easyKey = null; }
     P.calibDrops = {};
     const sessions = state.sessions.filter(s => inBlock(s) && !s.skipped && (s.ts || 0) > (P.calibBaseTs || 0)).sort((a, b) => (a.ts || 0) - (b.ts || 0));
-    for (const sess of sessions) { E.calibrate(state, sess); sess.calibrated = true; }
+    for (const sess of sessions) { calibrateSession(sess); Store.pushSession(sess); }
     const moved = LIFTS.filter(l => state.lifts[l].oneRM !== before[l]);
     out.push(moved.length ? `Maxes re-read from this block's ${sessions.length} session${sessions.length === 1 ? '' : 's'}: ${moved.map(l => `${LIFTNAME[l]} ${before[l]} -> ${state.lifts[l].oneRM}`).join(', ')}.` : `Maxes re-read from this block's ${sessions.length} session${sessions.length === 1 ? '' : 's'}: unchanged.`);
-    if (state.current == null && P.week >= 1) out.push('Set counts and flags from past weekly reviews stay as they were; this week\'s review will read the corrected session.');
+    if (note) out.push(note);
     return out;
   }
+  // Calibrates the maxes from one session and keeps, on the session, what that did (History shows it).
+  function calibrateSession(sess) {
+    const before = {}; LIFTS.forEach(l => { before[l] = state.lifts[l].oneRM; });
+    const lines = E.calibrate(state, sess); sess.calibrated = true;
+    sess.calib = {}; LIFTS.forEach(l => { sess.calib[l] = [before[l], state.lifts[l].oneRM]; });
+    if (lines.length) sess.calibLines = lines.slice(0, 6); else delete sess.calibLines;
+    return lines;
+  }
   function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  function tsISO(ts) { return todayISO(new Date(ts)); }
   // Per-session max estimates (confidence-weighted) and their weekly averages.
+  let estCache = null; // { st, key, by: { lift: points } }: one pass per change of the log, not per draw
   function sessionEsts(lift) {
+    let mx = 0; for (const s of state.sessions) mx = Math.max(mx, s.savedAt || s.ts || 0);
+    const key = `${state.sessions.length}|${mx}|${LIFTS.map(l => state.lifts[l].oneRM).join(',')}`;
+    if (!estCache || estCache.st !== state || estCache.key !== key) estCache = { st: state, key, by: {} };
+    if (estCache.by[lift]) return estCache.by[lift];
     const out = [];
     // Every rated set shows on the chart (RPE 4 and up, low ratings weighted low); a wide clamp
     // around the current max keeps one mistyped weight from flattening the whole scale.
     const ref = state.lifts[lift].oneRM;
-    for (const s of state.sessions) { if (s.skipped || s.isDeload || s.isRest) continue; const r = E.sessionEstimate(s, lift, ref, { minRpe: 4, clamp: [0.5, 1.5] }); if (r) out.push({ x: s.ts, y: r.est, conf: r.conf }); }
-    return out;
+    for (const s of state.sessions) { if (s.skipped || s.isDeload || s.isRest) continue; const r = E.sessionEstimate(s, lift, ref, { minRpe: 4, clamp: [0.5, 1.5] }); if (r) out.push({ x: s.ts, y: r.est, conf: r.conf, id: s.id }); }
+    return (estCache.by[lift] = out);
   }
   function weekStart(ts) { const d = new Date(ts); const day = (d.getDay() + 6) % 7; d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - day); return d.getTime(); }
   function weeklyEst(lift) {
     const by = {};
-    for (const p of sessionEsts(lift)) { const k = weekStart(p.x); by[k] = by[k] || { n: 0, d: 0 }; by[k].n += p.y * p.conf; by[k].d += p.conf; }
-    return Object.keys(by).map(Number).sort((a, b) => a - b).map(k => ({ x: k + 3.5 * 864e5, y: by[k].n / by[k].d }));
+    for (const p of sessionEsts(lift)) { const k = weekStart(p.x); by[k] = by[k] || { n: 0, d: 0, c: 0 }; by[k].n += p.y * p.conf; by[k].d += p.conf; by[k].c++; }
+    return Object.keys(by).map(Number).sort((a, b) => a - b).map(k => ({ x: k + 3.5 * 864e5, y: by[k].n / by[k].d, wk: k, count: by[k].c }));
   }
+  const chartHits = {}; // lift -> [{ id, px, py }] in CSS pixels of its canvas
   function drawCharts() {
     const ready = [];
     for (const s of state.sessions) if (!s.skipped && s.readiness) ready.push({ x: s.ts, y: s.readiness.score, c: s.readiness.color });
     for (const l of LIFTS) {
       const sess = sessionEsts(l), weekly = weeklyEst(l);
-      lineChart($('#c-' + l), [{ pts: sess, color: cssVar('--muted'), dots: true, noline: true, faint: true }, { pts: weekly, color: cssVar('--accent'), dots: true }], { hline: state.lifts[l].oneRM, hlineColor: cssVar('--fg') });
+      const sel = ui.chartSel && ui.chartSel.lift === l ? sess.find(p => p.id === ui.chartSel.id) || null : null;
+      const selWk = sel ? weekly.find(w => w.wk === weekStart(sel.x)) || null : null;
+      const m = lineChart($('#c-' + l), [{ pts: sess, color: cssVar('--muted'), dots: true, noline: true, faint: true, sized: true }, { pts: weekly, color: cssVar('--accent'), dots: true }], { hline: state.lifts[l].oneRM, hlineColor: cssVar('--fg'), sel, selWk, selColor: cssVar('--accent') });
+      chartHits[l] = m ? sess.map(p => ({ id: p.id, px: m.X(p.x), py: m.Y(p.y) })) : [];
     }
     lineChart($('#c-ready'), [{ pts: ready, color: cssVar('--accent'), dots: true }], { min: 0, max: 100, bands: [[0, 40, cssVar('--bad-soft')], [40, 60, cssVar('--warn-soft')], [60, 100, cssVar('--good-soft')]] });
   }
@@ -1231,7 +1281,7 @@
     const all = series.flatMap(s => s.pts);
     const padL = 40, padR = 10, padT = 10, padB = 22;
     ctx.font = '11px ' + cssVar('--body'); ctx.fillStyle = cssVar('--muted'); ctx.strokeStyle = cssVar('--line');
-    if (!all.length) { ctx.fillText(opt.hline ? `No logged sets yet. Current 1RM ${opt.hline}.` : 'No data yet', padL, H / 2); return; }
+    if (!all.length) { ctx.fillText(opt.hline ? `No logged sets yet. Current 1RM ${opt.hline}.` : 'No data yet', padL, H / 2); return null; }
     let xs = all.map(p => p.x), ys = all.map(p => p.y).concat(opt.hline ? [opt.hline] : []);
     let x0 = Math.min(...xs), x1 = Math.max(...xs); if (x1 === x0) { x0 -= 864e5 * 3; x1 += 864e5 * 3; }
     let y0 = opt.min != null ? opt.min : Math.min(...ys), y1 = opt.max != null ? opt.max : Math.max(...ys);
@@ -1248,10 +1298,62 @@
       ctx.globalAlpha = s.faint ? 0.45 : 1;
       if (!s.noline) { ctx.strokeStyle = s.color; ctx.lineWidth = 2; ctx.beginPath(); s.pts.forEach((p, i) => i ? ctx.lineTo(X(p.x), Y(p.y)) : ctx.moveTo(X(p.x), Y(p.y))); ctx.stroke(); }
       ctx.fillStyle = s.color;
-      s.pts.forEach((p, i) => { if (s.dots || i === s.pts.length - 1) { ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), s.faint ? 2.5 : 3.5, 0, Math.PI * 2); ctx.fill(); } });
-      if (!s.faint) { const last = s.pts[s.pts.length - 1]; ctx.fillText(Math.round(last.y), Math.min(W - padR - 28, X(last.x) + 6), Y(last.y) - 6); }
+      // A session dot grows with the weight of its evidence (more and harder sets read bigger).
+      s.pts.forEach((p, i) => { if (s.dots || i === s.pts.length - 1) { ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), s.sized ? 2.5 + Math.min(2.5, (p.conf || 0) * 0.6) : s.faint ? 2.5 : 3.5, 0, Math.PI * 2); ctx.fill(); } });
+      if (!s.faint && !opt.sel) { const last = s.pts[s.pts.length - 1]; ctx.fillText(Math.round(last.y), Math.min(W - padR - 28, X(last.x) + 6), Y(last.y) - 6); }
       ctx.globalAlpha = 1;
     }
+    if (opt.sel) {
+      const sx = X(opt.sel.x), sy = Y(opt.sel.y), c = opt.selColor || cssVar('--accent');
+      ctx.save(); ctx.strokeStyle = c; ctx.globalAlpha = 0.55; ctx.setLineDash([2, 3]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(sx, padT); ctx.lineTo(sx, H - padB); ctx.stroke(); ctx.restore();
+      if (opt.selWk) { ctx.save(); ctx.strokeStyle = c; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(X(opt.selWk.x), Y(opt.selWk.y), 6, 0, Math.PI * 2); ctx.stroke(); ctx.restore(); }
+      ctx.save(); ctx.lineWidth = 2; ctx.strokeStyle = c; ctx.fillStyle = cssVar('--surface'); ctx.beginPath(); ctx.arc(sx, sy, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = c; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.font = '600 12px ' + cssVar('--body'); const txt = '~' + Math.round(opt.sel.y), tw = ctx.measureText(txt).width;
+      const tx = Math.min(W - padR - tw, Math.max(padL + 2, sx - tw / 2)), ty = sy - 12 < padT + 10 ? sy + 20 : sy - 12;
+      ctx.globalAlpha = 0.92; ctx.fillStyle = cssVar('--surface'); ctx.fillRect(tx - 4, ty - 12, tw + 8, 16); ctx.globalAlpha = 1; // a plate behind the value keeps it legible over dots and lines
+      ctx.fillStyle = cssVar('--fg'); ctx.fillText(txt, tx, ty); ctx.restore();
+    }
+    return { X, Y };
+  }
+  // The card under a chart for the session picked on it: the sets behind the dot, what each one
+  // implied and how much it counted, that week's average, and what the calibration did with it.
+  function chartDetail(lift) {
+    const sel = ui.chartSel; if (!sel || sel.lift !== lift) return '';
+    const pts = sessionEsts(lift), i = pts.findIndex(p => p.id === sel.id);
+    const s = i >= 0 ? state.sessions.find(x => x.id === sel.id) : null; if (!s) return '';
+    const r = E.sessionEstimate(s, lift, state.lifts[lift].oneRM, { minRpe: 4, clamp: [0.5, 1.5], detail: true }); if (!r) return '';
+    const est = Math.round(r.est), counted = r.sets.filter(x => !x.skip), notCounted = r.sets.filter(x => x.skip);
+    const read = r.confHigh >= 2 ? 'Strong read' : r.conf >= 1.2 ? 'Fair read' : 'Light read';
+    const readWhy = r.confHigh >= 2 ? 'hard sets with a clear RPE' : r.conf >= 1.2 ? 'moderate sets' : 'easy or few sets, so it counts lightly';
+    const cb = s.calib && s.calib[lift], refThen = cb ? cb[0] : state.lifts[lift].oneRM, diff = est - refThen;
+    const vs = diff === 0 ? `right at the 1RM of ${refThen}` : `${Math.abs(diff)} ${diff > 0 ? 'over' : 'under'} the 1RM of ${refThen}`;
+    // Sets grouped by exercise, in the order they were lifted.
+    const groups = []; for (const x of counted) { let g = groups[groups.length - 1]; if (!g || g.name !== x.name) groups.push(g = { name: x.name, sets: [] }); g.sets.push(x); }
+    const setRow = x => {
+      const why = []; if (!x.comp) why.push('variation'); if (x.first) why.push('first set'); if (x.rpe < 7) why.push('easy'); if (x.missed) why.push('missed reps, read as RPE 10'); if (x.capped) why.push('capped as an outlier');
+      const pct = Math.round(x.wt * 100), tag = x.kind === 'single' ? ' single' : x.kind === 'test' ? ' test' : '';
+      return `<div class="pt-set"><span class="num">${x.w} × ${x.reps} @ ${x.rpe}${tag ? `<span class="muted small">${tag}</span>` : ''}</span><span class="num pt-imp">${Math.round(x.implied)}</span><span class="small muted pt-why">${pct === 100 ? 'counts fully' : `counts ${pct}%`}${why.length ? ' · ' + why.join(', ') : ''}</span></div>`;
+    };
+    const skipBy = {}; notCounted.forEach(x => { skipBy[x.skip] = (skipBy[x.skip] || 0) + 1; });
+    const skipText = Object.keys(skipBy).map(k => `${skipBy[k]} ${skipBy[k] === 1 ? 'set' : 'sets'} ${k === 'no RPE' ? 'without an RPE' : k === 'too easy' ? 'under RPE 4' : k === 'too many reps' ? 'over 20 reps' : 'without a weight'}`).join(', ');
+    const weekly = weeklyEst(lift), wk = weekStart(s.ts), wi = weekly.findIndex(w => w.wk === wk), w = weekly[wi], pw = wi > 0 ? weekly[wi - 1] : null;
+    const adj = w && pw && pw.wk === wk - 7 * 864e5, wd = adj ? Math.round(w.y - pw.y) : 0;
+    const weekLine = w ? `Week of ${fmtDate(tsISO(wk))}: average ~${Math.round(w.y)} from ${w.count} session${w.count === 1 ? '' : 's'}${adj ? ` (${wd >= 0 ? '+' : ''}${wd} vs the week before)` : ''}.` : '';
+    const calLine = (s.calibLines || []).find(x => x.startsWith(LIFTNAME[lift]));
+    const calText = s.isTest ? 'Test day: the max is set from the test at the end of the week.'
+      : cb ? (cb[0] !== cb[1] ? `1RM ${cb[0]} → ${cb[1]} after this session.` : `1RM held at ${cb[0]} after this session.`) + (calLine && cb[0] === cb[1] ? ` ${calLine.replace(/^[A-Za-z]+:\s*/, '').replace(/^./, c => c.toUpperCase())}` : '')
+      : '';
+    const pill = s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '';
+    return `<div class="pt-card" role="region" aria-label="${LIFTNAME[lift]} session details">
+      <div class="pt-head"><div class="pt-title"><b>${esc(s.dayName)}</b><span class="small muted">${fmtDateLong(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></div>${pill}<button class="btn icon sm quiet" data-action="chart-close" data-lift="${lift}" aria-label="Close details"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+      <div class="pt-big"><span class="pt-num num">~${est}</span><span class="small muted">estimated ${LIFTNAME[lift].toLowerCase()} max from this session, ${vs}</span></div>
+      <div class="small"><b>${read}</b> <span class="muted">(${readWhy}): ${counted.length} rated set${counted.length === 1 ? '' : 's'}${s.post && s.post.difficulty ? `, felt ${DIFF[s.post.difficulty].toLowerCase()}` : ''}.</span></div>
+      ${groups.map(g => `<div class="pt-ex"><div class="tiny">${esc(g.name)}</div>${g.sets.map(setRow).join('')}</div>`).join('')}
+      ${skipText ? `<p class="small muted">Not counted: ${skipText}.</p>` : ''}
+      ${weekLine ? `<p class="small muted">${weekLine}</p>` : ''}${calText ? `<p class="small">${esc(calText)}</p>` : ''}
+      <div class="btnrow pt-nav"><button class="btn sm" data-action="chart-step" data-lift="${lift}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Earlier session">‹ Earlier</button><span class="small muted num">${i + 1} of ${pts.length}</span><button class="btn sm" data-action="chart-step" data-lift="${lift}" data-dir="1" ${i === pts.length - 1 ? 'disabled' : ''} aria-label="Later session">Later ›</button><button class="btn sm quiet" data-action="chart-open" data-id="${s.id}">Full session</button></div>
+    </div>`;
   }
 
   // ---------- Settings ----------
@@ -1274,13 +1376,14 @@
         <div class="stack"><span class="tiny">Accessory working weights</span><div class="tablewrap"><table>${Object.keys(state.acc).length ? Object.keys(state.acc).map(k => `<tr><td>${esc(E.EX[k] ? E.EX[k].name : k)}</td><td class="num"><input id="acc-${k}" type="number" inputmode="decimal" data-setting="acc:${k}" value="${state.acc[k].weight}" style="width:80px;border:1px solid var(--line);border-radius:6px;padding:4px 6px;background:var(--surface)"></td></tr>`).join('') : '<tr><td class="muted small">They appear here once you enter them in a session.</td></tr>'}</table></div></div>
       </div>
       <div class="card"><h3>Schedule and cardio</h3>
-        <div class="stack"><span class="tiny">Training days</span><div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="set-day" data-d="${x}" aria-pressed="${s.days.includes(x)}">${x}</button>`).join('')}</div></div>
+        <div class="stack"><span class="tiny">Training days</span><span class="small muted">A note for you: the plan runs its four days in order, whichever days you train.</span><div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="set-day" data-d="${x}" aria-pressed="${s.days.includes(x)}">${x}</button>`).join('')}</div></div>
         <div class="grid2"><label class="f">Bike after lifting (min)<input id="set-cm" type="number" inputmode="numeric" data-setting="cardioMin" value="${s.cardioMin}"></label><label class="f">Usual easy watts<input id="set-cw" type="number" inputmode="numeric" data-setting="cardioWatts" value="${s.cardioWatts}"></label></div>
         <div class="grid3"><label class="f">Rest, main (s)<input id="set-r1" type="number" inputmode="numeric" data-setting="restPrimary" value="${s.restPrimary}"></label><label class="f">Rest, second (s)<input id="set-r2" type="number" inputmode="numeric" data-setting="restSecondary" value="${s.restSecondary}"></label><label class="f">Rest, accessory (s)<input id="set-r3" type="number" inputmode="numeric" data-setting="restAccessory" value="${s.restAccessory}"></label></div>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-peak" data-setting="includePeak" ${s.includePeak === true ? 'checked' : ''} style="width:22px;height:22px"> Include the Peak &amp; Test block</label>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-warm" data-setting="warmupSets" ${s.warmupSets !== false ? 'checked' : ''} style="width:22px;height:22px"> Show warm-up sets in each session</label>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> Notify me when a rest ends <span class="muted small" style="font-weight:500">(iPhone: from the home-screen app. With the screen locked or another app in front, iOS may hold the alert until Readyset is next active; keeping it open during a session is the reliable option)</span></label>
         <label class="f">Extra easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
+        ${extraThisWeek().length ? `<div class="stack">${extraThisWeek().map(({ c, i }) => `<div class="row between small"><span>${fmtDate(c.date)} · ${c.min} min · ~${c.kcal} kcal</span><button class="btn sm quiet" data-action="extra-del" data-i="${i}" aria-label="Remove ${c.min} minutes on ${fmtDate(c.date)}">Remove</button></div>`).join('')}</div>` : ''}
       </div>
       <div class="card"><h3>Data and backups</h3>
         ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
@@ -1305,19 +1408,19 @@
   // From now on the maxes as they stand are the base a block replay starts from (see recalibrateBlock).
   function markCalibBase() {
     state.program.calibBaseTs = Date.now();
-    for (const l of LIFTS) { const L = state.lifts[l]; L.blockStartRM = L.oneRM; L.estAtBlockStart = L.est == null ? null : L.est; }
+    for (const l of LIFTS) { const L = state.lifts[l]; L.blockStartRM = L.oneRM; L.floorRM = L.oneRM; L.estAtBlockStart = L.est == null ? null : L.est; }
   }
   function applySetting(key, val) {
     const s = state.settings;
-    state.undo = null;
+    if (key.startsWith('1rm:') || key === 'tmPct') state.undo = null; // the snapshot holds the maxes and TM %; other settings leave it valid
     const n = val === '' || val == null ? NaN : Number(val);
     if (key.startsWith('1rm:')) { const l = key.split(':')[1]; if (n > 0 && n <= 2000 && LIFTS.includes(l)) { const v = Math.round(n * 2) / 2; E.applyTM(state, l, v); state.lifts[l].est = null; markCalibBase(); addLog(`${LIFTNAME[l]} 1RM set to ${v} by hand.`); rebaseSession(); } }
-    else if (key === 'tmPct') { if ([0.85, 0.875, 0.9, 0.925].includes(n)) { s.tmPct = n; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); } }
+    else if (key === 'tmPct') { if ([0.85, 0.875, 0.9, 0.925].includes(n)) { s.tmPct = n; s.tmPctChosen = n; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); } }
     else if (key === 'autoCalibrate') s.autoCalibrate = !!val;
     else if (key.startsWith('acc:')) { const k = key.split(':')[1]; if (Object.prototype.hasOwnProperty.call(E.EX, k) && n >= 0 && n <= 2000) state.acc[k] = { weight: n, updated: todayISO() }; }
     else if (key === 'includePeak') s.includePeak = !!val;
     else if (key === 'warmupSets') s.warmupSets = !!val;
-    else if (key === 'notify') { if (val) enableNotify(); else s.notify = false; }
+    else if (key === 'notify') { if (val) enableNotify(); else { s.notify = false; swNotify(null); if (ui.timer) ui.timer.viaSw = false; } }
     else if (key === 'backupOffer') { s.backupOffer = !!val; if (!val) state.backupOffer = false; }
     else if (key === 'squatStyle') { if (['lowbar', 'highbar'].includes(val)) s.squatStyle = val; }
     else if (key === 'deadliftStyle') { if (['conventional', 'sumo'].includes(val)) s.deadliftStyle = val; }
@@ -1327,6 +1430,8 @@
   }
 
   // ---------- Events ----------
+  let lastTap = { t: -1e9, x: 0, y: 0, a: '' };
+  const REPEATABLE = new Set(['timer-add', 'chart-step', 'chart-pick']); // tapping these twice on purpose is normal
   document.addEventListener('click', (ev) => {
     const t = ev.target.closest('[data-action],[data-view]');
     if (!t) return;
@@ -1338,6 +1443,11 @@
     }
     const a = t.dataset.action, d = t.dataset;
     if (t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') return;
+    if (ev.isTrusted && t.tagName !== 'INPUT') {
+      const now = ev.timeStamp || performance.now(), near = Math.abs(ev.clientX - lastTap.x) < 32 && Math.abs(ev.clientY - lastTap.y) < 32;
+      if (now - lastTap.t < 380 && near && !(a === lastTap.a && REPEATABLE.has(a))) return;
+      lastTap = { t: now, x: ev.clientX, y: ev.clientY, a };
+    }
     anchor = anchorFor(t, a); Promise.resolve().then(() => { anchor = null; });
     if (a === 'done' || a === 'rpe') { ui.lastEi = Number(d.ei); if (state.current) state.current.lastEi = ui.lastEi; }
     switch (a) {
@@ -1379,12 +1489,33 @@
       case 'sheet-close': if (ev.target === t || ev.target.closest('[data-stop]') == null || t.tagName === 'BUTTON') { ui.sheet = null; renderSheet(); } break;
       case 'toggle-skip': { const s = state.current, e = s.exercises[Number(d.ei)]; const i = s.skippedSlots.indexOf(e.slotKey); if (i >= 0) s.skippedSlots.splice(i, 1); else s.skippedSlots.push(e.slotKey); afterSetChange(); save(); render(); break; }
       case 'finish-lifting': finishLifting(false); break;
+      case 'post-back': { const s = state.current; if (s && s.phase === 'post') { s.phase = 'lift'; delete s.post; delete s.finishedAt; save(); render(); } break; }
       case 'finish-confirm': finishLifting(true); break;
       case 'abandon': ui.confirm = 'abandon'; render(); break;
       case 'abandon-confirm': abandon(); break;
       case 'confirm-cancel': ui.confirm = null; render(); break;
       case 'post-diff': state.current.post = state.current.post || { difficulty: 0 }; state.current.post.difficulty = Number(d.v); save(); if (state.current.phase === 'edit') { document.querySelectorAll('[data-action="post-diff"]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.v) === state.current.post.difficulty))); } else render(); break;
       case 'edit-session': startEdit(d.id); break;
+      case 'chart-pick': case 'chart-step': case 'chart-close': {
+        const lift = d.lift; if (!LIFTS.includes(lift)) break;
+        const cv = document.getElementById('c-' + lift); if (cv) anchor = { sel: '#c-' + lift, fallback: '#c-' + lift, top: cv.getBoundingClientRect().top, fallbackTop: cv.getBoundingClientRect().top };
+        if (a === 'chart-close') { ui.chartSel = null; render(); break; }
+        if (a === 'chart-step') { const pts = sessionEsts(lift), i = ui.chartSel ? pts.findIndex(p => p.id === ui.chartSel.id) : -1, ni = Math.max(0, Math.min(pts.length - 1, i + Number(d.dir))); if (pts[ni]) ui.chartSel = { lift, id: pts[ni].id }; render(); break; }
+        const hits = chartHits[lift] || []; if (!hits.length) break;
+        const rc = t.getBoundingClientRect(), px = ev.clientX - rc.left, py = ev.clientY - rc.top;
+        let best = null, bd = Infinity; for (const h of hits) { const dd = Math.abs(h.px - px) + Math.abs(h.py - py) * 0.35; if (dd < bd) { bd = dd; best = h; } }
+        if (best) { ui.chartSel = { lift, id: best.id }; render(); }
+        break;
+      }
+      case 'chart-open': {
+        ui.histOpen = ui.histOpen || {}; ui.histOpen[d.id] = 1;
+        const done = state.sessions.filter(s => !s.skipped).slice().reverse(); if (done.findIndex(s => s.id === d.id) >= 60) ui.histAll = true;
+        render();
+        const el = document.querySelector(`.session-item[data-id="${d.id}"]`), sc = scroller();
+        if (el) scrollToY(sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 8);
+        break;
+      }
+      case 'hist-all': ui.histAll = true; render(); break;
       case 'edit-save': saveEdit(); break;
       case 'edit-cancel': cancelEdit(); break;
       case 'backfill-open': { const y = new Date(); y.setDate(y.getDate() - 1); ui.backfill = { date: todayISO(y), mode: 'full' }; render(); break; }
@@ -1398,7 +1529,7 @@
       case 'cardio-resume': { const r = state.current.cardioRun; if (r && r.paused) { r.pausedTotal += Date.now() - (r.pausedAt || Date.now()); r.paused = false; r.pausedAt = null; save(); render(); } break; }
       case 'cardio-save': saveCardio(false); break;
       case 'cardio-skip': saveCardio(true); break;
-      case 'timer-add': if (ui.timer) { ui.timer.end += 30000; ui.timer.fired = false; if (ui.timer.slow) { clearInterval(ui.timer.iv); ui.timer.iv = setInterval(tickTimer, 250); ui.timer.slow = false; } if (state.timer) { state.timer.end = ui.timer.end; ui.timer.viaSw = swNotify(state.timer); } tickTimer(); Store.saveLocal(state); } break;
+      case 'timer-add': if (ui.timer) { ui.timer.end = Math.max(ui.timer.end, Date.now()) + 30000; ui.timer.fired = false; if (ui.timer.slow) { clearInterval(ui.timer.iv); ui.timer.iv = setInterval(tickTimer, 250); ui.timer.slow = false; } if (state.timer) { state.timer.end = ui.timer.end; ui.timer.viaSw = swNotify(state.timer); } tickTimer(); Store.saveLocal(state); } break;
       case 'timer-stop': stopTimer(); Store.saveLocal(state); break;
       case 'dismiss-report': state.lastReport = null; save(); render(); break;
       case 'undo': undoLast(); break;
@@ -1413,6 +1544,7 @@
       case 'rest-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Easy week inserted'); const ok = E.startActiveRest(state, 1); ui.confirm = null; if (ok) addLog('Easy week inserted.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
       case 'set-plate': { const s = state.settings, p = Number(d.p); if (s.plates.includes(p) && s.plates.length === 1) { toast('Keep at least one plate size'); break; } s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); save(); render(); break; }
       case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
+      case 'extra-del': { const i = Number(d.i), c = (state.extraCardio || [])[i]; if (c) { state.extraCardio.splice(i, 1); save(); toast(`Removed ${c.min} min`); render(); } break; }
       case 'extra-cardio': { const m = Math.min(600, Math.max(0, Math.round(Number($('#extra-cardio').value) || 0))); if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
       case 'export': copyBackup(); break;
       case 'share-backup': shareBackup(); break;
@@ -1423,9 +1555,10 @@
       case 'setup-restore': ui.setupRestore = !ui.setupRestore; render(); break;
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
       case 'reset': { stopTimer(); for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; ui.pendingRestore = null; ui.backfill = null; ui.showImport = false; ui.editSets = {}; ui.lastDeleted = null; ui.lastEi = null; renderSheet(); save(); render(); break; }
-      case 'delete-session': { if (state.current) { toast('Finish or discard the open session first'); break; } const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id);
-        if (!s.skipped && inBlock(s) && (s.ts || 0) > (state.program.calibBaseTs || 0)) { const lines = [`${s.dayName} (${fmtDate(s.date)}) deleted.`].concat(recalibrateBlock()); lines.forEach(addLog); state.lastReport = { title: 'Session deleted', lines, sessionId: null }; }
-        save(); render(); } break; }
+      case 'delete-cancel': ui.confirmDel = null; render(); break;
+      case 'delete-session': { if (state.current) { toast('Finish or discard the open session first'); break; } if (!d.sure) { ui.confirmDel = d.id; render(); break; } ui.confirmDel = null; const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; const inWeek = sessionsOfWeek().some(x => x.id === s.id); snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id);
+        if (!s.skipped && inBlock(s) && (s.ts || 0) > (state.program.calibBaseTs || 0)) { const lines = [`${s.dayName} (${fmtDate(s.date)}) deleted.`].concat(recalibrateBlock(inWeek ? 'This week\'s review will leave it out.' : null)); lines.forEach(addLog); state.lastReport = { title: 'Session deleted', lines, sessionId: null }; }
+        save(); render(); toast('Deleted. Undo is at the top of History.'); } break; }
     }
   });
   // Restore a backup (pasted text or a chosen file). Untrusted: it goes through the sanitizer and can
@@ -1466,7 +1599,7 @@
       stopTimer(); state = fresh; state.current = null;
       migrate(); Store.pushAll(state);
       for (const id of oldIds) if (!state.sessions.some(x => x.id === id)) Store.deleteSession(id);
-      save(); ui.showImport = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null;
+      save(); ui.showImport = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null; view = 'today';
       { const n = state.sessions.filter(x => !x.skipped).length; toast(`Restored: ${n} session${n === 1 ? "" : "s"}`); } render();
       return true;
     } catch (e) { toast('That does not look like a Readyset backup'); return false; }
@@ -1614,7 +1747,7 @@
   // RPE sheet, a restore waiting for confirmation, a focused field) makes the update wait for a tap.
   function updateBusy() {
     const typing = document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-    return !!(typing || !state || state.current || !state.setupDone || ui.checkin || ui.backfill || ui.pendingRestore || ui.sheet || ui.confirm);
+    return !!(typing || sharing || !state || state.current || !state.setupDone || ui.checkin || ui.backfill || ui.pendingRestore || ui.sheet || ui.confirm || ui.showImport || ui.setupRestore || ui.confirmDel);
   }
   function applyUpdateIfSafe(byTap) {
     if (!ui.updateReady || reloading) return;
@@ -1696,7 +1829,7 @@
       const lines = [];
       for (const sess of state.sessions) {
         if (sess.skipped || sess.calibrated) continue;
-        const l = E.calibrate(state, sess); sess.calibrated = true;
+        const l = calibrateSession(sess);
         l.forEach(x => { addLog(x); lines.push(`${fmtDate(sess.date)}: ${x}`); });
       }
       if (state.sessions.some(x => !x.skipped)) lines.push(`Maxes now: squat ${state.lifts.squat.oneRM}, bench ${state.lifts.bench.oneRM}, deadlift ${state.lifts.deadlift.oneRM}. From here on they calibrate after every session.`);
