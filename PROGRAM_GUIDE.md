@@ -11,8 +11,8 @@ Page numbers refer to that book. Where the app makes a choice the book leaves op
 | Block | Weeks | Main lifts | Loads (as % of 1RM, TM = 90%) | Sets per lift per session | Then |
 |---|---|---|---|---|---|
 | Build A, then Build B | 4 + 4 | sets of 7-8 (deadlift: sets of 6, then 5) | 70% → 77% (+~3%/week) | 3 → 4, plus earned sets on the competition lift | 1 deload week each |
-| Strength A, then Strength B | 3 + 3 | sets of 5, 4, 3; week 3 opens with one single at ~RPE 8 | 76% → 86% (the single ~92%) | 4 (3 in week 3), plus earned sets | 1 deload week each |
-| Peak & Test (optional, off by default) | 2 | triples then doubles | 85% → 90% | 3 | test week: one single at RPE 9 per lift |
+| Strength A, then Strength B | 3 + 3 | sets of 5, 4, 3; week 3 opens with one single at ~RPE 8 | 77% → 86% (the single ~92%) | 4 (3 in week 3), plus earned sets | 1 deload week each |
+| Peak & Test (optional, off by default) | 2 | triples then doubles | 86% → 90% | 3 | test week: one single at RPE 9 per lift |
 | Easy week | 1 (2 after a rough macro) | variations, half sets, half loads | | | the next macro |
 
 The sequence is the book's hypertrophy → basic strength → peaking order (p.281), each phase at
@@ -39,7 +39,7 @@ says hypertrophy volume stops being sustainable (p.60).
 
 | Day | Main lift | Second lift | Accessories |
 |---|---|---|---|
-| A Squat day | Competition squat | Competition bench (moderate) | leg curl, lat pulldown, abs (optional) |
+| A Squat day | Competition squat | Competition bench | leg curl, lat pulldown, abs (optional) |
 | B Bench day | Competition bench | Hinge variation | low row, triceps, biceps (optional) |
 | C Deadlift day | Competition deadlift | Squat variation | leg extension, face pull, abs (optional) |
 | D Bench variation day | Bench variation | Overhead press | pulldown or row, lateral raise (optional), triceps |
@@ -53,7 +53,7 @@ on three consecutive days (p.235). The hinge variation sits on Tuesday, two days
 pull, rather than the day after it: a lower back that is still fatigued from Thursday's deadlift
 should not be loaded again on Friday. Friday is upper body only.
 
-Sessions are sized to about 55-75 minutes of lifting with 3 / 2 / 1.5 minute rests; in the
+Sessions are sized to about 45-75 minutes of lifting with 3 / 2 / 1.5 minute rests; in the
 Strength and Peak blocks the main lift gets 4 minutes, because heavy triples and singles are
 limited by the nervous system and short rests there turn strength work into conditioning. The
 book gives no rest-period numbers; those are conventional. An added set never pushes a session
@@ -82,12 +82,14 @@ bar twice a week, which is what the book's frequency guidance is about (p.219).
 
 ## Weekly volume
 
-| Pattern | Build wk 1 | Build wk 4 | Strength | Ceiling (Build / Strength / Peak) |
-|---|---|---|---|---|
-| Squat (comp + barbell variants) | 6 | 8 | 7 | 14 / 12 / 8 |
-| Bench (comp + barbell variants) | 9 | 12 | 10 | 18 / 16 / 12 |
-| Deadlift (comp + paused/deficit) | 3 | 4 | 7 | 10 / 9 / 6 |
+| Pattern | Build wk 1 / 2 / 3-4 | Strength wk 1 / 2 / 3 | Ceiling (Build / Strength / Peak) |
+|---|---|---|---|
+| Squat (comp + barbell variants) | 6 / 7 / 8 | 6 / 7 / 6 | 14 / 12 / 8 |
+| Bench (comp + barbell variants) | 9 / 10 / 12 | 8 / 10 / 9 | 18 / 16 / 12 |
+| Deadlift (comp + paused/deficit) | A 3 / 4 / 4, B 6 / 7 / 8 | 6 / 7 / 6 | 10 / 9 / 6 |
 
+In Build the 75-minute budget sets the real top, about 9 / 13 / 5 (deadlift 9 in Build B), before any
+ceiling is reached.
 These start low on purpose. The book's advice for anyone coming off a program that buried them is
 to "start with a much lower volume than they use, and ease in. Increasing volume when you're
 recovered is MUCH easier and safer than decreasing volume when you're already beat up" (p.164). The
@@ -102,10 +104,10 @@ ceilings are per phase, lowest in Peak, so that no amount of good weeks can rebu
 wore you down.
 
 On top of the per-lift counts sits the **volume dial**, a lasting offset of −2 to +2 sets on every
-lift that the Program tab shows and lets you set by hand. It steps down (once per block at most)
-when the chronic-fatigue signals below fire, and climbs back one step after a clean block; it only
-goes above zero after a clean block in which every lift was already adding sets. At −2 the Training
-Max percentage comes down instead (2.5 points at a time, to 85%). Because the high-volume Build
+barbell exercise (−1 is about 2 squat, 3 bench and 1 deadlift sets a week) that the Program tab shows and lets you set by hand. It steps down (once per block at most)
+when the chronic-fatigue signals below fire, and climbs back one step after a clean Build block. Above
+zero it is by hand only: at the 75-minute budget a positive dial does not fit, and it never reaches
+the Peak. At −2 the Training Max percentage comes down instead (2.5 points at a time, to 85%). Because the high-volume Build
 block is where the dial is lost, only a clean Build block earns a step back below zero (a
 low-volume Strength block is clean almost every time and would hand it back too early). A
 lowered Training Max comes back first: each clean block restores 2.5 points, up to the percentage
@@ -120,21 +122,32 @@ Sleep, energy, motivation, and soreness by region, combined into a 0-100 readine
 
 | Score | What happens | Why |
 |---|---|---|
-| 60+ green | As planned. The first set of the main lift may take bonus reps: up to +2 in Build, +1 in Strength, none in Peak, and never past RPE 9, so none at all in the heavier weeks | Rep PRs are "the most common" powerlifting PRs (p.86); failure is avoided (p.97) |
-| 35-59 yellow | The session stands, trimmed: loads one step down (2.5%), no bonus reps, no earned extra sets. Same reps, same planned sets | "Most of those times, an overload is quite possible" (p.96); a small load nudge keeps the overload without the grind |
+| 50+ green | As planned. The first set of the main lift may take bonus reps: up to +2 in Build, +1 in Strength, none in Peak, and never past RPE 9. Deadlift takes +1 at most, with a rep held back | Rep PRs are "the most common" powerlifting PRs (p.86); failure is avoided (p.97) |
+| 35-49 yellow | The session stands, trimmed: loads 2.5% down, no bonus reps, no earned extra sets. Same reps, same planned sets | "Most of those times, an overload is quite possible" (p.96); a small load nudge keeps the overload without the grind |
 | under 35 red | Light session recommended (Build: half the sets at 90% load; Strength: 70% / 70%; Peak: half the sets at 80%), or rest and keep the session for next time | The book's light-session recipe (pp.148-149). Light beats a day off for both fatigue and fitness (p.179) |
 
 A second red check-in in one week switches the rest of that week to light sessions. That is the
 book's rule for a week that goes wrong: "Use Extra Light Sessions, not Deloads" (p.160).
 
+All "OK" answers with slightly sore legs score 53 and count as a normal day. The 50 line is a design
+choice, as 55-60 was: no validated cut-off exists, and the evidence on subjective wellness supports
+watching the trend rather than any single number (Saw et al. 2016).
+
 **Coming back after a gap.** If a week or more passes without a session, the Today tab offers the
 layoff rule before you train: 7-13 days off, the current week repeats 5% lighter with earned sets
-cleared; 14-20 days, the block restarts at week 1 with the maxes 5% lower; three weeks or more,
-the macro restarts at Build week 1 with the maxes 10% lower (they recalibrate from your sets within
-a couple of weeks). Resuming at the old loads after a layoff is how people get hurt, and the book
-is explicit that fitness fades faster than the numbers in your head (p.250). You can decline it.
-Skipped days count as time off, not training. A deload or easy week is light enough to absorb a
-short gap, but two weeks or more off is offered the rule there too.
+cleared; 14-20 days, the block restarts at week 1 with the maxes 2.5% lower and the first week 2.5%
+lighter; 21-41 days, the block restarts at week 1 (from Peak, the last Strength block) with the maxes
+5% lower and the first week 5% lighter; six weeks or more, the macro restarts at Build week 1 with
+the maxes 10% lower (sets this easy read them back slowly, so raise them by hand if the weights feel
+light). The week's cut applies to barbell loads, the opener single included. Strength is
+generally maintained for up to about four weeks without training (Mujika & Padilla 2001; Bosquet et
+al. 2013), so the shorter restarts stay small; the 42-day line is a judgment call. If the gap grows
+past a tier you already answered, the tougher rule is offered again, and it applies only what is left
+of its cut. Resuming at the old loads after
+a layoff is how people get hurt, and the book is explicit that fitness fades faster than the numbers
+in your head (p.250). You can decline it. Skipped days count as time off, not training. A deload or
+easy week is light enough to absorb a short gap, but two weeks or more off is offered the rule there
+too.
 
 ### Warm-ups
 
@@ -156,8 +169,8 @@ Warm-up sets never count toward volume, reviews or max estimates. They can be hi
 
 ### During a session: every logged set re-aims the rest of the exercise
 
-Each done working set with an RPE (a missed set counts as RPE 10 at the reps you got; bonus reps
-count as reps) implies a 1RM through the rep-max table. The app combines the evidence so far and
+Each done working set with an RPE (a missed set with no RPE counts as RPE 10 at the reps you got;
+bonus reps count as reps) implies a 1RM through the rep-max table. The app combines the evidence so far and
 sets the remaining sets to the weight that would land the planned reps at the target RPE, from the
 same table. So RPE 8 on a set planned at RPE 5 is three reps closer to failure than intended, and
 the next set drops by what the table says (about 9%), not by a fixed step.
@@ -173,7 +186,8 @@ the next set drops by what the table says (about 9%), not by a fixed step.
 - It re-runs from scratch on any edit: tick, untick, an RPE changed later, a rep count or weight
   corrected. Picking an RPE on a set you have not ticked yet ticks it.
 - A weight you type into an undone set yourself is left alone.
-- Limits per exercise: never below 85% or above 102.5% of the planned weight (100% in Peak).
+- Limits per exercise: never below 85% or above 102.5% of the planned weight (100% in Peak and in
+  light sessions, which exist to cut fatigue).
 - **The fatigue stop.** The RTS-style rule most coaches use: a missed rep, a set that is still two
   or more RPE over target (and at least RPE 8.5, so an easy day planned at RPE 5 is not cut short by
   an RPE 7 set) after the weight has already been corrected, or the floor being reached, ends the
@@ -188,12 +202,15 @@ the next set drops by what the table says (about 9%), not by a fixed step.
 The number you typed at setup is only a starting point. After each training session the app
 reads every working set with an RPE on a competition lift (or a close barbell variation such as
 close-grip bench or paused squat), turns each into an implied 1RM, and takes a confidence-weighted
-average: variations half weight, first sets half weight, RPE 6-6.5 half weight.
+average: variations half weight when mixed with competition sets, first sets half weight, RPE 6-6.5
+half weight. Rating every set 1 RPE too high ends up with loads about 3% lighter than they could be.
 
 - If today's estimate is more than 3% under the current 1RM, the 1RM drops to it at once, at most
   5% per session. Fatigue management is the priority, so bad news is acted on immediately. The one
   guard: sets far from failure (reported and planned under RPE 7) are vague evidence, so they can
-  only lower a max when the shortfall is 5% or more, or when reps were missed.
+  only lower a max when the shortfall is 5% or more, or when reps were missed. In the program's very
+  first week a drop is the number you entered being corrected, not fatigue: it does not count toward
+  the "max lowered twice" signal, and the 6% test starts over from the new max.
 - The 1RM rises only on a smoothed estimate (half today, half history), by at most 2.5% per
   session and at most once per week per lift, never after a session rated "crushed me", never on
   one set's evidence, and a fast rise (today's sets alone more than 4% over) needs at least one set
@@ -209,12 +226,14 @@ average: variations half weight, first sets half weight, RPE 6-6.5 half weight.
   one block (15% if reps were missed).
 - The Training Max follows, so the next session is already right-sized. The weekly review then
   only manages volume (sets); load is handled here.
-- Deload, easy and test weeks don't calibrate. The test week sets the 1RM directly: the single
-  you work up to (read as RPE 9 if you logged no RPE) becomes the max, within 5% down and 12% up,
-  and a single that did not go up caps it just under that weight.
-- A session you edit or log after the fact is read the same way: if it belongs to the current
-  block, the maxes go back to where the block started and every session of the block is re-read in
-  date order, so the correction lands exactly as if it had been logged that way.
+- Deload, easy and test weeks don't calibrate. The test week sets the 1RM directly from your
+  heaviest single with an RPE (the best of several noisy readings runs high), within 5% down and 12%
+  up and never below a weight you made. A single with no RPE can raise the max but not lower it, and
+  a single that did not go up caps it just under that weight.
+- A session you log after the fact is read like any other. One you edit or delete, if it belongs to
+  the current block, puts the maxes back to where the block started and re-reads every session of
+  the block in date order, so the correction lands exactly as if it had been logged that way. A past
+  session dated before a max you set by hand does not move that max.
 
 The History tab shows the weekly average of those implied maxes per lift against the current
 1RM, which is the honest trend: it moves with how you are lifting and feeling, not with what you
@@ -272,44 +291,49 @@ you report at the next check-in, this feeds the weekly review.
 For each competition lift the app scores the week:
 
 - Missed reps or RPE 1.5+ above plan: −2. RPE 0.75+ above plan: −1. Below plan: +1. Bonus reps
-  are taken back out before comparing, since they raise the RPE by design.
-- Every set on target: +1. Session rated easy: +1. Very hard: −1. Crushed: −2.
+  are taken back out before comparing, since they raise the RPE by design. In week 1 of a block an
+  RPE above plan scores nothing: calibration has already answered it, and one week cannot show
+  accumulated fatigue. Missed reps and a bad session rating still count.
+- Main sets on target: +1. Session rated easy: +1. Very hard: −1. Crushed: −2.
 - Fully recovered by the next session: +1. Still sore: −1. Very sore: −2.
+- Missed reps on a second lift: −1.
 
-Score +2 or better adds a set next week on the competition lift (until the run's ceiling, the
+On target alone holds. Score +2 or better adds a set next week on the competition lift (until the run's ceiling, the
 phase cap, or the 75-minute session budget; with calibration off, a very easy week at the ceiling
 earns a bigger load jump instead). Sets logged without an RPE give no read on effort, so they never
-count as "on target" and never earn a set. When "on target" is the only good news, a set is added at most every second week,
+count as "on target" and never earn a set. When on target plus recovered is all the good news, a set is added at most every second week,
 so a lifter who simply hits the numbers climbs slowly rather than in a straight line (p.164).
-Score −2 or worse removes a set, takes 2.5% off next week's loads (−5% at −4) and raises a flag.
+Score −2 or worse removes a set from the lift and each close variation and raises a flag; with calibration off it also takes 2.5% off next
+week's loads (−5% at −4).
 Nothing is added in the last accumulation week, which the book expects to be the overreaching week
 before the deload (p.117), and the first week after a deload earns nothing for feeling fresh.
 
-**Acute signals** make the app suggest taking the deload now: two flags on two lifts, two red
+**Acute signals** make the app suggest taking the deload now: two flags each on two lifts, two red
 check-ins, or two crushing sessions in one week. Days switched to light by the two-red rule
 count as that one bad week, not as chronic fatigue. **Chronic signals** say the written volume itself
 is too much for you, and they also turn the volume dial down (once per block): four red check-ins
 or four light sessions in a block, a lift's max lowered twice (or by 6%) within a block, or
-readiness that has sat under 55, or 15 points under your own rolling baseline, for two weeks
-running (one week under 40). A single chronic signal in the last accumulation week is ignored,
-because that week is supposed to feel like too much.
+readiness that has sat under 50 for two weeks running (one week under 40). A single chronic signal in the last accumulation week does not move the
+dial, because that week is supposed to feel like too much, though it does cost the block its clean
+status. Readiness alone can step the dial down but never lowers the Training Max.
 
 Accepting the suggestion (or "Deload now" on the Program tab) inserts a deload week and the block
 resumes at the week it was on; in the last accumulation week it runs the block's own deload
 instead, so you never get deload, overreach, deload in a row. A suggestion you neither take nor
 decline lapses at the end of the week, and the next review raises it again if it still applies. "Push on" keeps the block going but trims the coming week: no bonus
-reps, no earned sets, loads one step down. The signals come straight from the book's MRV
+reps, no earned sets, loads 2.5% down. The signals come straight from the book's MRV
 indicators: not matching last week's reps (p.126, pp.338-339), the bar feeling disproportionately
 heavy, low desire to train, poor sleep (p.77), being dull and tired instead of sore (p.125).
 
 ### The end of a macro: the stall rule
 
-When a macro ends, each lift's smoothed estimate is compared with the end of the previous macro. A
-lift that gained under 1% without ever being flagged twice was under-stimulated: its Build runs
-start one set higher next macro. A lift that gained under 1% while being flagged was
-under-recovered: it starts one set lower and the easy week stretches to two. That is the book's
-"if volume isn't working, change the volume" test (p.322), run on your real numbers, so that a
-silent stall is caught after 19 weeks rather than after a year.
+When a macro ends, each lift's smoothed estimate is compared with the end of the previous macro.
+One macro under 1% is inside the noise of the reading, so it takes two in a row. Then a lift that was
+never flagged twice was under-stimulated: its Build runs start one set higher, if a session has room
+and the dial did not step down that macro. A lift that was flagged was under-recovered: it starts one
+set lower and the easy week stretches to two. That is the book's "if volume isn't working, change the
+volume" test (p.322), run on your real numbers, so that a silent stall is caught after two macros
+rather than left to drift.
 
 ### Deload weeks
 
@@ -330,10 +354,11 @@ Either way the Peak block's test single sets the 1RM directly.
 ### Accessories
 
 Self-loaded work (belt squat, dumbbells, machines) uses double progression: when every set reaches
-the top of the rep range, the weight goes up next time. Accessory sets sit at 2-3 per exercise and
+the top of the rep range, the weight goes up next time. Accessory sets sit at 2-4 per exercise and
 only climb when no lift is flagged. The book caps isolation work at about 30% of a hypertrophy
-program and wants little or none in strength phases (pp.338-339); biceps, lateral raises and abs
-are marked optional so they are the first thing to drop on a short day.
+program and wants little or none in strength phases (pp.338-339); here it runs about 26-31% with the
+optional slots dropped. Biceps, lateral raises and abs are marked optional so they are the first
+thing to drop on a short day.
 
 ## Cardio
 
@@ -375,8 +400,8 @@ away, which is the right response to the signals and the wrong outcome for the b
 - 1RM estimates from sets of 7-8 are rough. The Strength block's opener single, and the optional
   Peak block's test single, are the real numbers.
 - The rules beyond the book were tuned in a fitness-fatigue simulation of four lifter types, not
-  on you. The simulation says they keep a fragile lifter's fatigue well under what a high-volume
-  program does while gaining more; your own log is the only evidence that counts.
+  on you. It tests whether the rules behave, not how fast you will gain: expect low single digits
+  a year at best once past the intermediate stage. Your own log is the only evidence that counts.
 - The readiness score weights are a design choice (sleep 30%, energy 25%, soreness 25%,
   motivation 20%); the book names these signals but gives no formula.
 - This is a program, not a coach. Pain, illness, and life stress still need your own judgment.

@@ -418,6 +418,34 @@
   }
   function hr(v) { const h = Math.floor(v / 60), m = v % 60; return h ? `${h}h ${m ? m + 'm' : ''}`.trim() : `${m}m`; }
 
+  // ---------- Foldable cards ----------
+  // Every card on Today, Program, History and Settings folds from its header. What you fold stays
+  // folded on this device: a display preference, so it lives outside the training data and backups.
+  const FOLD_KEY = 'readyset.folds';
+  const folds = (() => { try { const v = JSON.parse(localStorage.getItem(FOLD_KEY) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch (e) { return {}; } })();
+  function saveFolds() { try { localStorage.setItem(FOLD_KEY, JSON.stringify(folds)); } catch (e) { /* only a preference */ } }
+  function isFolded(id, def) { return Object.prototype.hasOwnProperty.call(folds, id) ? folds[id] === true : !!def; }
+  function foldHead(id, title, closed, sum, tag) {
+    return `<${tag} class="fold-h"><button class="fold-head" data-action="card-fold" data-id="${id}" aria-expanded="${!closed}"><span class="fold-t">${title}${sum ? `<span class="fold-sum">${sum}</span>` : ''}</span><svg class="fold-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button></${tag}>`;
+  }
+  // o.closed: folded until you choose otherwise. o.sum: one line shown while folded. o.tools: controls beside the title.
+  function foldCard(id, title, body, o) {
+    o = o || {}; const closed = isFolded(id, o.closed);
+    return `<section class="card fold${closed ? ' closed' : ''}" data-fold="${id}"${o.dom ? ` id="${o.dom}"` : ''}><div class="fold-top">${foldHead(id, title, closed, o.sum, 'h3')}${o.tools || ''}</div><div class="fold-body"${closed ? ' inert' : ''}><div class="fold-inner">${body}</div></div></section>`;
+  }
+  function setCardFold(sec, closed) {
+    sec.classList.toggle('closed', closed); folds[sec.dataset.fold] = closed;
+    const b = sec.querySelector('.fold-head'), body = sec.querySelector('.fold-body');
+    if (b) b.setAttribute('aria-expanded', String(!closed));
+    if (body) { if (closed) body.setAttribute('inert', ''); else body.removeAttribute('inert'); } // folded fields are out of reach of the keyboard's next-field arrows
+  }
+  const FOLD_ALL = '<div class="fold-all"><button class="btn sm quiet" data-action="fold-tab">Collapse all</button></div>';
+  function syncFoldSums(html) { // typed fields skip render(), so the one-line summaries are refreshed on their own
+    const tmp = document.createElement('div'); tmp.innerHTML = html;
+    tmp.querySelectorAll('[data-fold]').forEach(s => { const fresh = s.querySelector('.fold-sum'), live = document.querySelector(`#main [data-fold="${s.dataset.fold}"] .fold-sum`); if (fresh && live) live.innerHTML = fresh.innerHTML; });
+  }
+  function syncFoldAll() { const b = document.querySelector('[data-action="fold-tab"]'); if (b) b.textContent = [...document.querySelectorAll('#main [data-fold]')].some(s => !s.classList.contains('closed')) ? 'Collapse all' : 'Expand all'; }
+
   // ---------- Views ----------
   // The content area between the header and the tab bar is the only thing that scrolls (see
   // styles.css): the tab bar sits outside it, so iOS delivers taps on it even mid-glide.
@@ -443,6 +471,8 @@
     $('#pos').textContent = `${pos.block.name} · ${pos.label}`;
     lastRenderDay = todayISO();
     main.innerHTML = (state.current || ui.checkin ? '' : renderUndo()) + (view === 'settings' ? renderRestoreConfirm() : '') + (view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings());
+    if (view === 'history') drawCharts(); // before the anchor below: an undrawn canvas has a different height
+    syncFoldAll();
     // Keep whatever you just tapped exactly where it was on screen, even when text above it grew,
     // shrank or folded away (iOS Safari has no scroll anchoring of its own).
     if (anchor) {
@@ -451,7 +481,6 @@
       if (el) { const dy = el.getBoundingClientRect().top - was; if (Math.abs(dy) >= 1) scroller().scrollTop += dy; }
       anchor = null;
     }
-    if (view === 'history') drawCharts();
     if (view === 'today' && state.current && state.current.phase === 'cardio' && state.current.cardioRun) tickCardio(); // self-schedules; no animation frame needed, so it also starts while the page is hidden
   }
 
@@ -468,8 +497,8 @@
     const steps = `<div class="steps">${[0, 1, 2, 3].map(i => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`;
     if (step === 0) return `
       <div class="card"><h1>Readyset</h1>
-      <p>A four-day powerlifting program that reads how you are recovering and adjusts itself, built on the Renaissance Periodization training principles.</p>
-      <p class="muted small">Setup takes about two minutes: your current maxes, your equipment, your training days.</p>
+      <p>A four-day powerlifting program that reads your recovery and adjusts itself. Built on Renaissance Periodization principles.</p>
+      <p class="muted small">Setup takes about two minutes.</p>
       ${steps}
       <label class="f">Your name (optional)<input id="d-name" data-draft="name" value="${esc(d.name)}" placeholder="Jerm"></label>
       <button class="btn primary block" data-action="setup-next">Start</button>
@@ -480,7 +509,7 @@
       </div>` : ''}</div>`;
     if (step === 1) return `
       <div class="card"><h2>Current maxes</h2>
-      <p class="small muted">Enter a recent 1RM, or tap "from a set" and enter a recent hard set. Use a clean set with a rep or two left, not a grinder; grinders overestimate. The program works off a Training Max of ${Math.round(d.tmPct * 100)}% of these numbers and then calibrates them from your sets after every session, so a rough, conservative start is fine.</p>
+      <p class="small muted">Enter a recent 1RM, or tap "from a set" and use a clean set with a rep or two left. Loads run off ${Math.round(d.tmPct * 1000) / 10}% of these, which calibrate from your sets, so a rough, conservative start is fine.</p>
       ${steps}
       ${LIFTS.map(l => `
         <div class="stack">
@@ -498,28 +527,28 @@
       <label class="f">Your squat<select id="d-sq" data-draft="squatStyle"><option value="lowbar" ${d.squatStyle === 'lowbar' ? 'selected' : ''}>Low-bar</option><option value="highbar" ${d.squatStyle === 'highbar' ? 'selected' : ''}>High-bar</option></select></label>
       <label class="f">Your deadlift<select id="d-dl" data-draft="deadliftStyle"><option value="conventional" ${d.deadliftStyle === 'conventional' ? 'selected' : ''}>Conventional</option><option value="sumo" ${d.deadliftStyle === 'sumo' ? 'selected' : ''}>Sumo</option></select></label>
       </div>
-      <p class="small muted">These are your competition lifts. The other bar position shows up as a variation.</p>
+      <p class="small muted">Your competition lifts. The other bar position appears as a variation.</p>
       <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-next">Next</button></div></div>`;
     if (step === 2) return `
       <div class="card"><h2>Equipment</h2>${steps}
       <label class="f">Bar weight (lb)<input id="d-bar" type="number" inputmode="decimal" data-draft="barWeight" value="${esc(d.barWeight)}"></label>
       <div class="stack"><span class="tiny">Plates you own (per side)</span>
         <div class="chips">${[55, 45, 35, 25, 15, 10, 5, 2.5, 1.25].map(p => `<button data-action="setup-plate" data-p="${p}" aria-pressed="${d.plates.includes(p)}">${p}</button>`).join('')}</div>
-        <p class="small muted">Barbell loads are rounded to totals your plates can make (${E.loadStep(d.plates)} lb jumps with these).</p></div>
+        <p class="small muted">Loads round to totals these plates can make (${E.loadStep(d.plates)} lb jumps).</p></div>
       <label class="f">Dumbbell step (lb)<select id="d-dbi" data-draft="dbIncrement"><option value="2.5" ${d.dbIncrement == 2.5 ? 'selected' : ''}>2.5</option><option value="5" ${d.dbIncrement == 5 ? 'selected' : ''}>5</option></select></label>
-      <p class="small muted">The plan assumes: power rack, bench, barbell, adjustable dumbbells, belt squat, lat pulldown / low row, seated leg curl, leg extension. Swap anything from the Program tab later.</p>
+      <p class="small muted">Assumes a rack, bench, barbell, adjustable dumbbells, belt squat, lat pulldown, low row, leg curl and leg extension. Swap anything later in Program.</p>
       <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-next">Next</button></div></div>`;
     return `
       <div class="card"><h2>Schedule</h2>${steps}
-      <div class="stack"><span class="tiny">Training days (pick 4, two rest days back to back works best)</span>
+      <div class="stack"><span class="tiny">Training days (pick 4)</span>
         <div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="setup-day" data-d="${x}" aria-pressed="${d.days.includes(x)}">${x}</button>`).join('')}</div></div>
       <div class="grid2">
         <label class="f">Easy bike after lifting (min)<input id="d-cm" type="number" inputmode="numeric" data-draft="cardioMin" value="${esc(d.cardioMin)}"></label>
         <label class="f">Usual easy watts (optional)<input id="d-cw" type="number" inputmode="numeric" data-draft="cardioWatts" value="${esc(d.cardioWatts)}"></label>
       </div>
-      <p class="small muted">The book's guideline is to keep extra cardio under about 1,500 kcal a week and truly easy, and to judge it by whether the lifts keep moving. The app keeps a running weekly estimate so you can see where you stand.</p>
-      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-easy" data-draft="easyWeek" ${d.easyWeek ? 'checked' : ''} style="width:22px;height:22px"> Start with one easy week first <span class="muted small" style="font-weight:500">(recommended if you are coming off a program that beat you up)</span></label>
-      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-peak" data-draft="includePeak" ${d.includePeak ? 'checked' : ''} style="width:22px;height:22px"> Include the 3-week Peak &amp; Test block <span class="muted small" style="font-weight:500">(heavy singles and a test week at the end of each macro; off is the default, since the Strength block already opens with singles and the maxes calibrate from every session)</span></label>
+      <p class="small muted">Keep extra cardio easy and under about 1,500 kcal a week. The app tracks your total.</p>
+      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-easy" data-draft="easyWeek" ${d.easyWeek ? 'checked' : ''} style="width:22px;height:22px"> Start with one easy week <span class="muted small" style="font-weight:500">(if your last program beat you up)</span></label>
+      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-peak" data-draft="includePeak" ${d.includePeak ? 'checked' : ''} style="width:22px;height:22px"> Include the 3-week Peak &amp; Test block <span class="muted small" style="font-weight:500">(optional: maxes already calibrate every session)</span></label>
       <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-finish">Build my program</button></div></div>`;
   }
   function finishSetup() {
@@ -537,9 +566,21 @@
     state.program.startedAt = todayISO();
     if (d.easyWeek) E.startActiveRest(state, 1);
     state.setupDone = true; state.migratedV2 = true; // a fresh program has nothing to migrate
-    addLog(`Program started. 1RMs: squat ${state.lifts.squat.oneRM}, bench ${state.lifts.bench.oneRM}, deadlift ${state.lifts.deadlift.oneRM}. Training maxes at ${Math.round(s.tmPct * 100)}%.`);
+    addLog(`Program started. 1RMs: squat ${state.lifts.squat.oneRM}, bench ${state.lifts.bench.oneRM}, deadlift ${state.lifts.deadlift.oneRM}. Training maxes at ${Math.round(s.tmPct * 1000) / 10}%.`);
     state = cleanState(state, true); // the same clamps a reload applies, so what you see is what is stored
     ui.draft = null; view = 'today'; save(); render();
+  }
+
+  // A deload taken now: in a block's last planned week the block's own deload runs and the next
+  // block follows; earlier, a week is inserted and the block resumes; Peak has no deload week, so
+  // an easy week stands in.
+  function layoffTier(gap) { return gap >= 42 ? 4 : gap >= 21 ? 3 : gap >= 14 ? 2 : 1; }
+  function layoffHandled(newest) { const [d, t, c] = String(state.program.layoffHandled || '').split(':'); return d === newest ? { tier: Number(t) || 3, cut: Number(c) || 0 } : { tier: 0, cut: 0 }; } // "date:tier:cut already taken"; an older bare date stays handled, as it always was
+  function deloadEffect(ask) {
+    const P = state.program, b = E.BLOCKS[P.blockIdx];
+    if (!b.deload) return ask ? 'Peak has no deload week: take an easy week (half sets, half loads)? The block resumes afterwards.' : 'Best to take an easy week now (half sets, half loads); the block resumes afterwards.';
+    const next = P.week >= b.weeks;
+    return ask ? `Deload this week? ${next ? 'The next block follows.' : 'The block resumes afterwards.'}` : `Best to deload now; ${next ? 'the next block follows' : 'the block resumes afterwards'}.`;
   }
 
   // ---------- Today ----------
@@ -560,39 +601,43 @@
     const plan = E.buildSession(state, planMode);
     const last = lastSession();
     let html = '';
-    if (P.pendingDeload && !pos.isDeload && !pos.isRest) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue signals stacked up in your weekly review (the Program tab's log says which). The book's rule is to take the deload now rather than grind into it; the block picks up where it left off afterwards. Your call.</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
-    if (P.lightRestOfWeek) html += `<div class="callout warn">Rest of this week is set to light sessions (two red check-ins). Loads and sets come down automatically; the week still counts.</div>`;
-    else if (P.pushOn) html += `<div class="callout warn">Pushing on past a deload suggestion: this week runs without bonus reps or earned sets, loads one step down. If it still feels heavy, "Deload now" is on the Program tab.</div>`;
+    if (P.pendingDeload && !lightWk) html += `<div class="card"><h3>Deload suggested</h3><p>Fatigue stacked up in your weekly review (see Program). ${deloadEffect(false)}${state.lastReport && state.lastReport.lines.some(l => /^Volume dial [-+]?\d/.test(l)) ? ' The volume dial has stepped down either way.' : ''}</p><div class="btnrow"><button class="btn primary" data-action="deload-now">Deload this week</button><button class="btn" data-action="deload-later">Push on</button></div></div>`;
+    if (P.lightRestOfWeek) html += `<div class="callout warn">The rest of this week runs light after two red check-ins. It still counts.</div>`;
+    else if (P.pushOn && !lightWk) html += `<div class="callout warn">Pushing on past a deload suggestion: no bonus reps or earned sets, loads 2.5% down. Still heavy? "Deload now" is in Program.</div>`;
     // Coming back after a gap: offer the layoff rule once per gap (the book: ease back in, do not
     // resume where you left off, p.250).
     const newest = newestSessionDate(), gap = newest ? daysBetween(newest, todayISO()) : 0;
-    if (gap >= 7 && P.layoffHandled !== newest && (gap >= 14 || (!pos.isRest && !pos.isDeload))) { // a deload or easy week is light enough for a short gap, not for a long one
-      const what = gap < 14 ? 'repeat this week 5% lighter with earned sets cleared' : gap < 21 ? 'restart this block at week 1 with maxes 5% lower' : 'start again from Build week 1 with maxes 10% lower (they recalibrate from your sets)';
-      html += `<div class="card"><h3>${gap} days since your last session</h3><p>Coming back at the old loads after a layoff is how people get hurt. The program's rule for ${gap} days off: ${what}.</p>
+    if (gap >= 7 && layoffTier(gap) > layoffHandled(newest).tier && (gap >= 14 || (!pos.isRest && !pos.isDeload))) { // a deload or easy week is light enough for a short gap, not for a long one
+      const what = gap < 14 ? (pos.isTest ? 'one more heavy week 5% lighter, then the test' : 'repeat this week 5% lighter, earned sets cleared') : gap < 21 ? 'restart this block at week 1, maxes 2.5% lower, first week 2.5% lighter' : gap < 42 ? `restart ${E.BLOCKS[P.blockIdx].test ? 'the last Strength block' : 'this block'} at week 1, maxes 5% lower, first week 5% lighter` : 'restart at Build week 1, maxes 10% lower (raise them by hand if the weights feel light)';
+      html += `<div class="card"><h3>${gap} days since your last session</h3><p>Old loads after a layoff are how people get hurt. The rule for this gap: ${what}.</p>
         <div class="btnrow"><button class="btn primary" data-action="layoff-ease">Ease back in</button><button class="btn" data-action="layoff-skip">Carry on as planned</button></div></div>`;
     }
     if (state.backupOffer && !Store.db && state.settings.backupOffer) html += `<div class="callout row between offer-bar"><span>Back up this session? <span class="muted small">(${backupSizeText()})</span></span><span class="row nowrap" style="gap:6px"><button class="btn sm primary" data-action="share-backup">Save backup</button><button class="btn sm quiet icon" data-action="offer-dismiss" aria-label="Not now">✕</button></span></div>`;
-    html += `<div class="card accent hero">
+    const heroClosed = isFolded('today-plan');
+    html = FOLD_ALL + html;
+    html += `<section class="card accent hero fold${heroClosed ? ' closed' : ''}" data-fold="today-plan">
       <div class="row between hero-top"><span class="tiny">${pos.isRest ? 'Easy week' : pos.isDeload ? 'Deload week' : pos.isTest ? 'Test week' : `${esc(pos.block.name)} block · ${esc(pos.label)}`}</span><span class="tiny">${fmtDateLong(todayISO())}</span></div>
-      <h1>${esc(plan.dayName)}</h1>
+      ${foldHead('today-plan', esc(plan.dayName), heroClosed, '', 'h1')}
       ${previewTime(plan, planMode)}
-      ${previewPlan(plan)}
-      ${plan.notes.map(n => `<p class="small pv-note">${esc(n)}</p>`).join('')}
+      <div class="fold-body"${heroClosed ? ' inert' : ''}><div class="fold-inner">${previewPlan(plan)}${plan.notes.map(n => `<p class="small pv-note">${esc(n)}</p>`).join('')}</div></div>
       <button class="btn block cta" data-action="checkin">Check in and start</button>
-    </div>
+    </section>
     <div class="row between small hero-after"><button class="btn sm quiet" data-action="skip-session">Skip this session</button>${ui.backfill ? '' : '<button class="btn sm quiet" data-action="backfill-open">Log a past session</button>'}</div>`;
     if (ui.backfill) html += renderBackfill(plan);
     // What happened after the last session: three lines, the rest on a tap (a week review can run long).
     if (state.lastReport) {
-      const repKey = state.lastReport.title + '|' + state.lastReport.lines.length, lines = state.lastReport.lines, many = lines.length > 3 && ui.reportAll !== repKey;
+      const repKey = state.lastReport.title + '|' + state.lastReport.lines.length, lines = mergeHolds(state.lastReport.lines), many = lines.length > 3 && ui.reportAll !== repKey;
+      const foldKey = state.lastReport.title + '|' + state.lastReport.lines.join('\n');
+      if (folds._report !== foldKey) { folds._report = foldKey; delete folds['today-report']; saveFolds(); } // a new report always opens
       const cls = (l) => l.includes('-1 set') || l.includes('easing') || /(\d+(?:\.\d+)?) -> (\d+(?:\.\d+)?)/.test(l) && Number(RegExp.$2) < Number(RegExp.$1) ? 'warn' : l.includes('+1 set') || l.includes('->') ? 'good' : '';
-      html += `<div class="card"><div class="row between"><h3>${esc(state.lastReport.title)}</h3><button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>${(many ? lines.slice(0, 3) : lines).map(l => `<div class="callout ${cls(l)}">${arrows(l)}</div>`).join('')}${many ? `<button class="btn sm quiet" data-action="report-all">Show all ${lines.length} lines</button>` : ''}</div>`;
+      html += foldCard('today-report', esc(state.lastReport.title), `${(many ? lines.slice(0, 3) : lines).map(l => `<div class="callout ${cls(l)}">${arrows(l)}</div>`).join('')}<div class="row between">${many ? `<button class="btn sm quiet" data-action="report-all">Show all ${lines.length}</button>` : '<span></span>'}<button class="btn sm quiet" data-action="dismiss-report">Dismiss</button></div>`, { sum: lines.length ? arrows(lines[0]) : '' });
     }
 
     if (last) {
       const d = daysBetween(last.date, todayISO());
-      html += `<div class="card"><h3>Last session</h3><div class="row between"><div><b>${esc(last.dayName)}</b> <span class="muted small">${fmtDate(last.date)}${d === 0 ? ' (today)' : d === 1 ? ' (yesterday)' : ` (${d} days ago)`}</span></div>${last.readiness ? `<span class="pill ${last.readiness.color}">Readiness ${last.readiness.score}</span>` : ''}</div>
-        <div class="small muted">${last.post ? DIFF[last.post.difficulty] : ''}${last.durationMin ? ` · ${last.durationMin} min` : ''}${last.cardio && last.cardio.min ? ` · bike ${last.cardio.min} min` : ''}${last.mode && last.mode !== 'full' && E.MODES[last.mode] ? ` · ${E.MODES[last.mode].label}` : ''}</div></div>`;
+      const when = d === 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago`;
+      html += foldCard('today-last', 'Last session', `<div class="row between"><div><b>${esc(last.dayName)}</b> <span class="muted small">${fmtDate(last.date)} (${when})</span></div>${last.readiness ? `<span class="pill ${last.readiness.color}">Readiness ${last.readiness.score}</span>` : ''}</div>
+        <div class="small muted">${last.post ? DIFF[last.post.difficulty] : ''}${last.durationMin ? ` · ${last.durationMin} min` : ''}${last.cardio && last.cardio.min ? ` · bike ${last.cardio.min} min` : ''}${last.mode && last.mode !== 'full' && E.MODES[last.mode] ? ` · ${E.MODES[last.mode].label}` : ''}</div>`, { sum: `${esc(last.dayName)}, ${when}` });
     }
     html += renderWeekBrief();
     return html;
@@ -603,7 +648,7 @@
     const b = ui.backfill;
     if (!b) return '';
     return `<div class="card"><h3>Log a past session</h3>
-      <p class="small muted">This logs <b>${esc(plan.dayName)}</b>, the next session in the plan, on the date you pick. Enter what you lifted; it counts in the week's review and the maxes calibrate from it like any other session.</p>
+      <p class="small muted">Logs <b>${esc(plan.dayName)}</b>, the next planned session, on the date you pick. It counts like any other.</p>
       <div class="grid2"><label class="f">Date<input id="bf-date" type="date" value="${esc(b.date)}" max="${todayISO()}" min="${backfillMin()}" data-backfill="date"></label>
       <label class="f">How it was run<select id="bf-mode" data-backfill="mode">${['full', 'trim', 'light'].map(m => `<option value="${m}" ${b.mode === m ? 'selected' : ''}>${E.MODES[m].label}</option>`).join('')}</select></label></div>
       <div class="btnrow"><button class="btn primary" data-action="backfill-start">Open the session</button><button class="btn" data-action="backfill-cancel">Cancel</button></div></div>`;
@@ -632,10 +677,9 @@
     const dots = E.DAYS.map((d, i) => { const s = done.find(x => x.dayIdx === i); const st = s ? (s.skipped ? 'skipped' : 'done') : i === P.dayIdx ? 'next' : 'to come'; return `<span class="pill ${s ? (s.skipped ? 'skipped' : 'green') : i === P.dayIdx ? 'accent' : ''}" title="${esc(d.name)}: ${st}" aria-label="${esc(d.name)}: ${st}">${DAYSHORT[d.id] || d.id}</span>`; }).join(' ');
     const sets = LIFTS.map(l => `<div class="kpi"><span class="tiny">${LIFTNAME[l]} sets</span><span class="v num">${E.weeklySets(state, l)}<small>/ ${E.capFor(state, l)}</small></span></div>`).join('');
     const kcal = weekCardio();
-    return `<div class="card"><div class="row between"><h3>This week</h3><div class="row" style="gap:4px">${dots}</div></div>
-      <div class="grid3">${sets}</div>
-      <div class="row between small"><span class="muted">Easy cardio this week</span><span class="num"><b>${kcal.min} min</b> · ~${kcal.kcal} kcal of a 1,500 guideline</span></div>
-      <div class="bar"><i style="width:${Math.min(100, kcal.kcal / 15)}%;background:${kcal.kcal > 1500 ? 'var(--warn)' : 'var(--accent)'}"></i></div></div>`;
+    return foldCard('today-week', 'This week', `<div class="grid3">${sets}</div>
+      <div class="row between small"><span class="muted">Easy cardio</span><span class="num"><b>${kcal.min} min</b> · ~${kcal.kcal} kcal, limit about 1,500</span></div>
+      <div class="bar"><i style="width:${Math.min(100, kcal.kcal / 15)}%;background:${kcal.kcal > 1500 ? 'var(--warn)' : 'var(--accent)'}"></i></div>`, { tools: `<div class="row week-dots" data-action="card-fold" style="gap:4px">${dots}</div>` });
   }
   function extraThisWeek() {
     const t = new Date(), day = (t.getDay() + 6) % 7; const mon = new Date(t); mon.setDate(t.getDate() - day); const monISO = todayISO(mon);
@@ -666,20 +710,20 @@
       const r = c.result, pos = E.positionLabel(state);
       const lightWeek = pos.isDeload || pos.isRest || pos.isTest;
       const plan = E.buildSession(state, c.choice || r.mode);
-      const explain = pos.isTest ? `Test week: readiness doesn't change a test, it is recorded for your trend.${r.color === 'red' ? ' On a red day a max attempt will undersell you; resting today and testing another day is the better call.' : ''}`
-        : lightWeek ? `${pos.isRest ? 'Easy week' : 'Deload week'}: this session is already as light as the program gets, so readiness is recorded for your trend but doesn't change it.${r.color === 'red' ? ' If you feel genuinely wrecked, resting today and keeping the session is fine.' : ''}`
-        : state.program.lightRestOfWeek ? 'The rest of this week is set to light sessions after two red check-ins, so today runs light whatever the score. Readiness is recorded for your trend.'
-        : state.program.pushOn && r.color !== 'red' ? 'You chose to push on past a deload suggestion, so this week runs trimmed whatever the score: no bonus reps or earned sets, loads one step down.'
-        : r.color === 'green' ? 'Good to go. Loads and sets as planned, and the first set of each main lift can take bonus reps if it moves well.'
-        : r.color === 'yellow' ? 'So-so day. The book\'s rule: most days like this still allow an overload, so the session stands, trimmed: loads one step down (2.5%), no bonus reps, no earned extra sets. Same reps, same number of planned sets.'
-        : `Rough day. Grinding a planned overload through this is the fatigue trap. A light session (fewer sets, lighter loads) clears fatigue better than a day off and keeps the week on track.${state.program.pushOn ? ' You are pushing on past a deload suggestion this week, so the alternative is a trimmed session, not a full one.' : ''}`;
+      const explain = pos.isTest ? `Test week: a test stays as planned; readiness is just recorded.${r.color === 'red' ? ' On a red day, testing another day is the better call.' : ''}`
+        : lightWeek ? `${pos.isRest ? 'Easy week' : 'Deload week'}: already as light as it gets, so readiness is just recorded.${r.color === 'red' ? ' If you feel wrecked, rest today and keep this session.' : ''}`
+        : state.program.lightRestOfWeek ? 'Runs light: the rest of this week is light after two red check-ins.'
+        : state.program.pushOn && r.color !== 'red' ? 'Runs trimmed while you push on past a deload suggestion: no bonus reps or earned sets, loads 2.5% down.'
+        : r.color === 'green' ? `Loads and sets as planned.${plan.exercises.some(e => e.sets.some(x => x.plus > 0)) ? ' A + on the first set means bonus reps if it moves well.' : ''}`
+        : r.color === 'yellow' ? 'Trimmed: loads 2.5% down, no bonus reps or earned sets. Same reps, same planned sets.'
+        : `A light session (fewer sets, lighter loads) clears fatigue better than a day off or grinding through.${state.program.pushOn ? ' Pushing on this week, so the alternative is trimmed, not full.' : ''}`;
       return `<div class="card">
         <div class="row between"><h2>Readiness ${r.score}</h2><span class="pill ${r.color}">${r.color === 'green' ? 'Good to go' : r.color === 'yellow' ? 'So-so' : 'Rough day'}</span></div>
         <p>${explain}</p>
         ${r.color === 'red' && lightWeek ? `<button class="btn block" data-action="ci-rest">Rest today, keep this session for next time</button>` : ''}
         ${r.color === 'red' && !lightWeek ? `<div class="seg wrap">
             <button data-action="ci-choice" data-v="light" aria-pressed="${c.choice === 'light'}">Light session<small>recommended</small></button>
-            ${state.program.lightRestOfWeek ? '' : `<button data-action="ci-choice" data-v="${state.program.pushOn ? 'trim' : 'full'}" aria-pressed="${c.choice === (state.program.pushOn ? 'trim' : 'full')}">${state.program.pushOn ? 'Trimmed' : 'As planned'}<small>if you know it's not fatigue</small></button>`}
+            ${state.program.lightRestOfWeek ? '' : `<button data-action="ci-choice" data-v="${state.program.pushOn ? 'trim' : 'full'}" aria-pressed="${c.choice === (state.program.pushOn ? 'trim' : 'full')}">${state.program.pushOn ? 'Trimmed' : 'As planned'}<small>if it's not fatigue</small></button>`}
           </div>
           <button class="btn block" data-action="ci-rest">Rest today, keep this session for next time</button>` : ''}
         <h3>${esc(plan.dayName)}</h3>${previewTime(plan, c.choice || r.mode)}${previewPlan(plan)}
@@ -687,7 +731,7 @@
       </div>`;
     }
     return `<div class="card">
-      <h2>Check in</h2><p class="small muted">Be honest, then trust the plan. This takes ${c.askGroups ? 6 : 4} taps.</p>
+      <h2>Check in</h2><p class="small muted">Be honest, then trust the plan. ${c.askGroups ? 6 : 4} taps.</p>
       ${c.askGroups ? `<div class="q"><span class="label">How sore are you since the last session?</span>
         ${['legs|Legs', 'push|Chest, shoulders, arms', 'hinge|Lower back, hips, hamstrings'].map(x => { const [k, t] = x.split('|'); return `<span class="tiny">${t}</span>${seg('g:' + k, SORE, true)}`; }).join('')}</div>` :
         `<div class="q"><span class="label">How sore are you overall?</span>${seg('g:legs', SORE, true)}</div>`}
@@ -714,20 +758,27 @@
   }
   function noonTs(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d, 12, 0, 0).getTime(); }
   function dayTs(iso) { return iso === todayISO() ? Date.now() : noonTs(iso); }
+  // A past session is stamped noon of its date, except on the day of a restart or a max set by
+  // hand: there it counts after that moment, as the plan it was logged against does.
+  function backTs(date) {
+    const P = state.program; let ts = dayTs(date);
+    for (const b of [P.chronicSince, P.calibBaseTs]) if (b && tsISO(b) === date && ts <= b) ts = b + 1;
+    return ts;
+  }
   function startSession(mode, back) {
     const c = back ? null : ui.checkin, P = state.program;
     const sess = E.buildSession(state, mode);
     const pos = E.position(state);
     const planNotes = Array.isArray(sess.notes) ? sess.notes : [];
     Object.assign(sess, { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), phase: 'lift', startedAt: Date.now(), readiness: c ? c.result : null, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, notes: '', planNotes, skippedSlots: [] });
-    if (back) { sess.backfill = true; sess.date = back.date; sess.ts = dayTs(back.date); }
+    if (back) { sess.backfill = true; sess.date = back.date; sess.ts = backTs(back.date); }
     if (P.lightRestOfWeek && mode === 'light' && !back) sess.forcedLight = true;
     if (c && c.result) { delete sess.readiness.mode; }
     sess.exercises.forEach(e => { e.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; }); const w0 = e.sets.find(x => x.kind === 'work'); if (w0 && e.lift) e.plannedW = w0.w; });
     state.current = sess; ui.checkin = null; ui.backfill = null; ui.lastEi = null; ui.openWarm = {}; ui.editSets = {}; ui.lastDeleted = null; ui.todayScroll = 0; ui.quietUntil = performance.now() + 600;
     if (c && c.result && c.result.color === 'red') {
       const redsThisWeek = sessionsOfWeek().filter(s => s.readiness && s.readiness.color === 'red').length + 1;
-      if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.rest && !pos.isTest && P.dayIdx < 3) { P.lightRestOfWeek = true; sess.setLightRest = true; addLog('Second red check-in this week: remaining sessions switched to light (the book: light sessions, not an unplanned deload).'); }
+      if (redsThisWeek >= 2 && !P.lightRestOfWeek && !pos.isDeload && !pos.rest && !pos.isTest && P.dayIdx < 3) { P.lightRestOfWeek = true; sess.setLightRest = true; addLog('Second red check-in: the rest of this week runs light.'); }
     }
     unlockAudio(); keepAwake(); save(); render(); scrollToY(0);
   }
@@ -778,12 +829,12 @@
     const totalSets = s.exercises.reduce((n, e) => n + (s.skippedSlots.includes(e.slotKey) ? 0 : e.sets.filter(x => x.kind !== 'warm').length), 0);
     const editing = s.phase === 'edit';
     let html = `<div class="row between"><div><h2>${editing ? 'Editing: ' : ''}${esc(s.dayName)}</h2><div class="small muted">${esc(s.blockName)} · ${s.isDeload ? 'Deload' : s.isRest ? 'Easy week' : s.isTest ? 'Test week' : 'Week ' + s.week} · ${E.MODES[s.mode].label}${s.readiness ? ` · readiness ${s.readiness.score}` : ''}${s.backfill ? ` · logged for ${fmtDate(s.date)}` : ''}</div></div><span class="pill">${doneSets}/${totalSets} sets</span></div>`;
-    if (!editing && !s.backfill && s.date < todayISO()) html += `<div class="callout warn">This session was started on ${fmtDateLong(s.date)} and is still open. Finish it or discard it; it stays dated ${fmtDate(s.date)}.</div>`;
+    if (!editing && !s.backfill && s.date < todayISO()) html += `<div class="callout warn">Started ${fmtDateLong(s.date)} and still open. Finish or discard it; it stays dated ${fmtDate(s.date)}.</div>`;
     if (editing) html += `<div class="card"><label class="f">Date<input id="edit-date" type="date" value="${esc(s.editDate || s.date)}" max="${todayISO()}" data-edit="date"></label>
       <div class="grid2"><label class="f">Bike after (min)<input id="edit-cardio" type="number" inputmode="numeric" value="${s.cardio && s.cardio.min ? s.cardio.min : ''}" placeholder="0" data-edit="cardio"></label>
       <label class="f"><span>Watts <span class="opt">(optional)</span></span><input id="edit-watts" type="number" inputmode="numeric" value="${s.cardio && s.cardio.watts ? s.cardio.watts : ''}" placeholder="${esc(state.settings.cardioWatts)}" data-edit="watts"></label></div>
       <div class="q"><span class="label">Overall, that session was</span><div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${!!s.post && s.post.difficulty === v}">${DIFF[v]}</button>`).join('')}</div></div>
-      <p class="small muted">Tick, untick or retype any set below. Saving replaces the stored session; if it belongs to the current block, the maxes are re-read from the whole block's sessions.</p></div>`;
+      <p class="small muted">Retype, tick or untick any set. Saving re-reads the block's maxes if this session is in the current block.</p></div>`;
     for (const n of (Array.isArray(s.planNotes) ? s.planNotes : [])) html += `<div class="callout">${esc(n)}</div>`;
     // The exercise you are on: the one you last ticked while it has sets left, else the first
     // unfinished one. Its next set is highlighted; finished exercises above fold to one line.
@@ -795,7 +846,7 @@
     const folded = (e, ei) => e.fold === 'closed' || (e.fold !== 'open' && !editing && e.sets.length > 0 && e.sets.every(x => x.done) && ei !== lastEi);
     const shown = s.exercises.filter(e => !s.skippedSlots.includes(e.slotKey));
     const anyOpen = s.exercises.some((e, ei) => !s.skippedSlots.includes(e.slotKey) && !folded(e, ei));
-    if (shown.length > 1) html += `<div class="row between session-tools"><span class="small muted">Swipe a set left to delete it. The arrow folds an exercise.</span><button class="btn sm quiet" data-action="fold-all" data-v="${anyOpen ? 'closed' : 'open'}">${anyOpen ? 'Collapse all' : 'Expand all'}</button></div>`;
+    if (shown.length > 1) html += `<div class="row between session-tools"><span class="small muted">Swipe a set left to delete it.</span><button class="btn sm quiet" data-action="fold-all" data-v="${anyOpen ? 'closed' : 'open'}">${anyOpen ? 'Collapse all' : 'Expand all'}</button></div>`;
     const setText = (x) => `${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`;
     s.exercises.forEach((e, ei) => {
       const skipped = s.skippedSlots.includes(e.slotKey);
@@ -817,7 +868,7 @@
       const swaps = editing ? [] : E.swapOptions(state, e.slotKey).filter(x => x !== e.ex);
       html += `<section class="ex" data-ei="${ei}">
         <div class="ex-head"><div><div class="name">${esc(e.name)}</div>
-          <div class="meta">${e.role === 'primary' ? 'Main lift' : e.role === 'secondary' ? 'Second lift' : 'Accessory'}${e.optional ? ' · optional' : ''}${e.pctTM != null ? ` · ${pctLabel(e)}` : ''}${e.rpeTarget != null && !s.isTest ? ` · aim RPE ${e.rpeTarget}${e.rpeTarget < 6 ? ', easy' : ''}` : ''}${e.repRange ? ` · ${e.repRange[0]}–${e.repRange[1]} reps, add weight when every set hits ${e.repRange[1]}` : ''}</div></div>
+          <div class="meta">${e.role === 'primary' ? 'Main lift' : e.role === 'secondary' ? 'Second lift' : 'Accessory'}${e.optional ? ' · optional' : ''}${e.pctTM != null ? ` · ${pctLabel(e)}` : ''}${e.rpeTarget != null && !s.isTest ? ` · aim RPE ${e.rpeTarget}${e.rpeTarget < 6 ? ', easy' : ''}` : ''}${e.repRange ? ` · ${e.repRange[0]}–${e.repRange[1]} reps; all at ${e.repRange[1]} adds weight` : ''}</div></div>
           <div class="ex-tools">${skipped ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}">Undo skip</button>` : ''}${skipped ? '' : `<button class="fold-btn" data-action="ex-fold" data-ei="${ei}" data-v="closed" aria-expanded="true" aria-label="Fold ${esc(e.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>`}</div></div>
         ${e.cue ? `<div class="ex-note">${esc(e.cue)}</div>` : ''}${e.note ? `<div class="ex-note">${esc(e.note)}</div>` : ''}
         ${e.adjNote ? `<div class="ex-note adj">${esc(e.adjNote)}</div>` : ''}
@@ -835,7 +886,7 @@
       <button class="btn primary block" data-action="edit-save">Save changes</button>
       ${ui.confirm === 'cancel-edit' ? `<div class="callout warn">Throw away the changes you made here? <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="edit-cancel-confirm">Discard changes</button><button class="btn sm" data-action="confirm-cancel">Keep editing</button></div></div>` : ''}
       <button class="btn quiet block" data-action="edit-cancel">Cancel editing</button></div>`;
-    if (sessionComplete(s)) html += `<div class="callout good">Every set is logged. Look over your numbers, fix anything that is off, then tap Finish lifting when you are ready.</div>`;
+    if (sessionComplete(s)) html += `<div class="callout good">Every set is logged. Check your numbers, then tap Finish lifting.</div>`;
     html += `<div class="card"><label class="f">Notes<textarea id="sess-notes" data-action="notes" rows="2" maxlength="1000" placeholder="Anything worth remembering">${esc(s.notes)}</textarea></label>
       <button class="btn primary block" data-action="finish-lifting">Finish lifting</button>
       ${ui.confirm === 'finish' ? `<div class="callout warn">${totalSets - doneSets === 1 ? '1 set is' : `${totalSets - doneSets} sets are`} not ticked. Finish anyway? <div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="finish-confirm">Yes, finish</button><button class="btn sm" data-action="confirm-cancel">Keep going</button></div></div>` : ''}
@@ -851,7 +902,7 @@
     const editingSets = !!(ui.editSets && ui.editSets[ei]);
     const foldWarm = !editingSets && s.phase !== 'edit' && warm.length > 0 && warm.every(x => x.done) && e.sets.some(x => x.kind !== 'warm' && x.done) && !(ui.openWarm && ui.openWarm[ei]);
     const warmRow = foldWarm ? `<button class="set warm-sum" data-action="warm-open" data-ei="${ei}"><span class="n">W</span><span class="small muted">Warm-up done · ${warm.length} set${warm.length > 1 ? 's' : ''}, up to ${Math.max(...warm.map(x => (x.actualW != null ? x.actualW : x.w) || 0))}</span><span class="small muted">Show</span></button>` : '';
-    const editHint = editingSets ? `<div class="ex-note">Tap × on a set you skipped (or swipe any set left at any time). Removed sets do not count anywhere.</div>` : '';
+    const editHint = editingSets ? `<div class="ex-note">Tap × on a set you skipped. Removed sets don't count anywhere.</div>` : '';
     return `${editHint}<div class="sets">${warmRow}${e.sets.map((x, si) => {
       if (foldWarm && x.kind === 'warm') return '';
       const w = x.actualW != null ? x.actualW : x.w;
@@ -1027,7 +1078,7 @@
       evidence.push({ w, reps, rpe, first: x === work[0], missed: zero || reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null, planned: x.reps });
     });
     const C = E.TUNE.correction, peak = !!(E.BLOCKS[s.blockIdx] && E.BLOCKS[s.blockIdx].test);
-    const r = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up: peak ? C.ceilPeak : C.ceil, inc: state.settings.increment });
+    const r = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up: peak ? C.ceilPeak : s.mode === 'light' ? C.ceilLight : C.ceil, inc: state.settings.increment }); // a light session is not pushed up: it exists to cut fatigue
     const missedAny = evidence.some(x => x.missed);
     // The fatigue stop cut sets on a reading that has since been corrected (a typo fixed, an RPE
     // changed, the set unticked): the sets come back on their own.
@@ -1041,17 +1092,18 @@
       if (target !== cur) { x.actualW = target === x.w ? null : target; changed++; }
     });
     e.target = target; e.est = r ? Math.round(r.est) : null; e.hitFloor = !!(r && (r.hitFloor || missedAny));
+    const estTxt = evidence.some(x => x.rpe >= 6.5); // sets further from failure than that cannot say what a max is
     e.adjNote = !r ? null
-      : Math.abs(target / e.plannedW - 1) < 0.005 ? `${evidence.length} set${evidence.length > 1 ? 's' : ''} logged, on target (today's estimate ~${e.est})`
-      : `${evidence.length} set${evidence.length > 1 ? 's' : ''} logged, today's estimate ~${e.est}: remaining sets ${target > e.plannedW ? 'up' : 'down'} to ${target} (${target > e.plannedW ? '+' : ''}${((target / e.plannedW - 1) * 100).toFixed(1)}%)${r.hitFloor ? '. That is the floor for today.' : missedAny ? '. Reps were missed.' : ''}`;
+      : Math.abs(target / e.plannedW - 1) < 0.005 ? (estTxt ? `On target (estimate ~${e.est}).` : 'On target.')
+      : `${estTxt ? `Estimate ~${e.est}: next` : 'Next'} sets ${target > e.plannedW ? 'up' : 'down'} to ${target} (${target > e.plannedW ? '+' : ''}${((target / e.plannedW - 1) * 100).toFixed(1)}%).${r.hitFloor ? " Today's floor." : missedAny ? ' Reps were missed.' : ''}`;
     // The stop rule (a miss, a set still 2+ over target after a correction, or the floor): the
     // remaining sets come off automatically, once; "Restore" puts them back if you know better.
-    if (e.autoStopped && e.cut && e.adjNote) e.adjNote += ' Remaining sets were cut by the fatigue stop; Restore puts them back.';
+    if (e.autoStopped && e.cut && e.adjNote) e.adjNote += ' Remaining sets cut by the fatigue stop.';
     if (r && r.stop && !e.autoStopped && !typing && !noCut) {
       const keep = e.sets.filter(x => x.done || x.kind !== 'work'), removed = e.sets.length - keep.length;
       if (removed > 0) {
         e.autoStopped = true; e.autoCut = removed; e.cut = (e.cut || 0) + removed; e.sets = keep;
-        e.adjNote = `${e.adjNote} Stopped here: ${removed} remaining set${removed > 1 ? 's' : ''} cut (the fatigue stop; grinding on would cost more than it gains). Restore them below if you know better.`;
+        e.adjNote = `${e.adjNote} Fatigue stop: ${removed} set${removed > 1 ? 's' : ''} cut. Restore below if you know better.`;
         if (!quiet) toast(`${e.name}: remaining sets cut`);
         return removed;
       }
@@ -1123,7 +1175,7 @@
     const removed = e.sets.length - keep.length;
     if (!removed) return;
     e.cut = (e.cut || 0) + removed; e.sets = keep; e.autoCut = 0; // cut by you: they stay cut
-    e.adjNote = `${removed} remaining set${removed > 1 ? 's' : ''} cut. Living to lift another day is the point.`;
+    e.adjNote = `${removed} set${removed > 1 ? 's' : ''} cut.`;
     afterSetChange();
     save(); render();
   }
@@ -1159,7 +1211,7 @@
     const tips = { 4: '6+ left', 5: '5 left', 6: '4 left', 7: '3 left', 8: '2 left', 9: '1 left', 10: 'max' };
     ov.innerHTML = `<div class="sheet-bg" data-action="sheet-close"><div class="sheet" data-stop="1" role="dialog" aria-modal="true" aria-labelledby="sheet-h">
       <div class="row between"><h2 id="sheet-h">${ui.sheet.fromTick ? 'Logged. How hard was it?' : 'How hard was that set?'}</h2><button class="btn sm quiet" data-action="sheet-close">${ui.sheet.fromTick ? 'Skip' : 'Close'}</button></div>
-      ${ui.sheet.fromTick ? `<p class="small">The set is logged${ui.sheet.resting ? ' and your rest is running' : ''}. An RPE lets the next sets adjust and feeds your max; skip it if you did not notice.</p>` : ''}
+      ${ui.sheet.fromTick ? `<p class="small">Logged${ui.sheet.resting ? ', rest running' : ''}. An RPE adjusts the next sets and feeds your max. Optional.</p>` : ''}
       <p class="small muted">${esc(e.name)} · ${setLabel(e, si)}${x.rpeTarget != null ? ` · planned about RPE ${x.rpeTarget}` : ''}. RPE 8 means two clean reps were left.</p>
       <div class="rpegrid">${opts.map(v => `<button class="${v === x.rpeTarget ? 'target' : ''}" data-action="rpe-pick" data-v="${v}" aria-pressed="${v === x.rpe}">${v}<small>${tips[v] || ''}</small></button>`).join('')}${ui.sheet.fromTick ? `<button data-action="rpe-pick" data-v="skip">—<small>skip</small></button>` : `<button data-action="rpe-pick" data-v="">—<small>clear</small></button>`}</div>
     </div></div>`;
@@ -1171,7 +1223,7 @@
     const P = state.program; delete P.swaps[e.slotKey];
     const planned = (E.buildSession(state, s.mode).exercises.find(x => x.slotKey === e.slotKey) || {}).ex;
     if (exId === planned) toast(`Back to the plan's ${E.exerciseName(state, exId)}`); // swapping back un-pins the slot, so the variations rotate again
-    else { P.swaps[e.slotKey] = exId; toast(`${E.exerciseName(state, exId)} is now pinned for this slot (change it on the Program tab)`); }
+    else { P.swaps[e.slotKey] = exId; toast(`${E.exerciseName(state, exId)} pinned (change in Program)`); }
     // Rebuild this exercise only, from a fresh plan under the same mode.
     const fresh = E.buildSession(state, s.mode).exercises.find(x => x.slotKey === e.slotKey);
     fresh.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; });
@@ -1212,8 +1264,8 @@
       <h2>How did that go?</h2>
       <div class="small muted">${s.backfill ? `Logged for ${fmtDate(s.date)}` : `${s.durationMin} min of lifting`}${est.length ? ' · ' + est.map(x => `${LIFTNAME[x.lift]} today's estimate ~${Math.round(x.e1rm)}`).join(' · ') : ''}</div>
       <div class="q"><span class="label">Overall, that session was</span>
-        <div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${s.post.difficulty === v}">${DIFF[v]}<small>${['', 'left plenty in the tank', 'hard work, felt right', 'barely got through it', 'should have gone light'][v]}</small></button>`).join('')}</div></div>
-      <p class="small muted">This answer, your RPEs and how recovered you are next time decide whether next week adds a set, holds, or backs off.</p>
+        <div class="seg wrap">${[1, 2, 3, 4].map(v => `<button data-action="post-diff" data-v="${v}" aria-pressed="${s.post.difficulty === v}">${DIFF[v]}<small>${['', 'plenty left', 'hard, felt right', 'barely got through', 'should have gone light'][v]}</small></button>`).join('')}</div></div>
+      <p class="small muted">This, your RPEs and your next soreness set next week's sets.</p>
       <button class="btn primary block" data-action="post-next">${state.settings.cardioMin ? 'Next: easy bike' : 'Save session'}</button>
       <button class="btn quiet block" data-action="post-back">Back to the sets</button>
     </div>`;
@@ -1233,7 +1285,7 @@
     const mm = Math.floor(elapsed / 60), ss = elapsed % 60;
     return `<div class="card">
       <h2>Easy bike</h2>
-      <p class="small muted">Target ${target} min on the BikeErg at a conversational pace (you could talk in full sentences, nose breathing is comfortable). This is for health and recovery, not training stress. If your legs feel heavy, go easier, not shorter.</p>
+      <p class="small muted">${target} min at a pace you could talk through. Legs heavy? Go easier, not shorter.</p>
       <div class="kpi" style="align-items:center"><span class="v num" id="cardio-clock" style="font-size:3.4rem">${mm}:${String(ss).padStart(2, '0')}</span><span class="tiny">${run && !run.paused ? 'running' : run && run.paused ? 'paused' : 'ready'}</span></div>
       <div class="btnrow">${s.backfill ? '' : !run ? `<button class="btn primary" data-action="cardio-start">Start timer</button>` : run.paused ? `<button class="btn primary" data-action="cardio-resume">Resume</button>` : `<button class="btn" data-action="cardio-pause">Pause</button>`}</div>
       <hr class="sep">
@@ -1289,11 +1341,13 @@
       if (e.lift || s.skippedSlots.includes(e.slotKey)) continue;
       const prevW = state.acc[e.ex] ? state.acc[e.ex].weight : null, prevSuspect = state.acc[e.ex] ? state.acc[e.ex].suspect : null;
       const p = reducedDay ? null : E.accessoryProgress(state, { load: e.load, repRange: e.repRange, prevW, prevSuspect, sets: e.sets.map(x => ({ done: x.done, w: x.actualW != null ? x.actualW : x.w, reps: x.reps, actualReps: x.actualReps, okW: x.okW })) });
-      if (p) { state.acc[e.ex] = p.suspect ? { weight: p.weight, updated: s.date, suspect: p.suspect } : { weight: p.weight, updated: s.date }; if (p.suspect) addLog(`${e.name}: ${p.suspect} looked like a typo next to ${p.weight}, so next time stays at ${p.weight}. Change it in Settings if it was real.`); }
+      if (p) { state.acc[e.ex] = p.suspect ? { weight: p.weight, updated: s.date, suspect: p.suspect } : { weight: p.weight, updated: s.date }; if (p.suspect) addLog(`${e.name}: ${p.suspect} looks like a typo; next time stays ${p.weight}. Real? Change it in Settings.`); }
       else { const d = e.sets.find(x => x.done && x.actualW > 0); if (d && !state.acc[e.ex]) state.acc[e.ex] = { weight: d.actualW, updated: s.date }; }
     }
     // Calibrate the maxes from what was actually lifted today.
-    const cal = calibrateSession(s);
+    const predates = (s.ts || 0) <= (state.program.calibBaseTs || 0);
+    if (predates) s.calibrated = true;
+    const cal = predates ? [`${s.dayName} predates your last max reset, so the maxes stay.`] : calibrateSession(s);
     cal.forEach(addLog);
     delete s.cardioRun; delete s.cardioDraft; delete s.setLightRest;
     s.exercises.forEach(e => { delete e.fold; e.sets.forEach(x => { delete x.doneAt; delete x.timerSrc; }); }); delete s.lastEi;
@@ -1305,8 +1359,8 @@
     if (cal.length) {
       const fresh = state.lastReport && state.lastReport.sessionId === s.id;
       if (fresh) state.lastReport.lines = cal.concat(state.lastReport.lines).slice(0, 30);
-      else if (state.lastReport) state.lastReport.lines = state.lastReport.lines.concat(cal).slice(0, 30); // an unread review stays; today's lines join it
-      else { const moved = cal.some(l => / -> /.test(l)); state.lastReport = { title: moved ? (s.backfill ? `Maxes calibrated from ${fmtDate(s.date)}` : 'Maxes calibrated from today') : (s.backfill ? `Maxes held after ${fmtDate(s.date)}` : 'Maxes held after today'), lines: cal.slice(0, 30), sessionId: s.id }; }
+      else if (state.lastReport && !/^(Maxes |Session |Back after)/.test(state.lastReport.title)) state.lastReport.lines = cal.concat(state.lastReport.lines).slice(0, 30); // an unread review stays, with today's lines first
+      else { const moved = cal.some(l => / -> /.test(l)); state.lastReport = { title: moved ? `Maxes calibrated from ${fmtDate(s.date)}` : `Maxes held after ${fmtDate(s.date)}`, lines: cal.slice(0, 30), sessionId: s.id }; }
     }
     releaseAwake();
     if (state.settings.backupOffer && !Store.db) state.backupOffer = true; // the one-tap offer on Today
@@ -1342,10 +1396,38 @@
     const res = E.advanceDay(state);
     if (res.restDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(`${pos.inserted ? 'Deload' : 'Easy'} week done. ${nb.name} picks up next session.`); addLog(`${pos.inserted ? 'Deload' : 'Easy'} week complete.`); title = title || 'Light week complete'; }
     if (res.tmUp) { lines.push(`A clean block: the Training Max comes back up to ${Math.round(res.tmUp * 1000) / 10}% of 1RM.`); addLog(`Training Max back up to ${Math.round(res.tmUp * 1000) / 10}%.`); }
-    if (res.dialUp) { lines.push(P.volumeDial > 0 ? `Volume dial up to +${P.volumeDial}: a clean block while adding sets everywhere earns one more set per lift from here.` : `Volume dial back up to ${P.volumeDial}: a clean block earns a set back on every lift.`); addLog(`Volume dial up to ${P.volumeDial > 0 ? '+' : ''}${P.volumeDial}.`); }
+    if (res.dialUp) { lines.push(P.volumeDial > 0 ? `Volume dial up to +${P.volumeDial}: a clean block earns one more set per barbell exercise.` : `Volume dial back up to ${P.volumeDial}: a clean block earns a set back per barbell exercise.`); addLog(`Volume dial up to ${P.volumeDial > 0 ? '+' : ''}${P.volumeDial}.`); }
     if (res.stall) { for (const l of res.stall.lines) { lines.push(l); addLog(l); } }
+    if (res.setLines) { for (const l of res.setLines) { lines.push(l); addLog(l); } }
     if (res.mesoDone) { const nb = E.BLOCKS[P.blockIdx]; lines.push(P.special ? `Macro complete: ${P.special.weeksLeft > 1 ? `a ${P.special.weeksLeft}-week easy break` : 'an easy week'} first, then ${nb.name} starts again.` : `Next up: ${nb.name} block (${nb.focus.toLowerCase()}), variation set ${P.variantSet || 'A'}.`); }
     if (lines.length) state.lastReport = { title: title || 'Update', lines, sessionId: sid || null };
+  }
+
+  // ---------- The change log, as read ----------
+  // Same-day entries under one date, oldest first within the day; housekeeping lines and all but
+  // the last by-hand dial setting of a day left out; "holding" lines with one reason merged.
+  const LOG_NOISE = /^(No sets changed|Set counts and flags from past|This week's review will|It comes before the maxes|It predates the last max reset|Maxes re-read .*: unchanged|Deload and easy-week sessions (do not|leave)|A test (week )?sets the maxes once)/;
+  function mergeHolds(lines) { // "Squat: x." and "Bench: x." say the same thing once
+    const out = [], seen = {};
+    for (const l of lines) {
+      const m = /^(Squat|Bench|Deadlift)(: .+)$/.exec(l);
+      if (!m) { out.push(l); continue; }
+      const at = seen[m[2]];
+      if (at != null && !out[at].slice(0, out[at].indexOf(':')).includes(m[1])) out[at] = out[at].replace(':', `, ${m[1]}:`);
+      else { seen[m[2]] = out.length; out.push(l); }
+    }
+    return out;
+  }
+  function tidyLog(log) {
+    const days = [];
+    for (const l of log) {
+      if (!l || !l.msg || LOG_NOISE.test(l.msg)) continue;
+      let g = days[days.length - 1]; if (!g || g.date !== l.date) days.push(g = { date: l.date, lines: [] });
+      if (/^Volume dial set to .* by hand\.$/.test(l.msg) && g.lines.some(x => /^Volume dial set to/.test(x))) continue; // the log is newest first: this one was overwritten the same day
+      g.lines.push(l.msg);
+    }
+    days.forEach(g => { g.lines = mergeHolds(g.lines.slice().reverse()); });
+    return days;
   }
 
   // ---------- Program ----------
@@ -1368,53 +1450,50 @@
     const adj = LIFTS.map(l => `<tr><td>${LIFTNAME[l]}</td><td class="num">${state.lifts[l].oneRM}</td><td class="num">${state.lifts[l].tm}</td><td class="num">${P.setAdj[l] > 0 ? '+' : ''}${P.setAdj[l]}</td><td class="num">${P.loadAdj[l] ? (P.loadAdj[l] > 0 ? '+' : '') + Math.round(P.loadAdj[l] * 1000) / 10 + '%' : '—'}</td><td>${P.flags[l] ? '⚑'.repeat(P.flags[l]) : ''}</td></tr>`).join('');
     const slotKeys = Object.keys(E.SWAPS).filter(k => E.SWAPS[k].length > 1);
     const blk = pos.isRest || pos.isDeload ? null : pos.block;
+    const vA = (P.variantSet || 'A') === 'A';
+    const blockOf = (id) => E.BLOCKS.find(b => b.id === id), pctRange = (rows) => `${Math.round(rows[0].pct * state.settings.tmPct * 100)}-${Math.round(rows[rows.length - 1].pct * state.settings.tmPct * 100)}%`;
     const blockText = {
-      build: 'Sets of 7-8 at 70-77% of your 1RM (deadlift: sets of 5-6). Each week adds about 3% and, when you are recovering and hitting the numbers, a set on the competition lift. Two runs per macro with different variations (A: paused squat, close-grip, RDL; B: the other bar position, Larsen press, deficit deadlift).',
-      strength: 'Sets of 3-5 from 76% up to about 86% of 1RM over three weeks, then a deload. Week 3 opens each main lift with one single at about RPE 8 before the triples. Two runs per macro (A: paused squat, long-pause bench, paused deadlift; B: the other bar position, Spoto press, block pull).',
-      peak: 'Two weeks of heavy triples and doubles at 85-90% at the volume written, then a test week: work up to a single at RPE 9 on each lift. New maxes come from that.',
+      build: `Sets of 7-8 at ${pctRange(blockOf('build').primary)} of 1RM (deadlift 5-6 at ${pctRange(blockOf('build').primaryByLift.deadlift)}), about 3% heavier each week, plus a set when you recover well. Variations: ${vA ? 'paused squat, close-grip, RDL' : 'the other bar position, Larsen press, deficit deadlift'}.`,
+      strength: `Sets of 5, 4, then 3 at ${pctRange(blockOf('strength').primary)} of 1RM, then a deload. Week 3 opens with a single at about RPE 8. Variations: ${vA ? 'paused squat, long-pause bench, paused deadlift' : 'the other bar position, Spoto press, block pull'}.`,
+      peak: `Heavy triples, then doubles, at ${pctRange(blockOf('peak').primary)}. Then a test week: work up to a single at RPE 9, and your new maxes come from it.`,
     };
-    const dial = P.volumeDial || 0;
-    return `
-      <div class="card"><h3>${macroWeeks}-week macro</h3><div class="timeline" style="grid-template-columns:repeat(${Math.min(12, macroWeeks)},1fr)">${cells}</div>
+    const dial = P.volumeDial || 0, pinned = slotKeys.filter(k => P.swaps[k]).length;
+    const SLOT = { bench_secondary: 'Second bench', press_secondary: 'Second press', back_vertical: 'Vertical pull', back_horizontal: 'Row', delts: 'Side delts' };
+    const slotName = (k) => SLOT[k] || k.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+    const log = tidyLog(state.log);
+    let logShown = log, logMore = 0;
+    if (!ui.logAll) { let n = 0; logShown = []; for (const g of log) { if (n >= 5 && logShown.length) break; logShown.push(g); n += g.lines.length; } logMore = log.slice(logShown.length).reduce((m, g) => m + g.lines.length, 0); }
+    return FOLD_ALL + foldCard('prog-macro', `${macroWeeks}-week macro`, `<div class="timeline" style="grid-template-columns:repeat(${Math.min(12, macroWeeks)},1fr)">${cells}</div>
         <div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--good)"></span> Build ×2</span><span><span class="dot" style="background:var(--accent)"></span> Strength ×2</span>${state.settings.includePeak !== false ? '<span><span class="dot" style="background:var(--bad)"></span> Peak + test</span>' : ''}<span>D deload · E easy week</span></div>
-        ${blk ? `<p><b>${esc(blk.name)} ${esc(P.variantSet || 'A')}:</b> ${blockText[blk.id]}</p>` : `<p><b>${pos.isDeload ? 'Deload week' : 'Easy week'}:</b> ${pos.isDeload ? `half the sets at reduced loads; ${pos.inserted ? 'the block resumes afterwards' : 'the next block starts afterwards'}.` : 'half the sets at half the loads on variations, to clear what deloads do not.'}</p>`}
-        <div class="row between small"><span>Volume dial <b class="num">${dial > 0 ? '+' : ''}${dial}</b> <span class="muted">(lasting set offset on every lift; down one step per block on chronic fatigue, back up after a clean block, above zero only after a clean block that was adding sets everywhere)</span></span></div>
-        <label class="f">Set the dial by hand<select id="dial" data-action="dial"><option value="-2" ${dial === -2 ? 'selected' : ''}>−2 (two sets fewer)</option><option value="-1" ${dial === -1 ? 'selected' : ''}>−1</option><option value="0" ${dial === 0 ? 'selected' : ''}>0 (as written)</option><option value="1" ${dial === 1 ? 'selected' : ''}>+1</option><option value="2" ${dial === 2 ? 'selected' : ''}>+2 (two sets more)</option></select></label>
-      </div>
-      <div class="card"><h3>This week's plan</h3>
-        ${week.map((s, di) => `<details ${di === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 26px 6px 0"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
-          <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff'), f = work[0] || e.sets[0], op = e.sets.find(x => x.kind === 'single'), tst = e.sets.some(x => x.kind === 'test'); return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${tst ? 'single + ' : op ? `1×1 + ` : ''}${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${op ? `${op.w} / ` : ''}${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join('')}
-      </div>
-      <div class="card"><h3>Weekly working sets</h3>${sets}<p class="small muted">Counts the competition lift plus its close barbell variations. The caps are the ceiling the adaptive rules can climb to; the book's advice for someone coming off too much volume is to start low and only add when you are clearly recovering.</p></div>
-      <div class="card"><h3>Maxes and adjustments</h3>
-        <div class="tablewrap"><table><tr><th>Lift</th><th class="num">1RM</th><th class="num">TM</th><th class="num">Sets</th><th class="num">Load</th><th>Flags</th></tr>${adj}</table></div>
-        <p class="small muted">Sets and load are the adaptive offsets in effect this week. A flag means a week where you missed reps, got crushed or stayed sore; two flags on two lifts suggests a deload.</p>
-        ${state.current ? '<p class="small muted">Deload and easy-week changes wait until the open session is finished.</p>' : `<div class="btnrow">${pos.isRest || pos.isDeload || pos.isTest ? '' : '<button class="btn" data-action="deload-now-confirm">Deload now</button>'}${pos.isRest || pos.isDeload ? '' : '<button class="btn" data-action="rest-now-confirm">Easy week</button>'}</div>`}
-        ${ui.confirm === 'deload' ? `<div class="callout warn">Take a deload week now? The block picks up where it left off afterwards.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="deload-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
-        ${ui.confirm === 'rest' ? `<div class="callout warn">Insert one easy week (half sets, half loads, variations) before continuing? Use it once or twice a year or when life gets heavy.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="rest-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
-        <label class="f">After this block, run<select id="next-block" data-action="next-block"><option value="">the normal sequence</option>${E.BLOCKS.map((b, i) => `<option value="${i}" ${P.nextBlockOverride === i ? 'selected' : ''}>${b.name}</option>`).join('')}</select></label>
-      </div>
-      <div class="card"><h3>Exercise choices</h3>
-        <p class="small muted">Variations rotate each block automatically. Pin a choice here if your equipment or joints prefer it; clear it to go back to the rotation.</p>
-        ${slotKeys.map(k => { const vset = blk && ((P.variantSet === 'B' && blk.variationB) || blk.variation); const def = (vset && vset[k]) || E.SWAPS[k][0]; const defName = E.exerciseName(state, (def === 'high_bar_squat' || def === 'low_bar_squat') ? (state.settings.squatStyle === 'highbar' ? 'low_bar_squat' : 'high_bar_squat') : def); return `<label class="f">${k.replace(/_/g, ' ')}<select id="swap-${k}" data-action="pin-swap" data-k="${k}"><option value="">Block default (${esc(defName)})</option>${E.swapOptions(state, k).map(x => `<option value="${x}" ${P.swaps[k] === x ? 'selected' : ''}>${esc(E.exerciseName(state, x))}</option>`).join('')}</select></label>`; }).join('')}
-      </div>
-      <div class="card"><h3>Why things changed</h3>${state.log.length ? `<div class="loglist">${state.log.slice(0, 25).map(l => `<div class="item"><span class="d">${fmtDate(l.date)}</span><span>${arrows(l.msg)}</span></div>`).join('')}</div>` : '<p class="muted small">Nothing yet. After each full week the review lands here.</p>'}</div>`;
+        ${blk ? `<p><b>${esc(blk.name)} ${esc(P.variantSet || 'A')}:</b> ${blockText[blk.id]}</p>` : `<p><b>${pos.isDeload ? 'Deload week' : 'Easy week'}:</b> ${pos.isDeload ? `fewer sets at reduced loads; ${pos.inserted ? 'the block then resumes' : 'the next block follows'}.` : 'half the sets at half the loads, on variations.'}</p>`}
+        <label class="f dial-row"><span>Volume dial <span class="muted" style="font-weight:500">adds or removes a set on every barbell exercise. It drops with chronic fatigue; a clean Build block earns it back.</span></span><select id="dial" data-action="dial"><option value="-2" ${dial === -2 ? 'selected' : ''}>−2 (two fewer per exercise)</option><option value="-1" ${dial === -1 ? 'selected' : ''}>−1</option><option value="0" ${dial === 0 ? 'selected' : ''}>0 (as written)</option><option value="1" ${dial === 1 ? 'selected' : ''}>+1</option><option value="2" ${dial === 2 ? 'selected' : ''}>+2 (two more per exercise)</option></select></label>`, { sum: `Now: ${esc(pos.label)}${dial ? ` · dial ${dial > 0 ? '+' : ''}${dial}` : ''}` })
+      + foldCard('prog-week', "This week's plan", week.map((s, di) => `<details ${di === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 26px 6px 0;min-height:44px"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
+          <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff'), f = work[0] || e.sets[0], op = e.sets.find(x => x.kind === 'single'), tst = e.sets.some(x => x.kind === 'test'); return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${tst ? 'single + ' : op ? `1×1 + ` : ''}${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${op ? `${op.w} / ` : ''}${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join(''), { sum: `${week.length} sessions, about ${Math.max(...week.map(s => s.estMinutes))} min at most` })
+      + foldCard('prog-sets', 'Weekly working sets', `${sets}<p class="small muted">Competition lift plus close variations. The cap is the weekly total sets can't pass; sets are added only while you recover.</p>`, { closed: true, sum: LIFTS.map(l => `${LIFTNAME[l]} ${E.weeklySets(state, l)}/${E.capFor(state, l)}`).join(' · ') })
+      + foldCard('prog-maxes', 'Maxes and adjustments', `<div class="tablewrap"><table><tr><th>Lift</th><th class="num">1RM</th><th class="num">TM</th><th class="num">Sets</th><th class="num">Load</th><th>Flags</th></tr>${adj}</table></div>
+        <p class="small muted">Sets and Load: this week's changes. A flag marks a hard week (missed reps, a crushing session, lasting soreness); two flags each on two lifts suggest a deload.</p>
+        ${state.current ? '<p class="small muted">Deload and easy-week changes wait until this session is finished.</p>' : `<div class="btnrow">${pos.isRest || pos.isDeload || pos.isTest ? '' : '<button class="btn" data-action="deload-now-confirm">Deload now</button>'}${pos.isRest || pos.isDeload ? '' : '<button class="btn" data-action="rest-now-confirm">Easy week</button>'}</div>`}
+        ${ui.confirm === 'deload' ? `<div class="callout warn">${deloadEffect(true)}<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="deload-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
+        ${ui.confirm === 'rest' ? `<div class="callout warn">Insert an easy week (half sets, half loads)? Best once or twice a year, or when life gets heavy.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="rest-now">Yes</button><button class="btn sm" data-action="confirm-cancel">No</button></div></div>` : ''}
+        <label class="f">After this block, run<select id="next-block" data-action="next-block"><option value="">the normal sequence</option>${E.BLOCKS.map((b, i) => `<option value="${i}" ${P.nextBlockOverride === i ? 'selected' : ''}>${b.name}</option>`).join('')}</select></label>`, { sum: LIFTS.map(l => `${LIFTNAME[l]} ${state.lifts[l].oneRM}`).join(' · ') })
+      + foldCard('prog-swaps', 'Exercise choices', `<p class="small muted">Variations rotate each block. Pin one if your equipment or joints prefer it; pick (auto) to undo.</p>
+        <div class="swap-list">${slotKeys.map(k => { const vset = pos.block && ((P.variantSet === 'B' && pos.block.variationB) || pos.block.variation); const def = (pos.isRest && E.REST.variation[k]) || (vset && vset[k]) || E.SWAPS[k][0]; const defName = E.exerciseName(state, (def === 'high_bar_squat' || def === 'low_bar_squat') ? (state.settings.squatStyle === 'highbar' ? 'low_bar_squat' : 'high_bar_squat') : def); return `<label class="swap-row${P.swaps[k] ? ' pinned' : ''}"><span>${slotName(k)}</span><select id="swap-${k}" data-action="pin-swap" data-k="${k}"><option value="">${esc(defName)} (auto)</option>${E.swapOptions(state, k).map(x => `<option value="${x}" ${P.swaps[k] === x ? 'selected' : ''}>${esc(E.exerciseName(state, x))}</option>`).join('')}</select></label>`; }).join('')}</div>`, { closed: true, sum: pinned ? `${pinned} pinned, the rest automatic` : 'All automatic' })
+      + foldCard('prog-why', 'Why things changed', log.length ? `<div class="loglist">${logShown.map(g => `<div class="item"><span class="d">${fmtDate(g.date)}</span><span class="lg">${g.lines.map(m => `<span>${arrows(m)}</span>`).join('')}</span></div>`).join('')}</div>${logMore ? `<button class="btn sm quiet" data-action="log-all">Show ${logMore} older</button>` : ''}` : '<p class="muted small">Nothing yet. Weekly reviews land here.</p>', { sum: log.length ? arrows(log[0].lines[log[0].lines.length - 1]) : 'Nothing yet' });
   }
 
   // ---------- History ----------
   function renderHistory() {
     const done = state.sessions.filter(s => !s.skipped).slice().reverse();
     const thisWeek = weekStart(Date.now()), WEEK = 7 * 864e5;
-    const trend = LIFTS.map(l => { const w = weeklyEst(l); const last = w[w.length - 1], prev = w[w.length - 2]; const lastWk = last ? weekStart(last.x) : 0; const label = lastWk === thisWeek ? 'this week' : lastWk === thisWeek - WEEK ? 'last week' : last ? `week of ${fmtDate(tsISO(lastWk))}` : ''; const adjacent = prev && weekStart(prev.x) === lastWk - WEEK; return `<div class="stack"><div class="row between"><b>${LIFTNAME[l]}</b><span class="small muted num">1RM ${state.lifts[l].oneRM} · TM ${state.lifts[l].tm}${last ? ` · ${label} ~${Math.round(last.y)}${adjacent ? ` (${last.y >= prev.y ? '+' : ''}${Math.round(last.y - prev.y)} vs the week before)` : ''}` : ''}</span></div><canvas id="c-${l}" height="130" class="tap-chart" data-action="chart-pick" data-lift="${l}" role="img" aria-label="${LIFTNAME[l]} estimated max by week. Tap a dot for that session's details."></canvas>${chartDetail(l)}</div>`; }).join('');
-    return `
-      <div class="card" id="trend-card"><h3>Estimated 1RM, week by week</h3>${trend}<div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> weekly average</span><span><span class="dot" style="background:var(--muted)"></span> single sessions</span><span>dashed: current 1RM</span></div><p class="small"><b>Tap any dot</b> to see the session behind it: each set, the max it implies and how much it counted.</p><p class="small muted">Every logged set with an RPE on a competition lift (or a close barbell variation) implies a max; the line is the weekly average of those, with easy sets (under RPE 6.5) counting lightly and bigger dots carrying more weight. The max itself calibrates only from sets at RPE 6.5 and up, so the line can sit below or above the dashed 1RM. It moves with how you are doing and feeling, not with what you entered at setup.</p></div>
-      <div class="card"><h3>Readiness</h3><canvas id="c-ready" height="140"></canvas></div>
-      <div class="card"><h3>Sessions</h3>${done.length ? (ui.histAll ? done : done.slice(0, 60)).map((s, i) => `<details class="session-item" style="display:block" data-id="${s.id}" ${ui.histOpen && ui.histOpen[s.id] ? 'open' : ''}><summary class="hist-row"><span class="hist-main"><b>${esc(s.dayName)}</b><span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></span><span class="hist-ready">${s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '<span class="muted small" aria-label="No check-in">–</span>'}</span><span class="hist-diff">${s.post && s.post.difficulty ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</span></summary>
+    const latest = {};
+    const trend = LIFTS.map(l => { const w = weeklyEst(l); const last = w[w.length - 1], prev = w[w.length - 2]; const lastWk = last ? weekStart(last.x) : 0; const label = lastWk === thisWeek ? 'this week' : lastWk === thisWeek - WEEK ? 'last week' : last ? `week of ${fmtDate(tsISO(lastWk))}` : ''; const adjacent = prev && weekStart(prev.x) === lastWk - WEEK; if (last) latest[l] = Math.round(last.y); return `<div class="stack"><div class="row between"><b>${LIFTNAME[l]}</b><span class="small muted num">1RM ${state.lifts[l].oneRM} · TM ${state.lifts[l].tm}${last ? ` · ${label} ~${Math.round(last.y)}${adjacent ? ` (${last.y >= prev.y ? '+' : ''}${Math.round(last.y - prev.y)})` : ''}` : ''}</span></div><canvas id="c-${l}" height="130" style="height:130px" class="tap-chart" data-action="chart-pick" data-lift="${l}" role="img" aria-label="${LIFTNAME[l]} estimated max by week. Tap a dot for that session's details."></canvas>${chartDetail(l)}</div>`; }).join('');
+    return FOLD_ALL + foldCard('hist-trend', 'Estimated 1RM, week by week', `${trend}<div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> weekly average</span><span><span class="dot" style="background:var(--muted)"></span> sessions</span><span>dashed: 1RM</span></div><p class="small"><b>Tap a dot</b> for its session: each set, the max it implies, how much it counted.</p><p class="small muted">Bigger dots carry more weight. Sets under RPE 6.5 count lightly here and rarely move your 1RM, so the line can sit apart from it.</p>`, { dom: 'trend-card', sum: LIFTS.filter(l => latest[l]).map(l => `${LIFTNAME[l]} ~${latest[l]}`).join(' · ') || 'No rated heavy sets yet' })
+      + foldCard('hist-ready', 'Readiness', '<canvas id="c-ready" height="140" style="height:140px"></canvas>', { sum: (() => { const r = done.find(s => s.readiness); return r ? `Latest ${r.readiness.score}` : 'No check-ins yet'; })() })
+      + foldCard('hist-sessions', 'Sessions', `${done.length ? (ui.histAll ? done : done.slice(0, 60)).map((s, i) => `<details class="session-item" style="display:block" data-id="${s.id}" ${ui.histOpen && ui.histOpen[s.id] ? 'open' : ''}><summary class="hist-row"><span class="hist-main"><b>${esc(s.dayName)}</b><span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></span><span class="hist-ready">${s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '<span class="muted small" aria-label="No check-in">–</span>'}</span><span class="hist-diff">${s.post && s.post.difficulty ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</span></summary>
           <div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
           <div class="small muted" style="margin-top:6px">${s.durationMin ? s.durationMin + ' min' : ''}${s.cardio && s.cardio.min ? ` · bike ${s.cardio.min} min` : ''}${s.backfill ? ' · logged after the fact' : ''}${s.edited ? ' · edited' : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</div>
-          <div class="btnrow" style="margin-top:6px">${ui.confirmDel === s.id ? `<span class="small">Delete this session for good?</span><button class="btn sm danger-fill" data-action="delete-session" data-id="${s.id}" data-sure="1">Yes, delete</button><button class="btn sm" data-action="delete-cancel">Keep</button>` : `<button class="btn sm" data-action="edit-session" data-id="${s.id}">Edit</button><button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="color:var(--bad)">Delete</button>`}</div></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on the Today tab.</p>'}
-        ${done.length > 60 && !ui.histAll ? `<button class="btn sm" data-action="hist-all">Show all ${done.length} sessions</button>` : ''}
-        <p class="small muted">Forgot a session? "Log a past session" is on the Today tab.</p></div>`;
+          <div class="btnrow" style="margin-top:6px">${ui.confirmDel === s.id ? `<span class="small">Delete this session for good?</span><button class="btn sm danger-fill" data-action="delete-session" data-id="${s.id}" data-sure="1">Yes, delete</button><button class="btn sm" data-action="delete-cancel">Keep</button>` : `<button class="btn sm" data-action="edit-session" data-id="${s.id}">Edit</button><button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="color:var(--bad)">Delete</button>`}</div></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on Today.</p>'}
+        ${done.length > 60 && !ui.histAll ? `<button class="btn sm" data-action="hist-all">Show all ${done.length}</button>` : ''}`, { sum: done.length ? `${done.length} logged, latest ${fmtDate(done[0].date)}` : 'None yet' });
   }
   // ---------- Editing a logged session ----------
   function startEdit(id) {
@@ -1443,7 +1522,9 @@
   }
   let editSaveTimer = null;
   function editSig(x) { return JSON.stringify({ d: x.editDate || x.date, sk: x.skippedSlots || [], p: x.post ? x.post.difficulty : 0, c: x.cardio ? [x.cardio.min || 0, x.cardio.watts || null] : [0, null], n: x.notes || '', e: (x.exercises || []).map(e => [e.ex, (e.sets || []).map(y => [y.kind, y.done ? 1 : 0, y.actualW, y.actualReps, y.rpe])]) }); }
+  function openSessionsCard() { if (isFolded('hist-sessions')) { folds['hist-sessions'] = false; saveFolds(); } }
   function showSessionInHistory(id) {
+    openSessionsCard();
     ui.histOpen = ui.histOpen || {}; ui.histOpen[id] = 1; render();
     const el = document.querySelector(`.session-item[data-id="${id}"]`), sc = scroller();
     scrollToY(el ? sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 8 : 0);
@@ -1466,7 +1547,7 @@
     const nEl = $('#sess-notes'); if (nEl) s.notes = nEl.value.slice(0, 1000);
     // Every tick in the editor is "as logged": a set left unticked is one that was not done.
     s.exercises.forEach(e => e.sets.forEach(x => { if (x.done && x.actualReps == null) x.actualReps = x.reps; if (x.done && x.actualW == null && x.w != null) x.actualW = x.w; }));
-    if (newDate !== s.date) { s.date = newDate; s.ts = dayTs(newDate); }
+    if (newDate !== s.date) { s.date = newDate; s.ts = backTs(newDate); }
     s.cardio = cm > 0 ? { min: cm, watts: cw, kcal: E.cardioKcal(cm, cw || state.settings.cardioWatts) } : { min: 0 };
     s.exercises.forEach(e => { delete e.fold; e.sets.forEach(x => { delete x.doneAt; delete x.timerSrc; }); }); delete s.lastEi;
     delete s.phase; delete s.editOf; delete s.editDate; delete s.startedAt; delete s.finishedAt; delete s.cardioRun; delete s.setLightRest;
@@ -1476,13 +1557,40 @@
     state.current = null; view = 'history';
     const lines = [`${s.dayName} (${fmtDate(s.date)}) edited.`];
     const sig = (x) => JSON.stringify({ d: x.date, sk: x.skippedSlots || [], p: x.post ? x.post.difficulty : 0, e: (x.exercises || []).map(e => [e.ex, (e.sets || []).map(y => [y.kind, y.done ? 1 : 0, y.actualW, y.actualReps, y.rpe])]) });
-    if (sig(original) === sig(s)) lines.push('No sets changed, so the maxes stay as they are.');
-    else if (s.isDeload || s.isRest) lines.push('Deload and easy-week sessions do not calibrate the maxes, so they stay as they are.');
-    else if (s.isTest) lines.push('A test week sets the maxes once, at its end, so editing a test session now leaves them as they are.');
-    else if (!inBlock(s) || (s.ts || 0) <= (P.calibBaseTs || 0)) lines.push('It comes before the maxes were last reset (a new block, a deload, a layoff or a max set by hand), so the maxes stay as they are.');
-    else lines.push(...recalibrateBlock(sessionsOfWeek().some(x => x.id === s.id) ? 'This week\'s review will read the corrected session.' : 'Set counts and flags from past weekly reviews stay as they were.'));
-    lines.forEach(addLog); state.lastReport = { title: 'Session edited', lines };
+    if (sig(original) !== sig(s)) { // nothing to explain when only the notes or cardio changed
+      if (s.isDeload || s.isRest) lines.push('Deload and easy-week sessions leave the maxes alone.');
+      else if (s.isTest) lines.push('A test sets the maxes once, at its end, so this edit leaves them alone.');
+      else if (!inBlock(s) || (s.ts || 0) <= (P.calibBaseTs || 0)) lines.push('It predates the last max reset, so the maxes stay.');
+      else lines.push(...recalibrateBlock(sessionsOfWeek().some(x => x.id === s.id) ? "This week's review will use the fix." : 'Set counts and flags from past reviews stay.'));
+      lines.forEach(addLog); state.lastReport = { title: 'Session edited', lines };
+    }
+    if (sig(original) !== sig(s)) { const acc = reAccessories(s, true, original.date); if (acc.length) { acc.forEach(addLog); state.lastReport.lines = state.lastReport.lines.concat(acc); } }
     save(); showSessionInHistory(s.id); toast('Session updated');
+  }
+  // An accessory's next weight came from the session that was just edited or deleted, and nothing
+  // newer has used the exercise: work it out again from what the log now says.
+  function reAccessories(sess, edited, oldDate) {
+    const out = [];
+    const nextFrom = (x, y) => { // the weight a logged exercise leads to; a deliberate edit gets no typo check
+      const reduced = x.isDeload || x.isRest || x.isTest || x.mode === 'light';
+      const p = reduced ? null : E.accessoryProgress(state, { load: y.load, repRange: y.repRange, prevW: null, prevSuspect: null, sets: y.sets.map(z => ({ done: z.done, w: z.actualW != null ? z.actualW : z.w, reps: z.reps, actualReps: z.actualReps, okW: z.okW })) });
+      if (p) return { weight: p.weight, updated: x.date };
+      const d = y.sets.filter(z => z.done && z.actualW > 0).pop();
+      return d ? { weight: d.actualW, updated: x.date } : null;
+    };
+    for (const e of sess.exercises || []) {
+      const a = state.acc[e.ex]; if (e.lift || !a || a.updated !== (oldDate || sess.date) || (sess.skippedSlots || []).includes(e.slotKey)) continue;
+      const usedIt = (x) => !x.skipped && x.id !== sess.id && (x.exercises || []).some(y => y.ex === e.ex && (y.sets || []).some(z => z.done));
+      if (state.sessions.some(x => usedIt(x) && (x.ts || 0) > (sess.ts || 0))) continue;
+      const olders = state.sessions.filter(x => usedIt(x) && (x.ts || 0) < (sess.ts || 0));
+      const older = olders.filter(x => !(x.isDeload || x.isRest || x.isTest || x.mode === 'light') && !(x.skippedSlots || []).includes(e.slotKey)).pop();
+      if (!edited && olders.length && !older) continue; // only reduced work left to go on: keep what is there
+      const next = edited ? nextFrom(sess, e) : older ? nextFrom(older, older.exercises.find(y => y.ex === e.ex)) : null;
+      if (next) state.acc[e.ex] = next; else if (!edited) delete state.acc[e.ex];
+      const now = state.acc[e.ex] ? state.acc[e.ex].weight : null;
+      if (now !== a.weight) out.push(now != null ? `${e.name}: next time ${now}.` : `${e.name}: pick a new starting weight next time.`);
+    }
+    return out;
   }
   // After an edit inside the current block: put the maxes back to where the block started and
   // re-read every session of the block in date order, so the edit lands exactly as if it had been
@@ -1493,7 +1601,7 @@
     const before = {}; LIFTS.forEach(l => { before[l] = state.lifts[l].oneRM; });
     for (const l of LIFTS) { const L = state.lifts[l]; if (!(L.blockStartRM > 0)) return ['No block start on record for the maxes, so they are unchanged.']; }
     for (const l of LIFTS) { const L = state.lifts[l]; E.applyTM(state, l, L.blockStartRM); L.est = L.estAtBlockStart != null ? L.estAtBlockStart : null; L.upKey = null; L.lbHits = 0; L.lbKey = null; L.easyRun = 0; L.easyKey = null; if (L.ratedAtBlockStart != null) L.rated = L.ratedAtBlockStart; }
-    P.calibDrops = {};
+    P.calibDrops = {}; P.fatigueBase = {};
     const sessions = state.sessions.filter(s => inBlock(s) && !s.skipped && (s.ts || 0) > (P.calibBaseTs || 0)).sort((a, b) => (a.ts || 0) - (b.ts || 0));
     for (const sess of sessions) { calibrateSession(sess); Store.pushSession(sess); }
     const moved = LIFTS.filter(l => state.lifts[l].oneRM !== before[l]);
@@ -1540,8 +1648,8 @@
     const tmp = document.createElement('div'); tmp.innerHTML = renderHistory();
     const fresh = tmp.querySelector('#trend-card'); if (!fresh) { render(); return; }
     card.replaceWith(fresh);
+    drawCharts(true); // first: the anchor must measure the final layout
     if (anchor) { const el = document.querySelector(anchor.sel); if (el) { const dy = el.getBoundingClientRect().top - anchor.top; if (Math.abs(dy) >= 1) scroller().scrollTop += dy; } anchor = null; }
-    drawCharts(true);
   }
   function drawCharts(trendOnly) {
     cssCache = null;
@@ -1554,11 +1662,11 @@
       const m = lineChart($('#c-' + l), [{ pts: sess, color: cssVar('--muted'), dots: true, noline: true, faint: true, sized: true }, { pts: weekly, color: cssVar('--accent'), dots: true }], { hline: state.lifts[l].oneRM, hlineColor: cssVar('--fg'), sel, selWk, selColor: cssVar('--accent') });
       chartHits[l] = m ? sess.map(p => ({ id: p.id, px: m.X(p.x), py: m.Y(p.y) })) : [];
     }
-    if (!trendOnly) lineChart($('#c-ready'), [{ pts: ready, color: cssVar('--accent'), dots: true }], { min: 0, max: 100, bands: [[0, 40, cssVar('--bad-soft')], [40, 60, cssVar('--warn-soft')], [60, 100, cssVar('--good-soft')]] });
+    if (!trendOnly) lineChart($('#c-ready'), [{ pts: ready, color: cssVar('--accent'), dots: true }], { min: 0, max: 100, bands: [[0, E.TUNE.readiness.yellow, cssVar('--bad-soft')], [E.TUNE.readiness.yellow, E.TUNE.readiness.green, cssVar('--warn-soft')], [E.TUNE.readiness.green, 100, cssVar('--good-soft')]] });
   }
   function lineChart(cv, series, opt) {
     if (!cv) return;
-    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 320, H = Number(cv.getAttribute('height'));
+    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 320, H = parseFloat(cv.style.height) || Number(cv.getAttribute('height')); // the height attribute holds H x dpr after a draw
     cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + 'px';
     const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
     const all = series.flatMap(s => s.pts);
@@ -1642,58 +1750,49 @@
   // ---------- Settings ----------
   function renderSettings() {
     const s = state.settings;
-    return `
-      <div class="card"><h3>Maxes</h3>
-        <div class="grid3">${LIFTS.map(l => `<label class="f">${LIFTNAME[l]} 1RM<input id="set-1rm-${l}" type="number" inputmode="decimal" data-setting="1rm:${l}" value="${ui.pendingMax && ui.pendingMax.l === l ? ui.pendingMax.v : state.lifts[l].oneRM}"></label>`).join('')}</div>
-        ${ui.pendingMax ? `<div class="callout warn">${LIFTNAME[ui.pendingMax.l]} 1RM ${state.lifts[ui.pendingMax.l].oneRM} → ${ui.pendingMax.v}? That is a ${Math.round(Math.abs(ui.pendingMax.v / state.lifts[ui.pendingMax.l].oneRM - 1) * 100)}% change, and the maxes start calibrating again from it.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="max-apply">Set ${ui.pendingMax.v}</button><button class="btn sm" data-action="max-cancel">Keep ${state.lifts[ui.pendingMax.l].oneRM}</button></div></div>` : ''}
+    const lastBak = state.lastBackupAt ? new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '', since = sessionsSinceBackup();
+    return FOLD_ALL + foldCard('set-maxes', 'Maxes', `<div class="grid3">${LIFTS.map(l => `<label class="f">${LIFTNAME[l]} 1RM<input id="set-1rm-${l}" type="number" inputmode="decimal" data-setting="1rm:${l}" value="${ui.pendingMax && ui.pendingMax.l === l ? ui.pendingMax.v : state.lifts[l].oneRM}"></label>`).join('')}</div>
+        ${ui.pendingMax ? `<div class="callout warn">${LIFTNAME[ui.pendingMax.l]} 1RM ${state.lifts[ui.pendingMax.l].oneRM} → ${ui.pendingMax.v}? A ${Math.round(Math.abs(ui.pendingMax.v / state.lifts[ui.pendingMax.l].oneRM - 1) * 100)}% change; calibration restarts from it.<div class="btnrow" style="margin-top:8px"><button class="btn sm primary" data-action="max-apply">Set ${ui.pendingMax.v}</button><button class="btn sm" data-action="max-cancel">Keep ${state.lifts[ui.pendingMax.l].oneRM}</button></div></div>` : ''}
         <div class="grid2">
         <label class="f">Your squat<select id="set-sq" data-setting="squatStyle"><option value="lowbar" ${s.squatStyle !== 'highbar' ? 'selected' : ''}>Low-bar</option><option value="highbar" ${s.squatStyle === 'highbar' ? 'selected' : ''}>High-bar</option></select></label>
         <label class="f">Your deadlift<select id="set-dl" data-setting="deadliftStyle"><option value="conventional" ${s.deadliftStyle !== 'sumo' ? 'selected' : ''}>Conventional</option><option value="sumo" ${s.deadliftStyle === 'sumo' ? 'selected' : ''}>Sumo</option></select></label>
         </div>
         <label class="f">Training Max %<select id="set-tm" data-setting="tmPct"><option value="0.85" ${s.tmPct == 0.85 ? 'selected' : ''}>85%</option><option value="0.875" ${s.tmPct == 0.875 ? 'selected' : ''}>87.5%</option><option value="0.9" ${s.tmPct == 0.9 ? 'selected' : ''}>90%</option><option value="0.925" ${s.tmPct == 0.925 ? 'selected' : ''}>92.5%</option></select></label>
         <p class="small muted" id="tm-line">${esc(tmLine())}</p>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-cal" data-setting="autoCalibrate" ${s.autoCalibrate !== false ? 'checked' : ''} style="width:22px;height:22px"> Calibrate maxes from my sets after each session <span class="muted small" style="font-weight:500">(down at once, up slowly)</span></label>
-      </div>
-      <div class="card"><h3>Equipment</h3>
-        <div class="grid2"><label class="f">Bar weight<input id="set-bar" type="number" inputmode="decimal" data-setting="barWeight" value="${s.barWeight}"></label><label class="f">Dumbbell step<select id="set-dbi" data-setting="dbIncrement"><option value="2.5" ${s.dbIncrement == 2.5 ? 'selected' : ''}>2.5</option><option value="5" ${s.dbIncrement == 5 ? 'selected' : ''}>5</option></select></label></div>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-cal" data-setting="autoCalibrate" ${s.autoCalibrate !== false ? 'checked' : ''} style="width:22px;height:22px"> Calibrate maxes from my sets <span class="muted small" style="font-weight:500">(down at once, up slowly)</span></label>`, { sum: LIFTS.map(l => `${LIFTNAME[l]} ${state.lifts[l].oneRM}`).join(' · ') })
+      + foldCard('set-equip', 'Equipment', `<div class="grid2"><label class="f">Bar weight<input id="set-bar" type="number" inputmode="decimal" data-setting="barWeight" value="${s.barWeight}"></label><label class="f">Dumbbell step<select id="set-dbi" data-setting="dbIncrement"><option value="2.5" ${s.dbIncrement == 2.5 ? 'selected' : ''}>2.5</option><option value="5" ${s.dbIncrement == 5 ? 'selected' : ''}>5</option></select></label></div>
         <div class="stack"><span class="tiny">Plates per side</span><div class="chips">${[55, 45, 35, 25, 15, 10, 5, 2.5, 1.25].map(p => `<button data-action="set-plate" data-p="${p}" aria-pressed="${s.plates.includes(p)}">${p}</button>`).join('')}</div></div>
-        <div class="stack"><span class="tiny">Accessory working weights</span><div class="tablewrap"><table>${Object.keys(state.acc).length ? Object.keys(state.acc).map(k => `<tr><td>${esc(E.EX[k] ? E.EX[k].name : k)}</td><td class="num"><span class="acc-in"><input id="acc-${k}" type="number" inputmode="decimal" data-setting="acc:${k}" value="${state.acc[k].weight}" aria-label="${esc(E.EX[k] ? E.EX[k].name : k)} working weight"><span class="small muted">${E.EX[k] && E.EX[k].load === 'db' ? 'lb each' : 'lb'}</span></span></td></tr>`).join('') : '<tr><td class="muted small">They appear here once you enter them in a session.</td></tr>'}</table></div></div>
-      </div>
-      <div class="card"><h3>Schedule and cardio</h3>
-        <div class="stack"><span class="tiny">Training days</span><span class="small muted">A note for you: the plan runs its four days in order, whichever days you train.</span><div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="set-day" data-d="${x}" aria-pressed="${s.days.includes(x)}">${x}</button>`).join('')}</div></div>
+        <div class="stack"><span class="tiny">Accessory working weights</span><div class="tablewrap"><table>${Object.keys(state.acc).length ? Object.keys(state.acc).map(k => `<tr><td>${esc(E.EX[k] ? E.EX[k].name : k)}</td><td class="num"><span class="acc-in"><input id="acc-${k}" type="number" inputmode="decimal" data-setting="acc:${k}" value="${state.acc[k].weight}" aria-label="${esc(E.EX[k] ? E.EX[k].name : k)} working weight"><span class="small muted">${E.EX[k] && E.EX[k].load === 'db' ? 'lb each' : 'lb'}</span></span></td></tr>`).join('') : '<tr><td class="muted small">These appear once you enter them in a session.</td></tr>'}</table></div></div>`, { closed: true, sum: `${s.barWeight} lb bar · ${s.plates.length} plate sizes` })
+      + foldCard('set-sched', 'Schedule and cardio', `<div class="stack"><span class="tiny">Training days</span><span class="small muted">These days are only a note: the four sessions run in order, whenever you train.</span><div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="set-day" data-d="${x}" aria-pressed="${s.days.includes(x)}">${x}</button>`).join('')}</div></div>
         <div class="grid2"><label class="f">Bike after lifting (min)<input id="set-cm" type="number" inputmode="numeric" data-setting="cardioMin" value="${s.cardioMin}"></label><label class="f">Usual easy watts<input id="set-cw" type="number" inputmode="numeric" data-setting="cardioWatts" value="${s.cardioWatts}"></label></div>
         <div class="grid3"><label class="f">Main rest (sec)<input id="set-r1" type="number" inputmode="numeric" data-setting="restPrimary" value="${s.restPrimary}"></label><label class="f">Second rest (sec)<input id="set-r2" type="number" inputmode="numeric" data-setting="restSecondary" value="${s.restSecondary}"></label><label class="f">Accessory rest (sec)<input id="set-r3" type="number" inputmode="numeric" data-setting="restAccessory" value="${s.restAccessory}"></label></div>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-peak" data-setting="includePeak" ${s.includePeak === true ? 'checked' : ''} style="width:22px;height:22px"> Include the Peak &amp; Test block</label>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-warm" data-setting="warmupSets" ${s.warmupSets !== false ? 'checked' : ''} style="width:22px;height:22px"> Show warm-up sets in each session</label>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> Notify me when a rest ends <span class="muted small" style="font-weight:500">(iPhone pauses web apps in the background, so this reaches you only while Readyset is open or in the first seconds after you switch away)</span></label>
-      </div>
-      <div class="card"><h3>Extra cardio</h3>
-        <label class="f">Extra easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
-        ${extraThisWeek().length ? `<div class="stack">${extraThisWeek().map(({ c, i }) => `<div class="row between small"><span>${fmtDate(c.date)} · ${c.min} min · ~${c.kcal} kcal</span><button class="btn sm quiet" data-action="extra-del" data-i="${i}" aria-label="Remove ${c.min} minutes on ${fmtDate(c.date)}">Remove</button></div>`).join('')}</div>` : ''}
-      </div>
-      <div class="card"><h3>Data and backups</h3>
-        ${Store.db ? '<p class="small muted">Synced to your Claude account, so it follows you across devices.</p>' : `
-        <div class="callout bad">On an iPhone this app's data lives inside the home-screen app itself. Deleting the icon deletes the data, and Safari's own copy is separate. Never delete or re-add the icon without a backup.</div>
-        <p class="small">A backup is the whole log in one dated file (${backupSizeText()} now). Save it to Files; iCloud Drive keeps it off the phone. Each file holds everything, so only the newest matters and older ones can be deleted. Restore it from the setup screen or below.</p>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-warm" data-setting="warmupSets" ${s.warmupSets !== false ? 'checked' : ''} style="width:22px;height:22px"> Show warm-up sets</label>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> Notify me when a rest ends <span class="muted small" style="font-weight:500">(only while Readyset is open or just after you switch away; iPhone pauses web apps)</span></label>`, { closed: true, sum: `Bike ${s.cardioMin} min · rests ${s.restPrimary}/${s.restSecondary}/${s.restAccessory} s` })
+      + foldCard('set-extra', 'Extra cardio', `<label class="f">Easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
+        ${extraThisWeek().length ? `<div class="stack">${extraThisWeek().map(({ c, i }) => `<div class="row between small"><span>${fmtDate(c.date)} · ${c.min} min · ~${c.kcal} kcal</span><button class="btn sm quiet" data-action="extra-del" data-i="${i}" aria-label="Remove ${c.min} minutes on ${fmtDate(c.date)}">Remove</button></div>`).join('')}</div>` : ''}`, { closed: true, sum: extraThisWeek().length ? `${extraThisWeek().reduce((m, x) => m + x.c.min, 0)} min this week` : 'None this week' })
+      + foldCard('set-data', 'Data and backups', `${Store.db ? '<p class="small muted">Synced to your Claude account.</p>' : `
+        <div class="callout bad">Deleting the home-screen icon deletes this data. Never delete or re-add it without a backup.</div>
+        <p class="small">A backup is your whole log in one dated file (${backupSizeText()}). Save it to Files or iCloud Drive; only the newest matters.</p>
         <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupOffer" ${s.backupOffer ? 'checked' : ''} style="width:22px;height:22px"> Offer a one-tap backup after each session</label>`}
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
         ${Store.lastError ? `<div class="callout bad">${esc(Store.lastError)}</div>` : ''}
-        <p class="small muted">${state.lastBackupAt ? `Last backup ${new Date(state.lastBackupAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${sessionsSinceBackup() ? ` · ${sessionsSinceBackup()} session${sessionsSinceBackup() > 1 ? 's' : ''} since` : ''}.</p>
+        <p class="small muted">${lastBak ? `Last backup ${lastBak} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${since ? ` · ${since} session${since > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
         ${ui.showImport ? `${filePick('Choose a backup file', 'primary block')}<label class="f">Or paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn" data-action="import">Restore from text</button>` : ''}
         <button class="btn danger block" data-action="reset-confirm">Start over</button>
-        ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every logged session, and it cannot be undone. Tap Copy backup first if there is anything worth keeping. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}
-      </div>
-      <p class="small muted" style="text-align:center">Readyset${BUILD ? ` · build ${esc(BUILD.slice(0, 7))}` : ''} · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.${BUILD ? ` <button class="btn sm quiet" data-action="check-update">Check for updates</button>` : ''}</p>`;
+        ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every session, for good. Copy a backup first if anything is worth keeping. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}`, { closed: true, sum: lastBak ? `Last backup ${lastBak}${since ? `, ${since} since` : ''}` : 'No backup yet' })
+      + `<p class="small muted" style="text-align:center">Readyset${BUILD ? ` · build ${esc(BUILD.slice(0, 7))}` : ''} · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.${BUILD ? ` <button class="btn sm quiet" data-action="check-update">Check for updates</button>` : ''}</p>`;
   }
   function tmLine() {
-    return `Training maxes: squat ${state.lifts.squat.tm}, bench ${state.lifts.bench.tm}, deadlift ${state.lifts.deadlift.tm}. Every barbell load in the plan is a percentage of these.${LIFTS.some(l => state.lifts[l].est) ? ` Recent estimates from your sets: ${LIFTS.filter(l => state.lifts[l].est).map(l => `${LIFTNAME[l].toLowerCase()} ~${Math.round(state.lifts[l].est)}`).join(', ')}.` : ''}`;
+    return `Training maxes: squat ${state.lifts.squat.tm}, bench ${state.lifts.bench.tm}, deadlift ${state.lifts.deadlift.tm}. Barbell loads run off these.${LIFTS.some(l => state.lifts[l].est) ? ` Recent estimates: ${LIFTS.filter(l => state.lifts[l].est).map(l => `${LIFTNAME[l].toLowerCase()} ~${Math.round(state.lifts[l].est)}`).join(', ')}.` : ''}`;
   }
   // Numeric settings: an empty field keeps the old value; everything is clamped to a sane range.
   const SETTING_RANGES = { barWeight: [5, 100], cardioMin: [0, 240], cardioWatts: [30, 600], restPrimary: [30, 600], restSecondary: [30, 600], restAccessory: [15, 600] };
   // From now on the maxes as they stand are the base a block replay starts from (see recalibrateBlock).
   function markCalibBase() {
-    state.program.calibBaseTs = Date.now();
+    state.program.calibBaseTs = state.current && state.current.phase !== 'edit' ? Math.min(Date.now(), (state.current.ts || Date.now()) - 1) : Date.now();
+    state.program.fatigueBase = {};
     for (const l of LIFTS) { const L = state.lifts[l]; L.blockStartRM = L.oneRM; L.floorRM = L.oneRM; L.estAtBlockStart = L.est == null ? null : L.est; L.ratedAtBlockStart = L.rated || 0; }
   }
   function applySetting(key, val) {
@@ -1709,9 +1808,9 @@
       ui.pendingMax = null; state.undo = null; // the Undo snapshot holds the maxes: it cannot outlive a hand-set one
       E.applyTM(state, l, v); state.lifts[l].est = null; markCalibBase(); addLog(`${LIFTNAME[l]} 1RM set to ${v} by hand.`); rebaseSession();
     }
-    else if (key === 'tmPct') { if ([0.85, 0.875, 0.9, 0.925].includes(n)) { state.undo = null; s.tmPct = n; s.tmPctChosen = n; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); } }
-    else if (key === 'autoCalibrate') s.autoCalibrate = !!val;
-    else if (key.startsWith('acc:')) { const k = key.split(':')[1]; if (Object.prototype.hasOwnProperty.call(E.EX, k) && n >= 0 && n <= 2000) state.acc[k] = { weight: n, updated: todayISO() }; }
+    else if (key === 'tmPct') { if ([0.85, 0.875, 0.9, 0.925].includes(n)) { state.undo = null; s.tmPct = n; s.tmPctChosen = n; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); addLog(`Training Max set to ${Math.round(n * 1000) / 10}% by hand.`); rebaseSession(); } }
+    else if (key === 'autoCalibrate') { s.autoCalibrate = !!val; if (val) { state.undo = null; markCalibBase(); } }
+    else if (key.startsWith('acc:')) { const k = key.split(':')[1]; if (Object.prototype.hasOwnProperty.call(E.EX, k) && n >= 0 && n <= 2000) state.acc[k] = { weight: n, updated: null }; }
     else if (key === 'includePeak') s.includePeak = !!val;
     else if (key === 'warmupSets') s.warmupSets = !!val;
     else if (key === 'notify') { if (val) enableNotify(); else { s.notify = false; postSw({ type: 'rest-cancel' }); } }
@@ -1831,6 +1930,9 @@
       case 'confirm-cancel': ui.confirm = null; render(); break;
       case 'post-diff': state.current.post = state.current.post || { difficulty: 0 }; state.current.post.difficulty = Number(d.v); save(); if (state.current.phase === 'edit') { document.querySelectorAll('[data-action="post-diff"]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.v) === state.current.post.difficulty))); } else render(); break;
       case 'edit-session': startEdit(d.id); break;
+      case 'card-fold': { const sec = t.closest('[data-fold]'); if (sec) { setCardFold(sec, !sec.classList.contains('closed')); saveFolds(); syncFoldAll(); } break; }
+      case 'fold-tab': { const all = [...document.querySelectorAll('#main [data-fold]')], close = all.some(s => !s.classList.contains('closed')); all.forEach(s => setCardFold(s, close)); saveFolds(); syncFoldAll(); break; }
+      case 'log-all': ui.logAll = true; render(); break;
       case 'chart-pick': case 'chart-step': case 'chart-close': {
         const lift = d.lift; if (!LIFTS.includes(lift)) break;
         const cv = document.getElementById('c-' + lift); if (cv) anchor = { sel: '#c-' + lift, fallback: '#c-' + lift, top: cv.getBoundingClientRect().top, fallbackTop: cv.getBoundingClientRect().top };
@@ -1845,7 +1947,7 @@
       case 'chart-open': {
         ui.histOpen = ui.histOpen || {}; ui.histOpen[d.id] = 1;
         const done = state.sessions.filter(s => !s.skipped).slice().reverse(); if (done.findIndex(s => s.id === d.id) >= 60) ui.histAll = true;
-        render();
+        openSessionsCard(); render();
         const el = document.querySelector(`.session-item[data-id="${d.id}"]`), sc = scroller();
         if (el) scrollToY(sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 8);
         break;
@@ -1857,8 +1959,8 @@
       case 'backfill-open': { const y = new Date(); y.setDate(y.getDate() - 1); let dt = todayISO(y); const mn = backfillMin(); if (dt < mn) dt = mn; ui.backfill = { date: dt, mode: 'full' }; ui.checkin = null; render(); break; }
       case 'backfill-cancel': ui.backfill = null; render(); break;
       case 'backfill-start': startBackfill(); break;
-      case 'layoff-ease': { const newest = newestSessionDate(); if (!newest) break; snapshot('Eased back in after a layoff'); ui.checkin = null; const lines = E.layoffAdjust(state, daysBetween(newest, todayISO())); state.program.layoffHandled = newest; lines.forEach(addLog); if (lines.length) state.lastReport = { title: 'Back after a layoff', lines }; save(); render(); break; }
-      case 'layoff-skip': state.program.layoffHandled = newestSessionDate(); addLog('Carried on as planned after a layoff.'); save(); render(); break;
+      case 'layoff-ease': { const newest = newestSessionDate(); if (!newest) break; snapshot('Eased back in after a layoff'); ui.checkin = null; const gapNow = daysBetween(newest, todayISO()), had = layoffHandled(newest).cut, lines = E.layoffAdjust(state, gapNow, had); state.program.layoffHandled = `${newest}:${layoffTier(gapNow)}:${Math.max(had, E.layoffCut(gapNow))}`; lines.forEach(addLog); if (lines.length) state.lastReport = { title: 'Back after a layoff', lines }; save(); render(); break; }
+      case 'layoff-skip': { const newest = newestSessionDate(); if (newest) state.program.layoffHandled = `${newest}:${layoffTier(daysBetween(newest, todayISO()))}:${layoffHandled(newest).cut}`; } addLog('Carried on as planned after a layoff.'); save(); render(); break;
       case 'post-next': if (!state.current.post || !state.current.post.difficulty) { toast('Pick how it went first'); return; } if (state.current.cardioMin || state.settings.cardioMin) { state.current.phase = 'cardio'; ui.quietUntil = performance.now() + 500; save(); render(); scrollToY(0); } else { state.current.cardio = { min: 0 }; completeSession(); } break;
       case 'cardio-start': state.current.cardioRun = { start: Date.now(), pausedTotal: 0, paused: false }; ui.cardioTapAt = Date.now(); keepAwake(); save(); render(); break;
       case 'cardio-pause': { const r = state.current.cardioRun; if (r && Date.now() - (ui.cardioTapAt || 0) > 1200) { r.paused = true; r.pausedAt = Date.now(); releaseAwake(); save(); render(); } break; } // a slow double tap on Start must not pause
@@ -1867,7 +1969,7 @@
       case 'cardio-skip': saveCardio(true); break;
       case 'timer-add': if (ui.timer) { ui.timer.end = Math.max(ui.timer.end, Date.now()) + 30000; ui.timer.fired = false; if (state.timer) { state.timer.end = ui.timer.end; state.timer.firedAt = 0; } armSw(); tickTimer(); scheduleTick(); Store.saveLocal(state); } break;
       case 'timer-stop': stopTimer(); Store.saveLocal(state); break;
-      case 'dismiss-report': state.lastReport = null; ui.reportAll = false; save(); render(); break;
+      case 'dismiss-report': state.lastReport = null; ui.reportAll = false; delete folds._report; delete folds['today-report']; saveFolds(); save(); render(); break;
       case 'undo': undoLast(); break;
       case 'undo-dismiss': state.undo = null; save(); render(); break;
       case 'offer-dismiss': state.backupOffer = false; save(); render(); break;
@@ -1876,7 +1978,7 @@
       case 'deload-now-confirm': if (state.current) { toast('Finish or discard the open session first'); break; } ui.confirm = 'deload'; render(); break;
       case 'rest-now-confirm': if (state.current) { toast('Finish or discard the open session first'); break; } ui.confirm = 'rest'; render(); break;
       case 'deload-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Deload started early'); const ok = E.startDeloadNow(state); ui.confirm = null; ui.checkin = null; if (ok) addLog('Deload started early.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
-      case 'deload-later': snapshot('Deload suggestion dismissed'); state.program.pendingDeload = false; state.program.pushOn = true; addLog('Deload suggestion declined; pushing on with the week trimmed (no bonus reps or earned sets, loads one step down).'); save(); render(); break;
+      case 'deload-later': snapshot('Deload suggestion dismissed'); state.program.pendingDeload = false; state.program.pushOn = true; addLog('Deload suggestion declined; this week runs trimmed (no bonus reps or earned sets, loads 2.5% down).'); save(); render(); break;
       case 'rest-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Easy week inserted'); const ok = E.startActiveRest(state, 1); ui.confirm = null; ui.checkin = null; if (ok) addLog('Easy week inserted.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
       case 'set-plate': { const s = state.settings, p = Number(d.p); if (s.plates.includes(p) && s.plates.length === 1) { toast('Keep at least one plate size'); break; } s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = Math.min(10, E.loadStep(s.plates)); LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); save(); render(); break; }
       case 'set-day': { const s = state.settings; s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; }
@@ -1896,6 +1998,7 @@
       case 'max-cancel': ui.pendingMax = null; render(); break;
       case 'delete-session': { if (state.current) { toast('Finish or discard the open session first'); break; } if (!d.sure) { ui.confirmDel = d.id; render(); break; } ui.confirmDel = null; const i = state.sessions.findIndex(s => s.id === d.id); if (i >= 0) { const s = state.sessions[i]; const inWeek = sessionsOfWeek().some(x => x.id === s.id); snapshot(`Deleted ${s.dayName} (${fmtDate(s.date)})`, { restoreSession: s }); state.sessions.splice(i, 1); Store.deleteSession(d.id);
         if (!s.skipped && inBlock(s) && (s.ts || 0) > (state.program.calibBaseTs || 0)) { const lines = [`${s.dayName} (${fmtDate(s.date)}) deleted.`].concat(recalibrateBlock(inWeek ? 'This week\'s review will leave it out.' : null)); lines.forEach(addLog); state.lastReport = { title: 'Session deleted', lines, sessionId: null }; }
+        const acc = s.skipped ? [] : reAccessories(s, false); if (acc.length) { acc.forEach(addLog); if (state.lastReport && state.lastReport.title === 'Session deleted') state.lastReport.lines = state.lastReport.lines.concat(acc); else state.lastReport = { title: 'Session deleted', lines: acc, sessionId: null }; }
         save(); render(); toast('Deleted. Undo is at the top of History.'); } break; }
     }
   });
@@ -1973,6 +2076,7 @@
       else {
         if (r === 'reset') { const k = t.dataset.setting; t.value = k.startsWith('1rm:') ? state.lifts[k.split(':')[1]].oneRM : state.settings[k]; }
         const el = $('#tm-line'); if (el) el.textContent = tmLine();
+        if (view === 'settings') syncFoldSums(renderSettings());
       }
       return;
     }
@@ -2112,7 +2216,7 @@
   function renderUpdateBar() {
     if (!ui.updateReady || $('#update-bar')) return;
     const bar = document.createElement('div'); bar.id = 'update-bar'; bar.className = 'update-bar';
-    bar.innerHTML = `<span>${state && state.current ? 'A new version is ready. Your session and sets are saved; it installs when you finish, or now if you tap.' : 'A new version of Readyset is ready. Everything is saved.'}</span><button class="btn sm" data-action="apply-update">Update now</button>`;
+    bar.innerHTML = `<span>${state && state.current ? 'New version ready. Your sets are saved; it installs when you finish, or tap now.' : 'New version ready. Everything is saved.'}</span><button class="btn sm" data-action="apply-update">Update now</button>`;
     const app = $('#app'); if (app) app.insertBefore(bar, app.firstChild);
   }
   document.addEventListener('visibilitychange', () => {

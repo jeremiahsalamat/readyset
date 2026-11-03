@@ -1,4 +1,4 @@
-const BUILD = '5a86d742ef64';
+const BUILD = '6a744f4edb64';
 const CACHE = 'readyset-' + BUILD;
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];

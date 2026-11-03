@@ -1,8 +1,6 @@
-// node run3.js <profile> <variant> [weeks] [seed] [verbose]
+// node run3.js <profile> [lens: legacy|A|B|F] [weeks] [seed]   (the old "baseline" is the legacy lens)
 const path = require('path');
-const SP = __dirname;
-const engine = 'C:/Users/Jerm/Documents/PowerliftingApp/src/engine.js';
-require(path.join(SP, 'variants.js'));
-const [, , profile = 'normal', variant = 'baseline', weeks = '36', seed = '7', verbose = ''] = process.argv;
-process.argv = ['node', 'sim3', engine, profile, variant, weeks, seed, verbose];
-require(path.join(SP, 'sim3.js'));
+const { execFileSync } = require('child_process');
+const [, , profile = 'normal', ln = 'A', weeks = '36', seed = '7'] = process.argv;
+const engine = path.join(__dirname, '..', '..', 'src', 'engine.js');
+execFileSync(process.execPath, [path.join(__dirname, 'sim3.js'), engine, profile, ln === 'baseline' ? 'legacy' : ln, weeks, seed], { stdio: 'inherit' });

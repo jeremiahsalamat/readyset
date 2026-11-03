@@ -56,7 +56,7 @@
     const out = {
       slotKey, ex: exId, name: (stored && knownName(exId, get(e, 'name'))) || E.exerciseName(state, exId), role, lift: ex.tm ? lift : null, load: ex.load, optional: bool(get(e, 'optional')), cue: ex.cue || null, sets,
       rest: int(get(e, 'rest'), 15, 900, 90), pctTM: numOrNull(get(e, 'pctTM'), 0, 2), rpeTarget: numOrNull(get(e, 'rpeTarget'), 1, 10), plannedW: numOrNull(get(e, 'plannedW'), 0, 2000),
-      target: numOrNull(get(e, 'target'), 0, 2000), est: numOrNull(get(e, 'est'), 0, 3000), hitFloor: bool(get(e, 'hitFloor')), cut: int(get(e, 'cut'), 0, 20, 0),
+      target: numOrNull(get(e, 'target'), 0, 2000), est: numOrNull(get(e, 'est'), 0, 3000), hitFloor: bool(get(e, 'hitFloor')), cut: int(get(e, 'cut'), 0, 20, 0), autoCut: int(get(e, 'autoCut'), 0, 20, 0),
       repRange: Array.isArray(rr) && rr.length === 2 ? [int(rr[0], 1, 50, 10), int(rr[1], 1, 50, 13)] : null,
       needsWeight: bool(get(e, 'needsWeight')), startHint: ex.startHint || null, adjNote: str(get(e, 'adjNote'), 240, null) || null, note: str(get(e, 'note'), 240, null) || null,
       autoStopped: bool(get(e, 'autoStopped')), fold: oneOf(get(e, 'fold'), ['open', 'closed'], undefined),
@@ -164,7 +164,7 @@
       d.lifts[k] = { oneRM, tm: oneRM ? E.roundTo(oneRM * s.tmPct, 2.5) : 0, est: numOrNull(get(src, 'est'), 0, 3000), estDate: dateStr(get(src, 'estDate'), null), blockStartRM: numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null,
         estAtBlockStart: numOrNull(get(src, 'estAtBlockStart'), 0, 3000), upKey: str(get(src, 'upKey'), 20, null) || null, macroEst: numOrNull(get(src, 'macroEst'), 0, 3000), macroWasFlagged: bool(get(src, 'macroWasFlagged')),
         floorRM: numOrNull(get(src, 'floorRM'), 0, 2000) || numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null, lbHits: int(get(src, 'lbHits'), 0, 10, 0), lbKey: dateStr(get(src, 'lbKey'), null),
-        rated: int(get(src, 'rated'), 0, 1e6, 0), macroRated: int(get(src, 'macroRated'), 0, 1e6, 0), easyRun: int(get(src, 'easyRun'), 0, 1000, 0), easyKey: dateStr(get(src, 'easyKey'), null), ratedAtBlockStart: int(get(src, 'ratedAtBlockStart'), 0, 1e6, null) };
+        stallRun: int(get(src, 'stallRun'), 0, 9, 0), rated: int(get(src, 'rated'), 0, 1e6, 0), macroRated: int(get(src, 'macroRated'), 0, 1e6, 0), easyRun: int(get(src, 'easyRun'), 0, 1000, 0), easyKey: dateStr(get(src, 'easyKey'), null), ratedAtBlockStart: int(get(src, 'ratedAtBlockStart'), 0, 1e6, null) };
     }
     const A = isObj(get(raw, 'acc')) ? get(raw, 'acc') : {};
     d.acc = {};
@@ -177,7 +177,7 @@
     p.dayIdx = int(get(P, 'dayIdx'), 0, E.DAYS.length - 1, 0);
     p.mesoCount = int(get(P, 'mesoCount'), 0, 10000, 0);
     const SA = isObj(get(P, 'setAdj')) ? get(P, 'setAdj') : {};
-    p.setAdj = { squat: int(get(SA, 'squat'), -2, 2, 0), bench: int(get(SA, 'bench'), -2, 2, 0), deadlift: int(get(SA, 'deadlift'), -2, 2, 0), acc: int(get(SA, 'acc'), -1, 1, 0) };
+    p.setAdj = { squat: int(get(SA, 'squat'), -2, 3, 0), bench: int(get(SA, 'bench'), -2, 3, 0), deadlift: int(get(SA, 'deadlift'), -2, 3, 0), acc: int(get(SA, 'acc'), -1, 1, 0) };
     const LA = isObj(get(P, 'loadAdj')) ? get(P, 'loadAdj') : {};
     p.loadAdj = { squat: num(get(LA, 'squat'), -0.1, 0.05, 0), bench: num(get(LA, 'bench'), -0.1, 0.05, 0), deadlift: num(get(LA, 'deadlift'), -0.1, 0.05, 0) };
     const FL = isObj(get(P, 'flags')) ? get(P, 'flags') : {};
@@ -192,6 +192,9 @@
     p.volumeDial = int(get(P, 'volumeDial'), -2, 2, 0); p.blockClean = get(P, 'blockClean') !== false; p.readinessBase = numOrNull(get(P, 'readinessBase'), 0, 100);
     const CD = isObj(get(P, 'calibDrops')) ? get(P, 'calibDrops') : {};
     p.calibDrops = {}; for (const k of LIFTS) { const n = int(get(CD, k), 0, 50, 0); if (n) p.calibDrops[k] = n; }
+    const FB = get(P, 'fatigueBase'); p.fatigueBase = {};
+    if (isObj(FB)) { for (const k of LIFTS) { const n = numOrNull(get(FB, k), 0, 2000); if (n) p.fatigueBase[k] = n; } }
+    const firstWeekFix = !isObj(FB) && p.mesoCount === 0 && p.blockIdx === 0 && p.week <= 2;
     p.chronicSince = num(get(P, 'chronicSince'), 0, 4e12, 0); p.calibBaseTs = num(get(P, 'calibBaseTs'), 0, 4e12, 0);
     p.macroPos = int(get(P, 'macroPos'), 0, E.MACRO.length - 1, 0);
     if (E.MACRO[p.macroPos].block !== E.BLOCKS[p.blockIdx].id) { const i = E.MACRO.findIndex(m => m.block === E.BLOCKS[p.blockIdx].id); p.macroPos = i >= 0 ? i : 0; }
@@ -200,7 +203,7 @@
     p.runCeil = { squat: int(get(RC, 'squat'), 0, 3, 1), bench: int(get(RC, 'bench'), 0, 3, 1), deadlift: int(get(RC, 'deadlift'), 0, 3, 1) };
     p.macroRough = int(get(P, 'macroRough'), 0, 10, 0);
     p.stallMeso = int(get(P, 'stallMeso'), 0, 100000, null);
-    p.stallRest = int(get(P, 'stallRest'), 0, 2, 0); p.dialMovesBlock = int(get(P, 'dialMovesBlock'), 0, 20, 0); p.readinessLowWeeks = int(get(P, 'readinessLowWeeks'), 0, 20, 0);
+    p.macroDialDown = bool(get(P, 'macroDialDown')); p.stallRest = int(get(P, 'stallRest'), 0, 2, 0); p.dialMovesBlock = int(get(P, 'dialMovesBlock'), 0, 20, 0); p.readinessLowWeeks = int(get(P, 'readinessLowWeeks'), 0, 20, 0);
     p.readinessHist = (Array.isArray(get(P, 'readinessHist')) ? get(P, 'readinessHist') : []).map(x => num(x, 0, 100, null)).filter(x => x != null).slice(-12);
     const LAW = isObj(get(P, 'lastAddWeek')) ? get(P, 'lastAddWeek') : {};
     p.lastAddWeek = {}; for (const k of LIFTS) { const n = int(get(LAW, k), 0, 12, null); if (n != null) p.lastAddWeek[k] = n; }
@@ -216,9 +219,39 @@
     d.sessions = sessions.slice(-4000).map(x => sanitizeSession(x, d)).filter(x => x && !seen.has(x.id) && seen.add(x.id)).sort((a, b) => a.ts - b.ts).slice(-3000);
     const cur = sanitizeSession(get(raw, 'current'), d);
     d.current = cur && cur.phase ? cur : null;
+    // One time only, for a program saved before fatigueBase existed: a drop charged in week 1 of the
+    // first block was the starting number being corrected. It comes off the fatigue count; a drop in
+    // week 2 stays. The set that reading removed comes back, unless the weekly rule would still cut
+    // it (missed reps, a crushing session).
+    const restored = [];
+    if (firstWeekFix) {
+      const first = d.sessions.filter(x => !x.skipped && !x.mesoCount && !x.blockIdx), wk1 = first.filter(x => x.week === 1);
+      for (const k of LIFTS) {
+        const n = p.calibDrops[k];
+        if (!n || !(d.lifts[k].oneRM > 0) || !(d.lifts[k].blockStartRM > d.lifts[k].oneRM)) continue;
+        const w2 = first.filter(x => x.week === 2 && x.calib && x.calib[k] && x.calib[k][1] < x.calib[k][0]);
+        if (n - w2.length < 1) continue;
+        p.fatigueBase[k] = w2.length ? w2[0].calib[k][0] : d.lifts[k].oneRM;
+        if (w2.length) p.calibDrops[k] = w2.length; else delete p.calibDrops[k];
+        if (p.week !== 2 || !wk1.length || p.setAdj[k] !== -1 || p.flags[k] !== 1) continue;
+        let cuts = true;
+        try {
+          const zero = { squat: 0, bench: 0, deadlift: 0, acc: 0 };
+          const probe = JSON.parse(JSON.stringify({ settings: d.settings, lifts: d.lifts, learned: d.learned, program: Object.assign({}, p, { week: 1, setAdj: zero, flags: zero }) }));
+          cuts = E.weeklyReview(probe, wk1, wk1).setAdj[k] < 0;
+        } catch (e) { /* keep the cut */ }
+        if (!cuts) { p.setAdj[k] = 0; p.flags[k] = 0; restored.push(k); }
+      }
+    }
     d.log = (Array.isArray(get(raw, 'log')) ? get(raw, 'log') : []).slice(0, 300).filter(isObj).map(l => ({ date: dateStr(get(l, 'date'), '2000-01-01'), msg: str(get(l, 'msg'), 300) })).filter(l => l.msg);
     const LR = get(raw, 'lastReport');
+    const liftName = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift' };
     d.lastReport = isObj(LR) && Array.isArray(get(LR, 'lines')) ? { title: str(get(LR, 'title'), 100, 'Update'), lines: get(LR, 'lines').slice(0, 30).map(l => str(l, 300)).filter(Boolean), sessionId: idStr(get(LR, 'sessionId'), null) } : null;
+    if (restored.length) { // says so once: the next save stores fatigueBase, and this never runs again
+      const t = new Date(), today = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+      for (const k of restored) d.log.unshift({ date: today, msg: `${liftName[k]}: last week's set cut is undone; a first-week max correction is not fatigue.` });
+      if (d.lastReport) d.lastReport.lines = d.lastReport.lines.map(l => { const k = restored.find(x => l.startsWith(`${liftName[x]}: -1 set`)); return k ? `${liftName[k]}: holding (felt harder; not counted in week 1).` : l; });
+    }
     const U = trusted ? get(raw, 'undo') : null;
     if (isObj(U) && typeof get(U, 'snap') === 'string' && get(U, 'snap').length < 400000) {
       let ok = false; try { const sn = JSON.parse(get(U, 'snap')); ok = isObj(sn) && isObj(get(sn, 'program')); } catch (e) { ok = false; }
