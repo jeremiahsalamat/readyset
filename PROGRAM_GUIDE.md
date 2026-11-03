@@ -241,13 +241,26 @@ session; set counts from a weekly review that already ran are left as they were.
 
 ### Rest timer, notifications and closing the app
 
-The rest timer is stored, so closing the app mid-rest and reopening shows the right remaining
-time (or how long ago it ended). Every set entry saves as you type. A session in progress reopens
-exactly where it was. A notification when a rest ends can be switched on in Settings; on an
-iPhone it works only from the home-screen app and only while the app is still running, because
-iOS suspends web apps in the background and does not let them run timers or post notifications
-from there. Lock-screen live timers are not available to web apps at all. The screen is kept
-awake during a session, so leaving the app open is the reliable option.
+Ticking a main-lift set logs it at once and starts its rest; then the app asks how hard it was
+(skip it if you did not notice). The rest timer is stored, so closing the app mid-rest and
+reopening shows the right remaining time, or how long ago it ended. Every set entry saves as you
+type, and a session in progress reopens at the set you are on.
+
+What an iPhone allows a web app: it runs while it is on screen and for a few seconds after you
+switch away, then iOS freezes it until you come back. So with Readyset open (the screen stays on
+during a session) every rest ends with a chime and a flash; once you switch to another app or lock
+the phone, no web app can alert you on time, Readyset included. The timer bar shows the clock time
+each rest ends, and when you come back it shows how long ago it ended (Rest done +1:10). A
+notification can be switched on in Settings, but it only reaches you while Readyset is open or in
+those first seconds after switching away.
+
+### Typos
+
+A number that is probably a slip of the thumb (36 for 360, a weight under the empty bar, 18 reps for
+8, a test single 15% over your max) is asked about before it can move the next sets or the maxes:
+use the planned number, keep yours, or fix it. Calibration also leaves out a set lifted far from
+its planned weight (under 60% or over 140% of it) unless you kept that number at the check, and
+says so. A fatigue stop that was triggered by a number you then correct undoes itself.
 
 ### After a session: one tap
 

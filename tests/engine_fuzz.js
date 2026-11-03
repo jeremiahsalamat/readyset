@@ -23,7 +23,7 @@ for (let i = 0; i < 400; i++) {
   const st = E.sanitizeState(raw);
   expect(st.settings.barWeight >= 5 && st.settings.barWeight <= 100, 'bar weight range', st.settings.barWeight);
   expect(st.settings.plates.length > 0, 'plates non-empty', st.settings.plates);
-  expect([2.5, 5, 10].includes(st.settings.increment), 'increment', st.settings.increment);
+  expect(st.settings.increment === Math.min(10, 2 * Math.min(...st.settings.plates)), 'increment is one pair of the smallest plate, at most 10', { inc: st.settings.increment, plates: st.settings.plates });
   for (const mode of ['full', 'trim', 'light']) {
     let sess;
     try { sess = E.buildSession(st, mode); } catch (e) { expect(false, 'buildSession threw: ' + e.message, { p: st.program, lifts: st.lifts }); continue; }
@@ -35,7 +35,7 @@ for (let i = 0; i < 400; i++) {
         if (x.open) continue;
         if (e.load === 'bar') {
           expect(finite(x.w) && x.w >= st.settings.barWeight && x.w <= 2500, 'bar load sane', { ex: e.ex, w: x.w, lift: e.lift, tm: e.lift ? st.lifts[e.lift].tm : null });
-          if (x.kind !== 'warm') expect(Math.abs(x.w / st.settings.increment - Math.round(x.w / st.settings.increment)) < 1e-6 || x.w === st.settings.barWeight, 'bar load rounded to increment', { w: x.w, inc: st.settings.increment });
+          expect(E.plateLoad(x.w, st.settings.barWeight, st.settings.plates).exact, 'bar load is a total the plates make exactly', { w: x.w, bar: st.settings.barWeight, plates: st.settings.plates });
         }
         expect(Number.isInteger(x.reps) && x.reps >= 1 && x.reps <= 15, 'reps sane', { ex: e.ex, reps: x.reps });
         if (x.rpeTarget != null) expect(x.rpeTarget >= 5 && x.rpeTarget <= 10, 'rpe target range', x.rpeTarget);
@@ -222,8 +222,8 @@ for (const includePeak of [true, false]) {
   expect(!s.exercises.slice(1).some(e => e.sets.some(x => x.kind === 'single')), 'opener on the primary only');
   expect(s.exercises[0].rest === st.settings.restPrimary + 60, 'heavy block primary rest +60 s', s.exercises[0].rest);
   st.program.blockIdx = 0; expect(E.buildSession(st, 'full').exercises[0].rest === st.settings.restPrimary, 'Build primary rest unchanged');
-  // Warm-up ramp for heavy targets is four sets.
-  expect(E.warmups(315, 45, 5, 'primary').length === 5, 'bar plus a four-set ramp at 300+', E.warmups(315, 45, 5, 'primary'));
+  // Warm-up ramp for heavy targets: more steps, never fewer, and no jump off the bar over 40% of the target.
+  for (const tgt of [295, 315, 405, 455, 600]) { const r = E.warmups(tgt, 45, 5, 'primary'); expect(r.length >= 5 && r[1].w - 45 <= tgt * 0.4 + 5 && r.every((x, i) => !i || x.w > r[i - 1].w), 'heavy warm-up ramps climb in sensible steps', { tgt, r: r.map(x => x.w) }); }
   // The stop rule: a miss, or a later set 2+ over target, flags stop; a clean session does not.
   expect(E.liftCorrection([{ w: 265, reps: 8, rpe: 7, first: true }, { w: 265, reps: 8, rpe: 9.5 }], 265, 8, 7).stop === true, 'stop on a set 2+ over target');
   expect(E.liftCorrection([{ w: 265, reps: 8, rpe: 7.5, first: true }, { w: 265, reps: 8, rpe: 8 }], 265, 8, 7).stop === false, 'no stop when close to target');
@@ -362,8 +362,13 @@ for (const includePeak of [true, false]) {
   const cur = E.buildSession(full, 'full'); Object.assign(cur, { id: 's9', ts: 5, date: '2026-01-02', phase: 'lift', startedAt: 5, mesoCount: 0, blockIdx: 0, dayIdx: 0, notes: '', skippedSlots: [] });
   cur.exercises.forEach(e => e.sets.forEach((x, i) => { x.done = i < 2; x.actualReps = i < 2 ? x.reps : null; x.rpe = i === 1 ? 7 : null; x.actualW = null; }));
   full.current = cur; full.timer = { end: 99, total: 120, label: 'Squat' };
-  const comp = (val) => { if (Array.isArray(val)) return val.map(comp); if (val && typeof val === 'object') { const o = {}; for (const k of Object.keys(val)) { const x = val[k]; if (x == null || x === '') continue; o[k] = comp(x); } return o; } return val; };
-  const a1 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(full)), { trusted: true })), a2 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(comp(full))), { trusted: true }));
+  // Mirrors app.js packer(): what the phone stores must load back to exactly the same state.
+  const DROP_FALSE = new Set(['ind', 'open', 'done', 'manualW', 'hitFloor', 'autoStopped', 'needsWeight', 'optional', 'skipped', 'isDeload', 'isTest', 'isRest', 'paused', 'setLightRest', 'calibrated', 'timerSrc', 'autoReps', 'autoW', 'minTyped', 'macroWasFlagged']);
+  const packer = (k, v) => (v === null || v === '' || v === undefined) ? undefined : (v === false && DROP_FALSE.has(k)) ? undefined : (v === 0 && (k === 'plus' || k === 'cut')) ? undefined : ((k === 'cue' || k === 'startHint' || k === 'load') && typeof v === 'string') ? undefined : v;
+  // A few stored sessions too, with every kind of flag set and unset.
+  for (let i = 0; i < 6; i++) { full.program.dayIdx = i % 4; const ss = E.buildSession(full, i % 3 === 0 ? 'light' : 'full'); Object.assign(ss, { id: 'p' + i, ts: 100 + i, date: '2026-01-0' + (i + 1), mesoCount: 0, blockIdx: 0, dayIdx: i % 4, skippedSlots: i === 2 ? [ss.exercises[ss.exercises.length - 1].slotKey] : [], post: { difficulty: 2 }, readiness: { score: 70, color: 'green', answers: { sleep: 4, energy: 3, motivation: 5, groups: { legs: 2, push: 1, hinge: 0 } } }, calibrated: i % 2 === 0, savedAt: 200 + i }); ss.exercises.forEach(e => e.sets.forEach((x, j) => { x.done = j % 3 !== 0; x.actualReps = x.done ? x.reps : null; x.rpe = j === 2 ? 8 : null; x.actualW = j === 4 ? (x.w || 0) + 5 : null; x.manualW = j === 4; })); full.sessions.push(ss); }
+  full.program.dayIdx = 0;
+  const a1 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(full)), { trusted: true })), a2 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(full, packer)), { trusted: true }));
   if (a1 !== a2) { let i = 0; while (a1[i] === a2[i]) i++; console.log('compact diff at', a1.slice(Math.max(0, i - 120), i + 60), '\n vs', a2.slice(Math.max(0, i - 120), i + 60)); }
   expect(a1 === a2, 'a compacted save loads back identically', a1.length + ' vs ' + a2.length);
 }

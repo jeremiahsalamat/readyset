@@ -31,9 +31,18 @@
       done: bool(get(x, 'done')), actualW: numOrNull(get(x, 'actualW'), 0, 2000), actualReps: numOrNull(get(x, 'actualReps'), 0, 50) == null ? null : int(get(x, 'actualReps'), 0, 50, null),
       rpe: numOrNull(get(x, 'rpe'), 4, 10), manualW: bool(get(x, 'manualW')), doneAt: numOrNull(get(x, 'doneAt'), 0, 4e12),
       carriedFrom: int(get(x, 'carriedFrom'), 0, 39, null),
+      timerSrc: bool(get(x, 'timerSrc')), autoReps: bool(get(x, 'autoReps')), autoW: bool(get(x, 'autoW')),
+      okW: numOrNull(get(x, 'okW'), 0, 2000), okR: numOrNull(get(x, 'okR'), 0, 50),
     };
   }
-  function sanitizeExercise(e, state) {
+  // A stored session keeps the name of what was lifted then (low-bar, sumo...), but only one of the
+  // catalog's own names for that exercise: never free text.
+  function knownName(exId, name) {
+    if (typeof name !== 'string') return null;
+    for (const sq of ['lowbar', 'highbar']) for (const dl of ['conventional', 'sumo']) if (E.exerciseName({ settings: { squatStyle: sq, deadliftStyle: dl } }, exId) === name) return name;
+    return null;
+  }
+  function sanitizeExercise(e, state, stored) {
     if (!isObj(e)) return null;
     const exId = get(e, 'ex');
     if (!own(E.EX, exId)) return null;
@@ -45,13 +54,24 @@
     const lift = oneOf(get(e, 'lift'), LIFTS, null);
     const rr = get(e, 'repRange');
     const out = {
-      slotKey, ex: exId, name: E.exerciseName(state, exId), role, lift: ex.tm ? lift : null, load: ex.load, optional: bool(get(e, 'optional')), cue: ex.cue || null, sets,
+      slotKey, ex: exId, name: (stored && knownName(exId, get(e, 'name'))) || E.exerciseName(state, exId), role, lift: ex.tm ? lift : null, load: ex.load, optional: bool(get(e, 'optional')), cue: ex.cue || null, sets,
       rest: int(get(e, 'rest'), 15, 900, 90), pctTM: numOrNull(get(e, 'pctTM'), 0, 2), rpeTarget: numOrNull(get(e, 'rpeTarget'), 1, 10), plannedW: numOrNull(get(e, 'plannedW'), 0, 2000),
       target: numOrNull(get(e, 'target'), 0, 2000), est: numOrNull(get(e, 'est'), 0, 3000), hitFloor: bool(get(e, 'hitFloor')), cut: int(get(e, 'cut'), 0, 20, 0),
       repRange: Array.isArray(rr) && rr.length === 2 ? [int(rr[0], 1, 50, 10), int(rr[1], 1, 50, 13)] : null,
       needsWeight: bool(get(e, 'needsWeight')), startHint: ex.startHint || null, adjNote: str(get(e, 'adjNote'), 240, null) || null, note: str(get(e, 'note'), 240, null) || null,
       autoStopped: bool(get(e, 'autoStopped')), fold: oneOf(get(e, 'fold'), ['open', 'closed'], undefined),
     };
+    return out;
+  }
+  // The check-in's answers stay with the session (History and the artifact store read them).
+  function sanitizeReadiness(r) {
+    const out = { score: int(get(r, 'score'), 0, 100, 50), color: oneOf(get(r, 'color'), ['green', 'yellow', 'red'], 'yellow') };
+    const a = get(r, 'answers');
+    if (isObj(a)) {
+      const g = get(a, 'groups');
+      out.answers = { sleep: int(get(a, 'sleep'), 1, 5, 3), energy: int(get(a, 'energy'), 1, 5, 3), motivation: int(get(a, 'motivation'), 1, 5, 3) };
+      if (isObj(g)) out.answers.groups = { legs: int(get(g, 'legs'), 0, 4, 0), push: int(get(g, 'push'), 0, 4, 0), hinge: int(get(g, 'hinge'), 0, 4, 0) };
+    }
     return out;
   }
   function sanitizeSession(s, state) {
@@ -65,13 +85,13 @@
       mesoCount: int(get(s, 'mesoCount'), 0, 10000, 0), blockIdx, dayIdx, week: int(get(s, 'week'), 1, 12, 1),
       block: blockId, blockName: blockId === 'rest' ? 'Easy week' : E.BLOCKS[blockIdx].name, dayId: E.DAYS[dayIdx].id, dayName: E.DAYS[dayIdx].name,
       mode: oneOf(get(s, 'mode'), Object.keys(E.MODES), 'full'), isDeload: bool(get(s, 'isDeload')), isTest: bool(get(s, 'isTest')), isRest: bool(get(s, 'isRest')) || blockId === 'rest',
-      readiness: isObj(r) ? { score: int(get(r, 'score'), 0, 100, 50), color: oneOf(get(r, 'color'), ['green', 'yellow', 'red'], 'yellow') } : null,
+      readiness: isObj(r) ? sanitizeReadiness(r) : null,
       post: isObj(p) ? { difficulty: int(get(p, 'difficulty'), 0, 4, 0) } : null,
       cardio: isObj(c) ? { min: int(get(c, 'min'), 0, 600, 0), watts: numOrNull(get(c, 'watts'), 0, 2000), kcal: int(get(c, 'kcal'), 0, 10000, 0) } : null,
       durationMin: int(get(s, 'durationMin'), 0, 600, 0), notes: str(get(s, 'notes'), 1000), calibrated: bool(get(s, 'calibrated')), savedAt: numOrNull(get(s, 'savedAt'), 0, 4e12),
       skippedSlots: (Array.isArray(get(s, 'skippedSlots')) ? get(s, 'skippedSlots') : []).filter(k => SLOT_KEYS.includes(k)).slice(0, 10),
       soreness: isObj(so) ? { legs: int(get(so, 'legs'), 1, 4, 1), push: int(get(so, 'push'), 1, 4, 1), hinge: int(get(so, 'hinge'), 1, 4, 1) } : null,
-      exercises: (Array.isArray(get(s, 'exercises')) ? get(s, 'exercises') : []).slice(0, 12).map(e => sanitizeExercise(e, state)).filter(Boolean),
+      exercises: (Array.isArray(get(s, 'exercises')) ? get(s, 'exercises') : []).slice(0, 12).map(e => sanitizeExercise(e, state, !oneOf(get(s, 'phase'), ['lift', 'post', 'cardio', 'edit'], null))).filter(Boolean),
       notesList: undefined,
     };
     delete out.notesList;
@@ -98,6 +118,10 @@
       if (phase === 'edit') { out.editOf = idStr(get(s, 'editOf'), null); out.editDate = dateStr(get(s, 'editDate'), out.date); if (!out.editOf) return null; }
       const cr = get(s, 'cardioRun');
       out.cardioRun = isObj(cr) ? { start: num(get(cr, 'start'), 0, 4e12, 0), pausedTotal: num(get(cr, 'pausedTotal'), 0, 4e12, 0), paused: bool(get(cr, 'paused')), pausedAt: numOrNull(get(cr, 'pausedAt'), 0, 4e12) } : null;
+      if (out.cardioRun && out.cardioRun.paused && out.cardioRun.pausedAt == null) out.cardioRun.paused = false; // a pause with no time cannot be timed
+      const cdr = get(s, 'cardioDraft');
+      if (isObj(cdr)) out.cardioDraft = { min: int(get(cdr, 'min'), 0, 600, null), watts: int(get(cdr, 'watts'), 0, 2000, null), minTyped: bool(get(cdr, 'minTyped')) };
+      if ((phase === 'post' || phase === 'cardio') && !out.post) out.post = { difficulty: 0 };
     }
     return out;
   }
@@ -110,11 +134,11 @@
     const S = isObj(get(raw, 'settings')) ? get(raw, 'settings') : {};
     const s = d.settings;
     s.units = 'lb';
-    s.barWeight = num(get(S, 'barWeight'), 5, 100, 45);
+    s.barWeight = Math.round(num(get(S, 'barWeight'), 5, 100, 45) * 2) / 2;
     const PL = [55, 45, 35, 25, 15, 10, 5, 2.5, 1.25];
     const plates = Array.isArray(get(S, 'plates')) ? get(S, 'plates').map(Number).filter(p => PL.includes(p)) : [];
     s.plates = (plates.length ? Array.from(new Set(plates)) : [45, 35, 25, 10, 5, 2.5]).sort((a, b) => b - a);
-    s.increment = s.plates.includes(1.25) ? 2.5 : s.plates.includes(2.5) ? 5 : 10;
+    s.increment = Math.min(10, E.loadStep(s.plates)); // the correction step: one pair of the smallest plate, at most 10 (loads round to what the plates make)
     s.dbIncrement = oneOf(num(get(S, 'dbIncrement'), 1, 10, 5), [2.5, 5], 5);
     s.tmPct = oneOf(num(get(S, 'tmPct'), 0.5, 1, 0.9), [0.85, 0.875, 0.9, 0.925], 0.9);
     s.tmPctChosen = oneOf(num(get(S, 'tmPctChosen'), 0.5, 1, s.tmPct), [0.85, 0.875, 0.9, 0.925], s.tmPct); // the TM % the lifter picked; the program may lower tmPct and bring it back
@@ -137,14 +161,14 @@
     for (const k of LIFTS) {
       const src = isObj(get(L, k)) ? get(L, k) : {};
       const oneRM = num(get(src, 'oneRM'), 0, 2000, 0);
-      d.lifts[k] = { oneRM, tm: oneRM ? E.roundTo(oneRM * s.tmPct, s.increment) : 0, est: numOrNull(get(src, 'est'), 0, 3000), estDate: dateStr(get(src, 'estDate'), null), blockStartRM: numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null,
+      d.lifts[k] = { oneRM, tm: oneRM ? E.roundTo(oneRM * s.tmPct, 2.5) : 0, est: numOrNull(get(src, 'est'), 0, 3000), estDate: dateStr(get(src, 'estDate'), null), blockStartRM: numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null,
         estAtBlockStart: numOrNull(get(src, 'estAtBlockStart'), 0, 3000), upKey: str(get(src, 'upKey'), 20, null) || null, macroEst: numOrNull(get(src, 'macroEst'), 0, 3000), macroWasFlagged: bool(get(src, 'macroWasFlagged')),
         floorRM: numOrNull(get(src, 'floorRM'), 0, 2000) || numOrNull(get(src, 'blockStartRM'), 0, 2000) || oneRM || null, lbHits: int(get(src, 'lbHits'), 0, 10, 0), lbKey: dateStr(get(src, 'lbKey'), null),
-        rated: int(get(src, 'rated'), 0, 1e6, 0), macroRated: int(get(src, 'macroRated'), 0, 1e6, 0), easyRun: int(get(src, 'easyRun'), 0, 1000, 0), easyKey: dateStr(get(src, 'easyKey'), null) };
+        rated: int(get(src, 'rated'), 0, 1e6, 0), macroRated: int(get(src, 'macroRated'), 0, 1e6, 0), easyRun: int(get(src, 'easyRun'), 0, 1000, 0), easyKey: dateStr(get(src, 'easyKey'), null), ratedAtBlockStart: int(get(src, 'ratedAtBlockStart'), 0, 1e6, null) };
     }
     const A = isObj(get(raw, 'acc')) ? get(raw, 'acc') : {};
     d.acc = {};
-    for (const k of Object.keys(A)) if (own(E.EX, k) && isObj(A[k])) { const w = numOrNull(get(A[k], 'weight'), 0, 2000); if (w != null) d.acc[k] = { weight: w, updated: dateStr(get(A[k], 'updated'), null) }; }
+    for (const k of Object.keys(A)) if (own(E.EX, k) && isObj(A[k])) { const w = numOrNull(get(A[k], 'weight'), 0, 2000); if (w != null) { d.acc[k] = { weight: w, updated: dateStr(get(A[k], 'updated'), null) }; const su = numOrNull(get(A[k], 'suspect'), 0, 2000); if (su != null) d.acc[k].suspect = su; } }
 
     const P = isObj(get(raw, 'program')) ? get(raw, 'program') : {};
     const p = d.program;
@@ -189,7 +213,7 @@
 
     const sessions = Array.isArray(get(raw, 'sessions')) ? get(raw, 'sessions') : [];
     const seen = new Set();
-    d.sessions = sessions.slice(0, 3000).map(x => sanitizeSession(x, d)).filter(x => x && !seen.has(x.id) && seen.add(x.id)).sort((a, b) => a.ts - b.ts);
+    d.sessions = sessions.slice(-4000).map(x => sanitizeSession(x, d)).filter(x => x && !seen.has(x.id) && seen.add(x.id)).sort((a, b) => a.ts - b.ts).slice(-3000);
     const cur = sanitizeSession(get(raw, 'current'), d);
     d.current = cur && cur.phase ? cur : null;
     d.log = (Array.isArray(get(raw, 'log')) ? get(raw, 'log') : []).slice(0, 300).filter(isObj).map(l => ({ date: dateStr(get(l, 'date'), '2000-01-01'), msg: str(get(l, 'msg'), 300) })).filter(l => l.msg);
@@ -203,8 +227,8 @@
       if (d.undo && !d.undo.restoreSession) delete d.undo.restoreSession;
     } else d.undo = null;
     const T = get(raw, 'timer');
-    d.timer = isObj(T) ? { end: num(get(T, 'end'), 0, 4e12, 0), total: int(get(T, 'total'), 1, 3600, 90), label: str(get(T, 'label'), 60) } : null;
-    d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(0, 2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
+    d.timer = isObj(T) ? { end: num(get(T, 'end'), 0, 4e12, 0), total: int(get(T, 'total'), 1, 3600, 90), label: str(get(T, 'label'), 80), firedAt: num(get(T, 'firedAt'), 0, 4e12, 0) } : null;
+    d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(-2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
     d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);
     d.backupOffer = bool(get(raw, 'backupOffer'));
