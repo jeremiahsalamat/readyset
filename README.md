@@ -81,6 +81,7 @@ erases everything and cannot be undone.
 
 ```bash
 node tests/engine_fuzz.js
+node tests/sw_budget.js
 ```
 
 Fuzzes the engine and the state sanitizer: random settings, maxes and program positions through

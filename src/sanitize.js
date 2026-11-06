@@ -110,6 +110,7 @@
     const cl = get(s, 'calibLines');
     if (Array.isArray(cl)) { const L = cl.slice(0, 6).map(x => str(x, 300)).filter(Boolean); if (L.length) out.calibLines = L; }
     const phase = oneOf(get(s, 'phase'), ['lift', 'post', 'cardio', 'edit'], null);
+    if (!phase) for (const e of out.exercises) for (const x of e.sets) { x.autoW = false; if (!e.repRange) x.autoReps = false; } // only unticking in an open session reads these; an edit re-derives reps on rep-range sets
     if (phase) {
       out.phase = phase; out.startedAt = num(get(s, 'startedAt'), 0, 4e12, Date.now()); out.finishedAt = numOrNull(get(s, 'finishedAt'), 0, 4e12);
       out.cardioMin = int(get(s, 'cardioMin'), 0, 600, 0); out.estMinutes = int(get(s, 'estMinutes'), 0, 600, 0);

@@ -865,21 +865,6 @@
   // Longest session of the week (minutes) under a hypothetical adjustment: the time budget gate.
   // Longest session, in minutes, among the days that the hypothetical change actually lengthens
   // (a set added to the deadlift must not be blocked by a long bench day).
-  function weeklyMaxMinutesWith(state, lift, hypo) {
-    const base = JSON.parse(JSON.stringify(state.program)), P = JSON.parse(JSON.stringify(state.program));
-    if (hypo) {
-      if (hypo.week != null) { base.week = Math.min(hypo.week, BLOCKS[base.blockIdx].weeks); P.week = base.week; }
-      if (hypo.setAdj != null) P.setAdj = Object.assign({}, P.setAdj, { [lift]: hypo.setAdj });
-    }
-    const probeBase = Object.assign({}, state, { program: base }), probe = Object.assign({}, state, { program: P });
-    let m = 0;
-    for (let d = 0; d < DAYS.length; d++) {
-      base.dayIdx = d; P.dayIdx = d;
-      const before = buildSession(probeBase, 'full').estMinutes, after = buildSession(probe, 'full').estMinutes;
-      if (after > before) m = Math.max(m, after);
-    }
-    return m;
-  }
   // Count a week's working sets for a lift pattern, optionally under a hypothetical set adjustment
   // and week. Works on a copy of the program so nothing is left modified, whatever happens.
   function weeklySetsWith(state, lift, hypo) {
@@ -1228,5 +1213,5 @@
 
   root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, floorTo, loadStep, barRound, loadRound, openerWarm, plateLoad, EX, SWAPS, BLOCKS, MACRO, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
     readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, liftCorrection, sessionEstimate, calibrate, fatigueAllowance, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
-    positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes, weeklySetsWith, weeklyMaxMinutesWith, clampProgram, MAX_EVIDENCE_REPS, TUNE, applyTune, CAPS_BY_BLOCK, capFor, layoffAdjust, layoffCut, stallCheck };
+    positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes, weeklySetsWith, clampProgram, MAX_EVIDENCE_REPS, TUNE, applyTune, CAPS_BY_BLOCK, capFor, layoffAdjust, layoffCut, stallCheck };
 })(typeof window !== 'undefined' ? window : globalThis);

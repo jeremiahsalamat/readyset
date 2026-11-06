@@ -19,8 +19,10 @@
 
   // ---------- Dates ----------
   function todayISO(d) { d = d || new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
-  function fmtDate(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
-  function fmtDateLong(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); }
+  // One formatter each, not a new one per label. UTC on both sides, so a date never shifts when the phone changes time zone.
+  let DF, DFL; const utcDay = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+  function fmtDate(iso) { DF = DF || new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }); return DF.format(utcDay(iso)); }
+  function fmtDateLong(iso) { DFL = DFL || new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); return DFL.format(utcDay(iso)); }
   function daysBetween(a, b) { return Math.round((new Date(b) - new Date(a)) / 864e5); }
 
   // ---------- Storage ----------
@@ -36,12 +38,13 @@
     return st;
   }
   const Store = {
-    key: 'readyset.v1', db: null, timer: null, chain: Promise.resolve(), remoteOk: false, lastError: null, last: null, unreadable: null,
+    key: 'readyset.v1', db: null, timer: null, chain: Promise.resolve(), lastError: null, last: null, unreadable: null, size: 0,
     // null when nothing is stored; a value that is stored but cannot be read is kept aside (never
     // overwritten) and reported, so the recovery screen can offer it.
     loadLocal() {
       let t = null; try { t = localStorage.getItem(this.key); } catch (e) { return null; }
       if (!t) return null;
+      this.size = t.length;
       try { const v = JSON.parse(t); if (v && typeof v === 'object' && !Array.isArray(v)) return v; } catch (e) { /* fall through */ }
       this.unreadable = t; return null;
     },
@@ -49,12 +52,12 @@
       let json; try { json = pack(s); } catch (e) { return; }
       if (json === this.last) return; // nothing changed since the last write (app switches, double saves)
       const ok = () => { if (this.lastError) { this.lastError = null; try { renderSaveBar(); } catch (e) { /* before the page is ready */ } } };
-      try { localStorage.setItem(this.key, json); this.last = json; ok(); }
+      try { localStorage.setItem(this.key, json); this.last = json; this.size = json.length; ok(); }
       catch (e) {
         // Full: try once more without the Undo copy (the one large optional item). The live state is
         // never trimmed piecemeal: if that write lands, the Undo goes as a whole, so no half of it can run.
-        if (s.undo) { try { const j2 = pack(Object.assign({}, s, { undo: null })); localStorage.setItem(this.key, j2); this.last = j2; s.undo = null; ok(); return; } catch (e2) { /* still full */ } }
-        this.lastError = 'This phone could not save the latest changes (storage full or blocked). Save a backup file now, then free some space.';
+        if (s.undo) { try { const j2 = pack(Object.assign({}, s, { undo: null })); localStorage.setItem(this.key, j2); this.last = j2; this.size = j2.length; s.undo = null; ok(); return; } catch (e2) { /* still full */ } }
+        this.lastError = 'This phone could not save your latest sets (storage full or blocked). Keep Readyset open, finish the session, then tap Save backup. A backup includes a session once it is finished.';
         try { renderSaveBar(); } catch (e3) { /* before the page is ready */ }
       }
     },
@@ -76,15 +79,15 @@
               const merged = Array.from(byId.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0));
               const localNewer = local && (local.updatedAt || 0) > (remote.updatedAt || 0);
               local = Object.assign({}, localNewer ? local : remote, { sessions: merged });
-              this.db = db; this.remoteOk = true; // only after both reads and the merge worked: a failed read is never followed by writes over the account copy
+              this.db = db; // only after both reads and the merge worked: a failed read is never followed by writes over the account copy
               if (localNewer) this.pushAll(local);
               for (const x of localSessions) { const r = remoteSessions.find(y => y && y.id === x.id); if (!r || (x.savedAt || x.ts || 0) > (r.savedAt || r.ts || 0)) this.pushSession(x); }
             } else if (local) {
-              this.db = db; this.remoteOk = true; this.pushAll(local);
-            } else { this.db = db; this.remoteOk = true; }
+              this.db = db; this.pushAll(local);
+            } else { this.db = db; }
           }
         }
-      } catch (e) { this.db = null; this.remoteOk = false; /* fall back to local, and write nothing to the account */ }
+      } catch (e) { this.db = null; /* fall back to local, and write nothing to the account */ }
       return local;
     },
     save(s) {
@@ -138,6 +141,8 @@
   const DROP_ZERO = new Set(['plus', 'cut']);
   const DROP_ALWAYS = new Set(['cue', 'startHint', 'load']);
   function packer(k, v) {
+    if (k === 'kind' && v === 'work') return undefined;
+    if ((k === 'dayId' || k === 'dayName' || k === 'blockName') && typeof v === 'string') return undefined;
     if (v === null || v === '' || v === undefined) return undefined;
     if (v === false && DROP_FALSE.has(k)) return undefined;
     if (v === 0 && DROP_ZERO.has(k)) return undefined;
@@ -224,9 +229,10 @@
   // What iOS allows a home-screen web app: its JavaScript (the page's and the service worker's)
   // runs while Readyset is on screen and for a few seconds after you switch away; then iOS freezes
   // it until you come back. So an alert can only fire on time while Readyset is open. Built around
-  // that: the page always alerts when it is the one awake; the service worker is a backup for those
-  // first seconds and keeps its deadline on disk; nothing frozen alerts late on top of you; the bar
-  // shows the clock time the rest ends, and after it ends, how long ago (Rest done +1:10).
+  // that: on screen the page chimes; in those first seconds away the service worker posts the one
+  // banner (the page only tells it the rest is due, since iOS shows every notification it is given)
+  // and keeps its deadline on disk; nothing frozen alerts late on top of you; the bar shows the clock
+  // time the rest ends, and after it ends, how long ago (Rest done +1:10).
   let audioCtx = null;
   function tone(f, at, dur) { const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = f; g.gain.setValueAtTime(0.2, at); g.gain.exponentialRampToValueAtTime(0.0001, at + dur); o.connect(g); g.connect(audioCtx.destination); o.start(at); o.stop(at + dur + 0.05); }
   // A rising three-note chime. Web Audio follows the Silent switch, so the bar flashes as well.
@@ -241,15 +247,30 @@
   }
   // iOS starts audio suspended outside a tap and suspends it again after a call or an app switch,
   // so every tap during a session wakes it (nothing happens when it is already running).
-  function unlockAudio() { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {}); } catch (e) { /* ignore */ } }
+  // A context can also come back from an app switch dead, reading 'running' with its clock stopped
+  // (WebKit bugs 276016, 291892): it is replaced on the next tap.
+  let audioSick = false;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !audioCtx) return;
+    const c = audioCtx, t0 = c.currentTime;
+    setTimeout(() => { if (c === audioCtx) audioSick = c.state === 'running' && c.currentTime === t0; }, 700);
+  });
+  function unlockAudio() { try {
+    if (audioSick && audioCtx) { try { audioCtx.close().catch(() => {}); } catch (e) { /* ignore */ } audioCtx = null; }
+    audioSick = false;
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state !== 'running') { const c = audioCtx; c.resume().catch(() => {}); setTimeout(() => { if (c === audioCtx && c.state !== 'running') audioSick = true; }, 700); } // a tap could not wake it: the next tap replaces it
+  } catch (e) { /* ignore */ } }
   function flashTimer() { const el = $('#timer'); if (!el) return; el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
   function postSw(msg) { try { const c = navigator.serviceWorker && navigator.serviceWorker.controller; if (c) { c.postMessage(msg); return true; } } catch (e) { /* ignore */ } return false; }
   function alertsOn() { try { return !!(state.settings.notify && 'Notification' in window && Notification.permission === 'granted'); } catch (e) { return false; } }
   // Hand the deadline to the service worker (again): a worker iOS restarted, or one a new build put
   // in place, picks it up from disk.
-  function armSw() { const t = state && state.timer; if (t && !t.firedAt && alertsOn() && t.end > Date.now()) postSw({ type: 'rest-schedule', at: t.end, body: t.label ? `Next: ${t.label}` : 'Next set' }); else postSw({ type: 'rest-cancel' }); }
-  function clearRestNotes() { try { if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(reg => (reg && reg.getNotifications ? reg.getNotifications({ tag: 'readyset-rest' }) : [])).then(ns => (ns || []).forEach(n => n.close())).catch(() => {}); } catch (e) { /* ignore */ } }
-  function clockAt(ts) { return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); }
+  function armSw() { const t = state && state.timer; if (t && !t.firedAt && alertsOn()) { if (t.end > Date.now()) postSw({ type: 'rest-schedule', at: t.end, body: t.label ? `Next: ${t.label}` : 'Next set' }); } else postSw({ type: 'rest-cancel' }); } // a deadline just passed is left alone: the worker's fired marker stops a second banner
+  function clearRestNotes() { try { if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) navigator.serviceWorker.getRegistration().then(reg => (reg && reg.getNotifications ? reg.getNotifications() : [])).then(ns => (ns || []).forEach(n => n.close())).catch(() => {}); } catch (e) { /* ignore */ } }
+  function clearRestNotesSoon() { [1500, 6000].forEach(ms => setTimeout(() => { if (document.visibilityState === 'visible') clearRestNotes(); }, ms)); } // a worker thawing with us can post after the first clear, up to its 5 s limit
+  let clockMemo = { at: 0, text: '' }; // asked every second; a date formatter is not free
+  function clockAt(ts) { if (clockMemo.at !== ts) clockMemo = { at: ts, text: new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) }; return clockMemo.text; }
   function startTimer(seconds, label, src) {
     stopTimer(true);
     const end = Date.now() + seconds * 1000;
@@ -291,12 +312,11 @@
     const now = Date.now(), left = Math.ceil((ui.timer.end - now) / 1000);
     if (left <= 0 && !ui.timer.fired) {
       const late = -left, visible = document.visibilityState === 'visible';
-      if (visible || (alertsOn() && late <= 15)) {
+      if (visible || (alertsOn() && late <= 3)) {
         ui.timer.fired = true;
-        if (state.timer) { state.timer.firedAt = now; Store.saveLocal(state); }
-        postSw({ type: 'rest-cancel' }); // the page is the one awake: it alerts, and no worker thawed later repeats it
-        if (visible) { clearRestNotes(); if (late <= 300) beep(); else flashTimer(); }
-        else notifyRestDone(); // still running in the first seconds after you switched away
+        if (state.timer && visible) { state.timer.firedAt = now; Store.saveLocal(state); } // hidden, it is only handed over: if iOS closes everything before the banner, a reopen still announces it
+        if (visible) { postSw({ type: 'rest-cancel' }); clearRestNotes(); clearRestNotesSoon(); if (late <= 300) beep(); else flashTimer(); } // on screen: the chime, and no worker thawed later repeats it
+        else { ui.timer.handed = true; if (!postSw({ type: 'rest-due', at: ui.timer.end, body: state.timer && state.timer.label ? `Next: ${state.timer.label}` : 'Next set' })) notifyRestDone(); } // still running just after you switched away: the worker posts the banner (or already has)
       } // hidden with nothing sent: the rest is announced (chime or flash) the moment you are back
     }
     el.classList.toggle('over', left <= 0);
@@ -325,16 +345,16 @@
     try {
       if (!alertsOn()) return;
       const t = state.timer, body = t && t.label ? `Next: ${t.label}` : 'Next set';
-      const opts = { body, tag: 'readyset-rest', renotify: true };
+      const opts = { body, tag: 'readyset-rest-' + (t ? t.end : 0) };
       if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
         navigator.serviceWorker.getRegistration().then(reg => { if (reg && reg.showNotification) reg.showNotification('Rest done', opts); else new Notification('Rest done', opts); }).catch(() => { try { new Notification('Rest done', opts); } catch (e) { /* ignore */ } });
       } else new Notification('Rest done', opts);
     } catch (e) { /* notifications unavailable */ }
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && !(ui.timer && !ui.timer.fired)) clearRestNotes(); // back in the app: an old 'Rest done' banner has done its job
+    if (document.visibilityState === 'visible' && !(ui.timer && !ui.timer.fired)) { clearRestNotes(); clearRestNotesSoon(); } // back in the app: an old 'Rest done' banner has done its job
     if (!ui.timer) return;
-    if (document.visibilityState === 'visible') { tickTimer(); scheduleTick(); }
+    if (document.visibilityState === 'visible') { tickTimer(); scheduleTick(); if (ui.timer && ui.timer.handed) { ui.timer.handed = false; if (state.timer) { state.timer.firedAt = Date.now(); Store.saveLocal(state); } flashTimer(); } } // a banner you may have missed: the bar says it too
     if (ui.timer && !ui.timer.fired) armSw(); // hide: the newest worker gets the deadline right before iOS freezes the page
   });
   window.addEventListener('pageshow', () => { if (ui.timer) { tickTimer(); scheduleTick(); } });
@@ -345,6 +365,7 @@
   let wakeLock = null, wakePending = false;
   function wantAwake() { const s = state && state.current; return !!(s && !s.backfill && (s.phase === 'lift' || (s.phase === 'cardio' && s.cardioRun && !s.cardioRun.paused))); }
   async function keepAwake() {
+    if (wakeLock && wakeLock.released === true) wakeLock = null; // its release event never reached us across a freeze
     if (!navigator.wakeLock || wakeLock || wakePending || !wantAwake() || document.visibilityState !== 'visible') return;
     wakePending = true;
     try {
@@ -359,7 +380,6 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state && state.current) keepAwake(); });
 
   // ---------- Helpers ----------
-  function lbl(n) { return n == null ? '—' : String(n); }
   function pctLabel(e) { return e.pctTM != null ? Math.round(e.pctTM * 100) + '% TM' : ''; }
   // The sessions the reviews read: this block's training sessions, not deload or easy-week ones, and
   // not those logged before an inserted deload (the block resumes at the same week afterwards).
@@ -470,7 +490,8 @@
     const pos = E.positionLabel(state);
     $('#pos').textContent = `${pos.block.name} · ${pos.label}`;
     lastRenderDay = todayISO();
-    main.innerHTML = (state.current || ui.checkin ? '' : renderUndo()) + (view === 'settings' ? renderRestoreConfirm() : '') + (view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings());
+    main.querySelectorAll('canvas').forEach(c => { c.width = c.height = 0; }); // their pixels are freed now, not at the next garbage collection
+    main.innerHTML = (view === 'today' && !state.current && Store.size + asideData().length > 2e6 ? `<div class="callout warn">Readyset's storage is ${Math.round((Store.size + asideData().length) / 26214)}% full. Save a backup; older sessions will soon need compressing.</div>` : '') + (state.current || ui.checkin ? '' : renderUndo()) + (view === 'settings' ? renderRestoreConfirm() : '') + (view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings());
     if (view === 'history') drawCharts(); // before the anchor below: an undrawn canvas has a different height
     syncFoldAll();
     // Keep whatever you just tapped exactly where it was on screen, even when text above it grew,
@@ -492,6 +513,9 @@
     }
     return ui.draft;
   }
+  // A blank state while a real program is stored can only mean the first read failed: never build or restore over it.
+  function storedProgramMissed() { if (Store.db) return false; try { const v = Store.loadLocal(); return !!(v ? E.sanitizeState(v, { trusted: true }).setupDone : Store.unreadable); } catch (e) { return true; } }
+  function asideData() { try { return localStorage.getItem(Store.key + '.unreadable') || ''; } catch (e) { return ''; } }
   function renderSetup() {
     const d = draft(), step = ui.setupStep;
     const steps = `<div class="steps">${[0, 1, 2, 3].map(i => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`;
@@ -502,6 +526,7 @@
       ${steps}
       <label class="f">Your name (optional)<input id="d-name" data-draft="name" value="${esc(d.name)}" placeholder="Jerm"></label>
       <button class="btn primary block" data-action="setup-next">Start</button>
+      ${asideData() ? '<button class="btn block" data-action="recover-aside">Bring back the data set aside after an error</button>' : ''}
       <button class="btn quiet block" data-action="setup-restore">Already have a backup? Restore it</button>
       ${ui.setupRestore ? `<div class="stack">
         ${filePick('Restore from a backup file', 'primary')}
@@ -552,6 +577,7 @@
       <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-finish">Build my program</button></div></div>`;
   }
   function finishSetup() {
+    if (storedProgramMissed()) { location.reload(); return; }
     const d = draft();
     const barW = Math.round(Math.min(100, Math.max(5, Number(d.barWeight) || 45)) * 2) / 2;
     const bad = LIFTS.filter(l => !(Number(d[l]) >= barW && Number(d[l]) <= 2000));
@@ -1647,6 +1673,7 @@
     if (!card) { render(); return; }
     const tmp = document.createElement('div'); tmp.innerHTML = renderHistory();
     const fresh = tmp.querySelector('#trend-card'); if (!fresh) { render(); return; }
+    card.querySelectorAll('canvas').forEach(c => { c.width = c.height = 0; });
     card.replaceWith(fresh);
     drawCharts(true); // first: the anchor must measure the final layout
     if (anchor) { const el = document.querySelector(anchor.sel); if (el) { const dy = el.getBoundingClientRect().top - anchor.top; if (Math.abs(dy) >= 1) scroller().scrollTop += dy; } anchor = null; }
@@ -1780,9 +1807,10 @@
         <p class="small muted">${lastBak ? `Last backup ${lastBak} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${since ? ` · ${since} session${since > 1 ? 's' : ''} since` : ''}.</p>
         <button class="btn block" data-action="import-toggle">Restore from a backup file or text</button>
         ${ui.showImport ? `${filePick('Choose a backup file', 'primary block')}<label class="f">Or paste the backup text<textarea id="import-text" rows="4"></textarea></label><button class="btn" data-action="import">Restore from text</button>` : ''}
+        ${asideData() ? `<div class="callout">A copy set aside after an error is using ${Math.max(1, Math.round(asideData().length / 1024))} KB.<div class="btnrow" style="margin-top:8px"><button class="btn sm" data-action="aside-copy">Copy it</button>${ui.confirm === 'aside' ? '<button class="btn sm danger" data-action="aside-del">Delete for good</button><button class="btn sm" data-action="confirm-cancel">Keep</button>' : '<button class="btn sm quiet" data-action="aside-del-confirm">Delete</button>'}</div></div>` : ''}
         <button class="btn danger block" data-action="reset-confirm">Start over</button>
         ${ui.confirm === 'reset' ? `<div class="callout bad">This erases the program and every session, for good. Copy a backup first if anything is worth keeping. <div class="btnrow" style="margin-top:8px"><button class="btn sm danger" data-action="reset">Erase everything</button><button class="btn sm" data-action="confirm-cancel">Cancel</button></div></div>` : ''}`, { closed: true, sum: lastBak ? `Last backup ${lastBak}${since ? `, ${since} since` : ''}` : 'No backup yet' })
-      + `<p class="small muted" style="text-align:center">Readyset${BUILD ? ` · build ${esc(BUILD.slice(0, 7))}` : ''} · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.${BUILD ? ` <button class="btn sm quiet" data-action="check-update">Check for updates</button>` : ''}</p>`;
+      + `<p class="small muted" style="text-align:center">Readyset${BUILD ? ` · build ${esc(BUILD.slice(0, 7))}` : ''} · principles from Israetel, Hoffmann &amp; Smith, Scientific Principles of Strength Training (2020). Not medical advice.${BUILD ? ` <button class="btn sm quiet" data-action="check-update">Check for updates</button>` : ''}${returnsLine()}</p>`;
   }
   function tmLine() {
     return `Training maxes: squat ${state.lifts.squat.tm}, bench ${state.lifts.bench.tm}, deadlift ${state.lifts.deadlift.tm}. Barbell loads run off these.${LIFTS.some(l => state.lifts[l].est) ? ` Recent estimates: ${LIFTS.filter(l => state.lifts[l].est).map(l => `${LIFTNAME[l].toLowerCase()} ~${Math.round(state.lifts[l].est)}`).join(', ')}.` : ''}`;
@@ -1818,7 +1846,6 @@
     else if (key === 'squatStyle') { if (['lowbar', 'highbar'].includes(val)) { s.squatStyle = val; if (state.current) toast('Applies from the next session'); } }
     else if (key === 'deadliftStyle') { if (['conventional', 'sumo'].includes(val)) { s.deadliftStyle = val; if (state.current) toast('Applies from the next session'); } }
     else if (key === 'dbIncrement') { if ([2.5, 5].includes(n)) s.dbIncrement = n; }
-    else if (key === 'squatStyle' || key === 'deadliftStyle') { /* handled above */ }
     else if (SETTING_RANGES[key]) {
       const [lo, hi] = SETTING_RANGES[key];
       if (!Number.isFinite(n)) return 'reset';
@@ -1991,6 +2018,10 @@
       case 'restore-confirm': if (ui.pendingRestore) applyRestore(ui.pendingRestore); break;
       case 'restore-cancel': ui.pendingRestore = null; render(); break;
       case 'setup-restore': ui.setupRestore = !ui.setupRestore; render(); break;
+      case 'recover-aside': { const a = asideData(); if (!restoreFromText(a, true) && !state.setupDone) recoveryCard(new Error('This copy cannot be read by this version. Copy it somewhere safe; a later update may read it.'), a); break; }
+      case 'aside-copy': { const a = asideData(); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(a).then(() => toast('Copied'), () => toast('Could not copy')); else toast('Could not copy'); break; }
+      case 'aside-del-confirm': ui.confirm = 'aside'; render(); break;
+      case 'aside-del': try { localStorage.removeItem(Store.key + '.unreadable'); } catch (e) { /* ignore */ } ui.confirm = null; render(); toast('Removed'); break;
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
       case 'reset': { stopTimer(); releaseAwake(); for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; ui.pendingRestore = null; ui.backfill = null; ui.showImport = false; ui.editSets = {}; ui.lastDeleted = null; ui.lastEi = null; renderSheet(); save(); render(); break; }
       case 'delete-cancel': ui.confirmDel = null; render(); break;
@@ -2004,7 +2035,7 @@
   });
   // Restore a backup (pasted text or a chosen file). Untrusted: it goes through the sanitizer and can
   // never carry an undo snapshot or anything outside the whitelist.
-  function restoreFromText(txt) {
+  function restoreFromText(txt, fromAside) {
     let fresh;
     try {
       if (txt.length > 20e6) throw new Error('too large');
@@ -2014,8 +2045,9 @@
       if (!fresh.setupDone) throw new Error('no maxes');
     } catch (e) { toast('That does not look like a Readyset backup'); return false; }
     if (state.current) { toast('Finish or discard the session in progress first'); return false; }
+    if (!state.setupDone && !fromAside && storedProgramMissed()) { location.reload(); return false; }
     if (state.setupDone && state.sessions.some(x => !x.skipped)) { ui.pendingRestore = fresh; render(); scrollToY(0); return false; }
-    return applyRestore(fresh);
+    return applyRestore(fresh, fromAside);
   }
   function sessionSpan(list) {
     const done = list.filter(x => !x.skipped); if (!done.length) return 'no sessions';
@@ -2032,14 +2064,16 @@
       ${older ? `<div class="callout bad">This backup is older than what is on this phone. Sessions after ${fmtDate(newest(f.sessions) || '2000-01-01')} would be lost.</div>` : ''}
       <div class="btnrow"><button class="btn danger" data-action="restore-confirm">Replace</button><button class="btn" data-action="restore-cancel">Cancel</button></div></div>`;
   }
-  function applyRestore(fresh) {
+  function applyRestore(fresh, fromAside) { // fromAside: this phone's own copy, not a backup: its session stays and it has not been backed up
     ui.pendingRestore = null;
-    fresh.lastBackupAt = Date.now(); fresh.lastBackupKind = 'restore';
+    if (!fromAside) { fresh.lastBackupAt = Date.now(); fresh.lastBackupKind = 'restore'; }
     try {
       const oldIds = state.sessions.map(x => x.id), prev = state;
-      fresh.current = null;
+      if (!fromAside) fresh.current = null;
+      fresh.timer = null;
       stopTimer();
       try { state = fresh; migrate(); } catch (e) { state = prev; throw e; }
+      if (fromAside) { try { localStorage.removeItem(Store.key + '.unreadable'); } catch (e) { /* ignore */ } }
       postSw({ type: 'rest-cancel' }); Store.pushAll(state);
       for (const id of oldIds) if (!state.sessions.some(x => x.id === id)) Store.deleteSession(id);
       save(); ui.showImport = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null; view = 'today';
@@ -2185,13 +2219,13 @@
     if (!BUILD || !location.protocol.startsWith('http') || reloading) return Promise.resolve('off');
     if (!force && Date.now() - lastUpdateCheck < 60000) return Promise.resolve('throttled');
     lastUpdateCheck = Date.now();
-    return fetch('./version.txt', { cache: 'no-store' }).then(r => (r.ok ? r.text() : '')).then(v => {
+    return fetch('./version.txt', { cache: 'no-store', signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined }).then(r => (r.ok ? r.text() : '')).then(v => {
       v = (v || '').trim();
       if (!/^[a-f0-9]{6,64}$/.test(v)) return 'failed';
       if (v === BUILD) return 'latest';
       // Reloaded for this version already and still running the old one (a stale cache in the way):
       // do not loop. The next launch, or the next change on the server, tries again.
-      try { if (sessionStorage.getItem('rs-reloaded-for') === v) return 'guarded'; } catch (e) { /* ignore */ }
+      try { const g = JSON.parse(sessionStorage.getItem('rs-reloaded-for') || 'null'); if (g && g.v === v && Date.now() - g.at < 600000) return 'guarded'; } catch (e) { /* an older format */ }
       ui.updateReady = v;
       try { if (navigator.serviceWorker && !(state && state.current)) navigator.serviceWorker.getRegistration().then(reg => reg && reg.update()).catch(() => {}); } catch (e) { /* ignore */ }
       applyUpdateIfSafe();
@@ -2208,10 +2242,22 @@
     if (!ui.updateReady || reloading) return;
     if (!byTap && document.visibilityState !== 'visible') return;
     if (!byTap && updateBusy()) { renderUpdateBar(); return; }
-    reloading = true; saveNow();
-    try { sessionStorage.setItem('rs-view', view); sessionStorage.setItem('rs-ui', JSON.stringify({ checkin: ui.checkin && !ui.checkin.result ? ui.checkin : null, backfill: ui.backfill || null })); } catch (e) { /* ignore */ }
-    try { sessionStorage.setItem('rs-reloaded-for', String(ui.updateReady)); } catch (e) { /* ignore */ }
-    setTimeout(() => location.reload(), 50);
+    reloading = true;
+    // The service worker serves its stored copy, so that copy is refreshed first, and the reload
+    // happens only with the new page in hand: nothing else would change, and a running page is never
+    // given up for nothing. The page stays usable during the wait, however slow the signal.
+    let gone = false;
+    const go = (fresh) => {
+      if (gone) return; gone = true;
+      if (!fresh) { reloading = false; renderUpdateBar(); if (byTap) toast('Update not downloaded yet. Try again in a moment.'); return; }
+      if (!byTap && (updateBusy() || document.visibilityState !== 'visible')) { reloading = false; renderUpdateBar(); return; } // something started while the copy was refreshing
+      saveNow();
+      try { sessionStorage.setItem('rs-view', view); sessionStorage.setItem('rs-ui', JSON.stringify({ checkin: ui.checkin && !ui.checkin.result ? ui.checkin : null, backfill: ui.backfill || null })); } catch (e) { /* ignore */ }
+      try { sessionStorage.setItem('rs-reloaded-for', JSON.stringify({ v: String(ui.updateReady), at: Date.now() })); } catch (e) { /* ignore */ }
+      setTimeout(() => location.reload(), 50);
+    };
+    fetch(location.pathname, { cache: 'no-cache' }).then(r => r.text()).then(t => go(t.includes('<meta name="readyset-build"') && !t.includes(`content="${BUILD}"`)), () => go(false));
+    setTimeout(() => go(false), 20000);
   }
   function renderUpdateBar() {
     if (!ui.updateReady || $('#update-bar')) return;
@@ -2221,23 +2267,26 @@
   }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    if (booted) noteReturn(false);
     if (booted && state && lastRenderDay && lastRenderDay !== todayISO() && !ui.sheet && !(document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))) render();
     if (ui.updateReady) applyUpdateIfSafe(); else checkForUpdate(false);
   });
   setInterval(() => { if (document.visibilityState === 'visible') checkForUpdate(false); }, 30 * 60000);
   // A new service worker taking over is a hint, not proof (the first install and a page that already
   // loaded the new build both fire it): confirm against version.txt before doing anything.
-  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', () => { if (ui.timer && !ui.timer.fired) armSw(); lastUpdateCheck = 0; checkForUpdate(true); });
+  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', () => { armSw(); lastUpdateCheck = 0; checkForUpdate(true); }); // armSw also resends a cancel lost during the swap
   function saveNow() {
     if (!state || !booted) return;
+    if (!state.setupDone && !state.sessions.length) return; // a blank state never saves itself on the way out
     try {
       applyPendingType(true);
       clearTimeout(notesTimer); notesTimer = null;
-      try { sessionStorage.setItem('rs-scroll', JSON.stringify({ view, y: scroller().scrollTop, id: state.current ? state.current.id + ':' + state.current.phase : '' })); } catch (e) { /* ignore */ }
+      try { sessionStorage.setItem('rs-scroll', JSON.stringify({ view, y: scroller().scrollTop, ts: ui.todayScroll || 0, id: state.current ? state.current.id + ':' + state.current.phase : '' })); sessionStorage.setItem('rs-sheet', ui.sheet && !ui.sheet.kind ? JSON.stringify(ui.sheet) : ''); } catch (e) { /* ignore */ }
       const n = $('#sess-notes'); if (n && state.current) state.current.notes = n.value.slice(0, 1000);
       Store.saveLocal(state); Store.flush();
     } catch (e) { /* never block closing */ }
   }
+  document.addEventListener('touchend', () => { if (booted && state && state.current) { unlockAudio(); keepAwake(); } }, { passive: true }); // iOS wants a gesture for both, and a page it reopened has had none
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   window.addEventListener('pagehide', saveNow);
   window.addEventListener('storage', (e) => {
@@ -2260,7 +2309,7 @@
   // ---------- Boot ----------
   async function boot() {
     let h = (location.hash || '').replace('#', '');
-    try { const v = sessionStorage.getItem('rs-view'); if (v) { h = v; sessionStorage.removeItem('rs-view'); } } catch (e) { /* ignore */ }
+    try { const v = sessionStorage.getItem('rs-view'); if (v) { h = v; sessionStorage.removeItem('rs-view'); } else { const sv = JSON.parse(sessionStorage.getItem('rs-scroll') || 'null'); if (sv && sv.view && sv.id) { h = sv.view; ui.todayScroll = sv.ts || 0; } } } catch (e) { /* ignore */ } // iOS reopened the page mid-session: the tab you were on
     if (['today', 'program', 'history', 'settings'].includes(h)) view = h;
     state = E.defaultState();
     $('#main').innerHTML = '<p class="empty">Loading…</p>';
@@ -2279,20 +2328,48 @@
       recoveryCard(e);
       return;
     }
-    if (state.current && state.current.phase === 'lift') resumeTimer();
+    if (state.current && state.current.phase === 'lift' && state.timer) resumeTimer(); else postSw({ type: 'rest-cancel' });
+    if (document.visibilityState === 'visible') clearRestNotes();
     keepAwake(); // lifting, or the bike clock running
     // Back where you were: after an update or iOS reopening the app, the same screen position (or,
     // in a session, the set you are on) and a half-answered check-in.
     try {
       const sv = JSON.parse(sessionStorage.getItem('rs-scroll') || 'null'); sessionStorage.removeItem('rs-scroll');
       const keyNow = state.current ? state.current.id + ':' + state.current.phase : '';
-      if (sv && sv.view === view && sv.id === keyNow && sv.y > 0) scrollToY(sv.y);
-      else if (state.current && state.current.phase === 'lift' && view === 'today') { const el = document.querySelector('.set.next') || document.querySelector('.ex:not(.collapsed)'); if (el) { const sc = scroller(); scrollToY(sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top - sc.clientHeight * 0.3); } }
+      const restoreSpot = () => {
+        if (sv && sv.view === view && sv.id === keyNow && sv.y > 0) scrollToY(sv.y);
+        else if (state.current && state.current.phase === 'lift' && view === 'today') { const el = document.querySelector('.set.next') || document.querySelector('.ex:not(.collapsed)'); if (el) { const sc = scroller(); scrollToY(sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top - sc.clientHeight * 0.3); } }
+      };
+      restoreSpot();
+      if (document.fonts && document.fonts.status === 'loading') { // the real fonts re-wrap the text: put the spot back, unless you have already touched the page
+        const y = scroller().scrollTop; let touched = false;
+        document.addEventListener('touchstart', () => { touched = true; }, { once: true, passive: true, capture: true });
+        document.fonts.ready.then(() => { if (!touched && scroller().scrollTop === y) restoreSpot(); }).catch(() => {});
+      }
       const su = JSON.parse(sessionStorage.getItem('rs-ui') || 'null'); sessionStorage.removeItem('rs-ui');
       if (su && !state.current) { if (su.checkin && Date.now() - (su.checkin.at || 0) < 3 * 3600000) ui.checkin = su.checkin; if (su.backfill) ui.backfill = su.backfill; if (ui.checkin || ui.backfill) render(); }
     } catch (e) { /* nothing to restore */ }
+    try { const sh = JSON.parse(sessionStorage.getItem('rs-sheet') || 'null'); sessionStorage.removeItem('rs-sheet'); if (sh && state.current) { const ex = state.current.exercises[sh.ei], x = ex && ex.sets[sh.si]; if (x && x.done && x.rpe == null) { ui.sheet = sh; renderSheet(); } } } catch (e) { /* nothing to restore */ }
+    noteReturn(true);
     setTimeout(() => checkForUpdate(true), 3000);
     if (state.current && state.current.phase === 'cardio' && state.current.cardioRun) tickCardio();
+  }
+  // How returns to a session really go on this phone: iOS reopened the page, or it only woke up.
+  // The time is what the page can see; anything longer than that is iOS itself. Device-only, not in backups.
+  function noteReturn(cold) {
+    try {
+      if (!state || !state.current) return;
+      const t0 = performance.now();
+      requestAnimationFrame(() => setTimeout(() => { try {
+        const k = Store.key + '.opens', o = JSON.parse(localStorage.getItem(k) || '{}');
+        if (cold) { const n = performance.getEntriesByType('navigation')[0]; o.cold = (o.cold || 0) + 1; o.resp = n ? Math.round(n.responseEnd) : 0; o.paint = Math.round(performance.now()); }
+        else { o.thaw = (o.thaw || 0) + 1; o.thawMs = Math.round(performance.now() - t0); }
+        localStorage.setItem(k, JSON.stringify(o));
+      } catch (e) { /* only a measurement */ } }, 0));
+    } catch (e) { /* only a measurement */ }
+  }
+  function returnsLine() {
+    try { const o = JSON.parse(localStorage.getItem(Store.key + '.opens') || '{}'); if (!o.cold && !o.thaw) return ''; return `<br>Mid-session returns: ${o.cold || 0} reopened (last ${o.paint || 0} ms to draw), ${o.thaw || 0} resumed (last ${o.thawMs || 0} ms).`; } catch (e) { return ''; }
   }
   function recoveryCard(err, rawIn) {
     const raw = rawIn || (() => { try { return localStorage.getItem(Store.key) || ''; } catch (e) { return ''; } })();
@@ -2303,7 +2380,8 @@
       <label class="f">Stored data<textarea id="recovery-text" rows="5" readonly>${esc(raw)}</textarea></label>
       <div class="btnrow"><button class="btn" id="recovery-copy">Copy stored data</button><button class="btn danger" id="recovery-reset">Start over</button></div></div>`;
     $('#recovery-copy').addEventListener('click', () => { const ta = $('#recovery-text'); ta.select(); try { document.execCommand('copy'); } catch (e) { /* ignore */ } if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(raw).catch(() => {}); toast('Copied'); });
-    $('#recovery-reset').addEventListener('click', () => { booted = false; try { if (raw) localStorage.setItem(Store.key + '.unreadable', raw); } catch (e) { /* no room for a copy */ } try { localStorage.removeItem(Store.key); } catch (e) { /* ignore */ } location.reload(); });
+    let sure = false;
+    $('#recovery-reset').addEventListener('click', (ev) => { if (!sure) { sure = true; ev.target.textContent = 'Erase it: tap again'; return; } booted = false; try { if (raw) localStorage.setItem(Store.key + '.unreadable', raw); } catch (e) { try { localStorage.removeItem(Store.key); localStorage.setItem(Store.key + '.unreadable', raw); } catch (e2) { /* no room for a copy */ } } try { localStorage.removeItem(Store.key); } catch (e) { /* ignore */ } location.reload(); });
   }
   // One-time upgrade steps for data saved by earlier versions.
   function migrate() {
