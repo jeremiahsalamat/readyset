@@ -2,7 +2,7 @@
 // table at (weight / true max), plus in-block fatigue and reporting noise. The in-session
 // correction and the between-session calibration both run, mirroring app.js. The question: do the
 // app's maxes track the true ones without ratcheting down, and does training stay sane?
-require(process.argv[2]);
+require(require('path').resolve(process.argv[2]));
 const E = globalThis.Engine;
 let seed = 11; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 const gauss = () => (rnd() + rnd() + rnd() - 1.5) * 1.1;

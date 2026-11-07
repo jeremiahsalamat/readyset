@@ -38,25 +38,25 @@
     return st;
   }
   const Store = {
-    key: 'readyset.v1', db: null, timer: null, chain: Promise.resolve(), lastError: null, last: null, unreadable: null, size: 0,
+    key: 'readyset.v1', db: null, timer: null, chain: Promise.resolve(), lastError: null, last: null, unreadable: null, size: 0, fullAt: -1, // fullAt: the updatedAt of the last uncached pack that reached the disk
     // null when nothing is stored; a value that is stored but cannot be read is kept aside (never
     // overwritten) and reported, so the recovery screen can offer it.
     loadLocal() {
       let t = null; try { t = localStorage.getItem(this.key); } catch (e) { return null; }
       if (!t) return null;
       this.size = t.length;
-      try { const v = JSON.parse(t); if (v && typeof v === 'object' && !Array.isArray(v)) return v; } catch (e) { /* fall through */ }
+      try { const v = JSON.parse(t); if (v && typeof v === 'object' && !Array.isArray(v)) { this.last = t; return v; } } catch (e) { /* fall through */ } // last: what is on disk, so a first save that packs to the same bytes writes nothing
       this.unreadable = t; return null;
     },
-    saveLocal(s) {
-      let json; try { json = pack(s); } catch (e) { return; }
-      if (json === this.last) return; // nothing changed since the last write (app switches, double saves)
+    saveLocal(s, full) { // full: pack every session afresh (on the way out), not from the cache
+      let json; try { json = full ? pack(s) : packState(s); } catch (e) { return; }
+      if (json === this.last) { if (full) this.fullAt = s.updatedAt; return; } // nothing changed since the last write (app switches, double saves)
       const ok = () => { if (this.lastError) { this.lastError = null; try { renderSaveBar(); } catch (e) { /* before the page is ready */ } } };
-      try { localStorage.setItem(this.key, json); this.last = json; this.size = json.length; ok(); }
+      try { localStorage.setItem(this.key, json); this.last = json; this.size = json.length; if (full) this.fullAt = s.updatedAt; ok(); }
       catch (e) {
         // Full: try once more without the Undo copy (the one large optional item). The live state is
         // never trimmed piecemeal: if that write lands, the Undo goes as a whole, so no half of it can run.
-        if (s.undo) { try { const j2 = pack(Object.assign({}, s, { undo: null })); localStorage.setItem(this.key, j2); this.last = j2; this.size = j2.length; s.undo = null; ok(); return; } catch (e2) { /* still full */ } }
+        if (s.undo) { try { const j2 = packState(Object.assign({}, s, { undo: null })); localStorage.setItem(this.key, j2); this.last = j2; this.size = j2.length; s.undo = null; ok(); return; } catch (e2) { /* still full */ } }
         this.lastError = 'This phone could not save your latest sets (storage full or blocked). Keep Readyset open, finish the session, then tap Save backup. A backup includes a session once it is finished.';
         try { renderSaveBar(); } catch (e3) { /* before the page is ready */ }
       }
@@ -67,24 +67,13 @@
         if (window.claude && typeof window.claude.use === 'function') {
           const db = await Promise.race([window.claude.use('db'), new Promise(r => setTimeout(() => r(null), 5000))]);
           if (db) {
-            const timeout = (p) => Promise.race([p, new Promise((res, rej) => setTimeout(() => rej(new Error('timeout')), 8000))]);
-            const snap = await timeout(db.doc('app/state').get());
-            if (snap.exists) {
-              const remote = snap.data();
-              const q = await timeout(db.collection('sessions').limit(5000).get());
-              const remoteSessions = q.docs.map(d => d.data());
-              const localSessions = (local && Array.isArray(local.sessions)) ? local.sessions : [];
-              // Sessions are merged by id, never replaced, so a push that failed cannot lose one.
-              const byId = new Map(); for (const x of remoteSessions.concat(localSessions)) { if (!x || !x.id) continue; const o = byId.get(x.id); if (!o || (x.savedAt || x.ts || 0) > (o.savedAt || o.ts || 0)) byId.set(x.id, x); }
-              const merged = Array.from(byId.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0));
-              const localNewer = local && (local.updatedAt || 0) > (remote.updatedAt || 0);
-              local = Object.assign({}, localNewer ? local : remote, { sessions: merged });
-              this.db = db; // only after both reads and the merge worked: a failed read is never followed by writes over the account copy
-              if (localNewer) this.pushAll(local);
-              for (const x of localSessions) { const r = remoteSessions.find(y => y && y.id === x.id); if (!r || (x.savedAt || x.ts || 0) > (r.savedAt || r.ts || 0)) this.pushSession(x); }
-            } else if (local) {
-              this.db = db; this.pushAll(local);
-            } else { this.db = db; }
+            // Read and merge (appcore.js accountOpen: sessions by id, deleted ids left out), then write.
+            const m = await window.AppCore.accountOpen(db, local, 8000);
+            local = m.state;
+            this.db = db; // only after both reads and the merge worked: a failed read is never followed by writes over the account copy
+            if (m.pushAll && local) this.pushAll(local);
+            for (const x of m.pushSessions) this.pushSession(x);
+            for (const id of m.deleteIds) this.chain = this.chain.then(() => db.doc('sessions/' + id).delete()).catch(() => {});
           }
         }
       } catch (e) { this.db = null; /* fall back to local, and write nothing to the account */ }
@@ -109,7 +98,8 @@
       this.chain = this.chain.then(() => this.db.doc('sessions/' + sess.id).set(sess)).catch(() => {});
     },
     pushAll(s) { this.pushState(s); for (const x of s.sessions || []) this.pushSession(x); },
-    deleteSession(id) { if (this.db) this.chain = this.chain.then(() => this.db.doc('sessions/' + id).delete()).catch(() => {}); },
+    // The id is kept on the state too (account copy only), so a delete that never lands stays deleted.
+    deleteSession(id) { if (!this.db) return; state.deletedIds = window.AppCore.noteDeleted(state.deletedIds, id); this.chain = this.chain.then(() => this.db.doc('sessions/' + id).delete()).catch(() => {}); },
   };
   function save() { Store.save(state); }
   // A failed save is not a one-off toast: a bar stays at the top of every screen until a save works.
@@ -133,26 +123,12 @@
     const d = new Date(), p = (n) => String(n).padStart(2, '0');
     return `readyset-backup-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.json`;
   }
-  // What is stored leaves out everything the sanitizer rebuilds on load: nulls, empty strings,
-  // flags whose missing value already means false (never the three that default to true), zero
-  // counters, and exercise text that comes from the catalog. A year of sessions stays well under
-  // 1 MB, and no deep copy is made on every tap.
-  const DROP_FALSE = new Set(['ind', 'open', 'done', 'manualW', 'hitFloor', 'autoStopped', 'needsWeight', 'optional', 'skipped', 'isDeload', 'isTest', 'isRest', 'paused', 'setLightRest', 'calibrated', 'timerSrc', 'autoReps', 'autoW', 'minTyped', 'macroWasFlagged']);
-  const DROP_ZERO = new Set(['plus', 'cut']);
-  const DROP_ALWAYS = new Set(['cue', 'startHint', 'load']);
-  function packer(k, v) {
-    if (k === 'kind' && v === 'work') return undefined;
-    if ((k === 'dayId' || k === 'dayName' || k === 'blockName') && typeof v === 'string') return undefined;
-    if (v === null || v === '' || v === undefined) return undefined;
-    if (v === false && DROP_FALSE.has(k)) return undefined;
-    if (v === 0 && DROP_ZERO.has(k)) return undefined;
-    if (DROP_ALWAYS.has(k) && typeof v === 'string') return undefined;
-    return v;
-  }
-  function pack(v) { return JSON.stringify(v, packer); }
+  // What is stored, and the per-session cache that keeps a set tick from re-packing years of
+  // history, live in appcore.js (tests/app_units.js runs them in node).
+  const { pack, packState, touchSession } = window.AppCore;
   function backupJSON(kind) {
     const copy = Object.assign({}, state); copy.settings = Object.assign({}, state.settings);
-    for (const k of ['current', 'undo', 'timer', 'backupOffer']) delete copy[k];
+    for (const k of ['current', 'undo', 'timer', 'backupOffer', 'deletedIds']) delete copy[k]; // deletedIds: the account copy's own bookkeeping, not the training record
     copy.lastBackupAt = Date.now(); copy.lastBackupKind = kind || 'file';
     return pack(copy);
   }
@@ -214,7 +190,10 @@
   window.addEventListener('resize', fitBottom);
   let chartRz = 0; window.addEventListener('resize', () => { clearTimeout(chartRz); chartRz = setTimeout(() => { if (view === 'history' && state && state.setupDone) drawCharts(); }, 150); });
   try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (view === 'history' && state && state.setupDone) drawCharts(); }); } catch (e) { /* older browsers */ }
-  document.addEventListener('toggle', (ev) => { const el = ev.target; if (el && el.classList && el.classList.contains('session-item') && el.dataset.id) { ui.histOpen = ui.histOpen || {}; if (el.open) ui.histOpen[el.dataset.id] = 1; else delete ui.histOpen[el.dataset.id]; } }, true);
+  document.addEventListener('toggle', (ev) => { const el = ev.target; if (el && el.classList && el.classList.contains('session-item') && el.dataset.id) { ui.histOpen = ui.histOpen || {}; if (el.open) { ui.histOpen[el.dataset.id] = 1; fillHistBody(el); } else delete ui.histOpen[el.dataset.id]; } }, true);
+  // The toggle event comes after the row has opened (a frame can paint in between), so a tap or key
+  // on a closed session's summary fills its body first, before the browser opens it.
+  document.addEventListener('click', (ev) => { const sm = ev.target && ev.target.closest && ev.target.closest('summary'); const el = sm && sm.parentElement; if (el && el.classList.contains('session-item') && !el.open) fillHistBody(el); }, true);
   window.addEventListener('orientationchange', () => setTimeout(fitBottom, 250));
   let fitRaf = 0;
   try { if (window.ResizeObserver) new ResizeObserver(() => { if (!fitRaf) fitRaf = requestAnimationFrame(() => { fitRaf = 0; fitBottom(); }); }).observe(document.documentElement); } catch (e) { /* events above still cover it */ }
@@ -430,8 +409,13 @@
     }).join('');
     return `<div class="pv-panel"><ol class="pv-list" role="list" aria-label="Exercises">${rows}</ol></div>`;
   }
+  // The time the plan asks for, and what the optional slots add if you do them (the budget covers
+  // the first; the second is your call, so it is shown apart rather than folded in).
+  function planMinutes(plan) { const req = E.estimateMinutes(plan, true); return { req, opt: Math.max(0, plan.estMinutes - req) }; }
   function previewTime(plan, mode) {
-    const pills = [`<span class="pv-pill"><b class="num">~${plan.estMinutes}</b> min lifting</span>`];
+    const t = planMinutes(plan);
+    const pills = [`<span class="pv-pill"><b class="num">~${t.req}</b> min lifting</span>`];
+    if (t.opt) pills.push(`<span class="pv-pill quiet">+${t.opt} min optional</span>`);
     if (plan.cardioMin) pills.push(`<span class="pv-pill"><b class="num">${plan.cardioMin}</b> min easy bike</span>`);
     if (mode && mode !== 'full') pills.push(`<span class="pv-pill quiet">${esc(E.MODES[mode].label)}</span>`);
     return `<div class="pv-time" role="group" aria-label="Time estimate">${pills.join('')}</div>`;
@@ -491,7 +475,7 @@
     $('#pos').textContent = `${pos.block.name} · ${pos.label}`;
     lastRenderDay = todayISO();
     main.querySelectorAll('canvas').forEach(c => { c.width = c.height = 0; }); // their pixels are freed now, not at the next garbage collection
-    main.innerHTML = (view === 'today' && !state.current && Store.size + asideData().length > 2e6 ? `<div class="callout warn">Readyset's storage is ${Math.round((Store.size + asideData().length) / 26214)}% full. Save a backup; older sessions will soon need compressing.</div>` : '') + (state.current || ui.checkin ? '' : renderUndo()) + (view === 'settings' ? renderRestoreConfirm() : '') + (view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings());
+    main.innerHTML = (view === 'today' && !state.current ? renderStorageWarn() : '') + (state.current || ui.checkin ? '' : renderUndo()) + (view === 'settings' ? renderRestoreConfirm() : '') + (view === 'today' ? renderToday() : view === 'program' ? renderProgram() : view === 'history' ? renderHistory() : renderSettings());
     if (view === 'history') drawCharts(); // before the anchor below: an undrawn canvas has a different height
     syncFoldAll();
     // Keep whatever you just tapped exactly where it was on screen, even when text above it grew,
@@ -516,6 +500,14 @@
   // A blank state while a real program is stored can only mean the first read failed: never build or restore over it.
   function storedProgramMissed() { if (Store.db) return false; try { const v = Store.loadLocal(); return !!(v ? E.sanitizeState(v, { trusted: true }).setupDone : Store.unreadable); } catch (e) { return true; } }
   function asideData() { try { return localStorage.getItem(Store.key + '.unreadable') || ''; } catch (e) { return ''; } }
+  // Near the limit iOS gives a site (about 2.6 million characters): say so plainly, with the one thing
+  // that keeps the data safe. Nothing frees space on its own; once it is full, saves fail and the
+  // save bar takes over. Today only, outside a session, as before: no new reminders.
+  function renderStorageWarn() {
+    const used = Store.size + asideData().length;
+    if (used <= 2e6) return '';
+    return `<div class="callout warn row between"><span>Readyset's storage on this phone is ${Math.round(used / 26214)}% full. Save a backup file so every session is kept; once it is full, new sessions cannot be saved here.</span>${Store.db ? '<button class="btn sm" data-action="export">Copy backup</button>' : '<button class="btn sm" data-action="share-backup">Save backup</button>'}</div>`;
+  }
   function renderSetup() {
     const d = draft(), step = ui.setupStep;
     const steps = `<div class="steps">${[0, 1, 2, 3].map(i => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>`;
@@ -600,8 +592,8 @@
   // A deload taken now: in a block's last planned week the block's own deload runs and the next
   // block follows; earlier, a week is inserted and the block resumes; Peak has no deload week, so
   // an easy week stands in.
-  function layoffTier(gap) { return gap >= 42 ? 4 : gap >= 21 ? 3 : gap >= 14 ? 2 : 1; }
-  function layoffHandled(newest) { const [d, t, c] = String(state.program.layoffHandled || '').split(':'); return d === newest ? { tier: Number(t) || 3, cut: Number(c) || 0 } : { tier: 0, cut: 0 }; } // "date:tier:cut already taken"; an older bare date stays handled, as it always was
+  const { layoffTier } = window.AppCore; // the layoff rule's tiers and what was already taken: appcore.js
+  function layoffHandled(newest) { return window.AppCore.layoffHandled(state.program.layoffHandled, newest); }
   function deloadEffect(ask) {
     const P = state.program, b = E.BLOCKS[P.blockIdx];
     if (!b.deload) return ask ? 'Peak has no deload week: take an easy week (half sets, half loads)? The block resumes afterwards.' : 'Best to take an easy week now (half sets, half loads); the block resumes afterwards.';
@@ -633,7 +625,7 @@
     // Coming back after a gap: offer the layoff rule once per gap (the book: ease back in, do not
     // resume where you left off, p.250).
     const newest = newestSessionDate(), gap = newest ? daysBetween(newest, todayISO()) : 0;
-    if (gap >= 7 && layoffTier(gap) > layoffHandled(newest).tier && (gap >= 14 || (!pos.isRest && !pos.isDeload))) { // a deload or easy week is light enough for a short gap, not for a long one
+    if (window.AppCore.layoffOffer(gap, layoffHandled(newest).tier, pos)) {
       const what = gap < 14 ? (pos.isTest ? 'one more heavy week 5% lighter, then the test' : 'repeat this week 5% lighter, earned sets cleared') : gap < 21 ? 'restart this block at week 1, maxes 2.5% lower, first week 2.5% lighter' : gap < 42 ? `restart ${E.BLOCKS[P.blockIdx].test ? 'the last Strength block' : 'this block'} at week 1, maxes 5% lower, first week 5% lighter` : 'restart at Build week 1, maxes 10% lower (raise them by hand if the weights feel light)';
       html += `<div class="card"><h3>${gap} days since your last session</h3><p>Old loads after a layoff are how people get hurt. The rule for this gap: ${what}.</p>
         <div class="btnrow"><button class="btn primary" data-action="layoff-ease">Ease back in</button><button class="btn" data-action="layoff-skip">Carry on as planned</button></div></div>`;
@@ -779,25 +771,20 @@
     if (lightWeek) r.mode = 'full';
     c.result = r; c.choice = r.color === 'red' && !lightWeek ? 'light' : null;
     const last = lastSession();
-    if (last && c.askGroups) { last.soreness = Object.assign({}, c.groups); Store.pushSession(last); }
+    if (last && c.askGroups) { last.soreness = Object.assign({}, c.groups); touchSession(last); Store.pushSession(last); }
     save(); render();
   }
-  function noonTs(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d, 12, 0, 0).getTime(); }
-  function dayTs(iso) { return iso === todayISO() ? Date.now() : noonTs(iso); }
-  // A past session is stamped noon of its date, except on the day of a restart or a max set by
-  // hand: there it counts after that moment, as the plan it was logged against does.
-  function backTs(date) {
-    const P = state.program; let ts = dayTs(date);
-    for (const b of [P.chronicSince, P.calibBaseTs]) if (b && tsISO(b) === date && ts <= b) ts = b + 1;
-    return ts;
-  }
+  // When a session logged after the fact goes on the timeline: appcore.js backTs / editTs.
+  function editTs(id, was, date) { return window.AppCore.editTs(state.sessions, state.program, id, was, date, Date.now()); }
   function startSession(mode, back) {
     const c = back ? null : ui.checkin, P = state.program;
     const sess = E.buildSession(state, mode);
     const pos = E.position(state);
     const planNotes = Array.isArray(sess.notes) ? sess.notes : [];
     Object.assign(sess, { id: 's_' + Date.now(), ts: Date.now(), date: todayISO(), phase: 'lift', startedAt: Date.now(), readiness: c ? c.result : null, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, notes: '', planNotes, skippedSlots: [] });
-    if (back) { sess.backfill = true; sess.date = back.date; sess.ts = backTs(back.date); }
+    if (back) { // it is the next planned session, so it sorts after anything already logged that day (noon is not always later)
+      sess.backfill = true; sess.date = back.date; sess.ts = editTs(sess.id, Infinity, back.date);
+    }
     if (P.lightRestOfWeek && mode === 'light' && !back) sess.forcedLight = true;
     if (c && c.result) { delete sess.readiness.mode; }
     sess.exercises.forEach(e => { e.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; }); const w0 = e.sets.find(x => x.kind === 'work'); if (w0 && e.lift) e.plannedW = w0.w; });
@@ -829,7 +816,7 @@
     else if (h === null) state.log.length = 0;
     else { const logLen = Number.isFinite(snap.logLen) ? Math.max(0, snap.logLen) : state.log.length; state.log.splice(0, Math.max(0, state.log.length - logLen)); }
     if (u.removeSessionId) { const i = state.sessions.findIndex(x => x.id === u.removeSessionId); if (i >= 0) { state.sessions.splice(i, 1); Store.deleteSession(u.removeSessionId); } }
-    if (u.restoreSession) { state.sessions.push(u.restoreSession); state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); Store.pushSession(u.restoreSession); }
+    if (u.restoreSession) { state.sessions.push(u.restoreSession); state.sessions.sort((a, b) => (a.ts || 0) - (b.ts || 0)); if (state.deletedIds) state.deletedIds = window.AppCore.noteLive(state.deletedIds, u.restoreSession.id); Store.pushSession(u.restoreSession); }
     // A delete or an edit re-read the block's other sessions; read them again as they are now, so
     // their per-session records match the maxes that are back.
     const rs = u.restoreSession;
@@ -946,31 +933,9 @@
     }).join('')}</div>`;
   }
   // Clamp what the set fields accept: a slip of the thumb must not become evidence.
-  function cleanW(v) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(2000, Math.round(n * 4) / 4) : null; }
-  function cleanReps(v) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(30, Math.round(n)) : null; }
-  // A number that is probably a typo (a dropped or doubled digit, a weight under the empty bar, 18
-  // reps for 8): asked about once before it can move the next sets or the maxes. Warm-ups are free.
-  function oddEntry(e, x, w, r) {
-    if (x.kind === 'warm') return null;
-    if (w != null && e.load !== 'bw' && x.okW !== w) {
-      const bar = state.settings.barWeight;
-      let msg = null, use = null;
-      if (e.load === 'bar' && w < bar) { msg = `${w} lb is lighter than the empty bar (${bar} lb).`; use = x.w != null && x.w >= bar ? x.w : bar; }
-      else if (w === 0) { msg = '0 lb.'; use = x.w; }
-      else {
-        let ref = x.w != null ? x.w : (e.target || e.plannedW || null), lo = 0.6, hi = 1.4;
-        if (x.open && e.lift && state.lifts[e.lift]) { ref = state.lifts[e.lift].oneRM * ((E.EX[e.ex] || {}).mult || 1); lo = 0.75; hi = 1.15; }
-        else if (!e.lift) { lo = 0.5; hi = 2; }
-        if (ref > 0 && (w < ref * lo || w > ref * hi)) { msg = `${w} lb against a planned ${Math.round(ref * 2) / 2} lb.`; use = x.open ? null : Math.round(ref * 4) / 4; }
-      }
-      if (msg) return { field: 'w', v: w, msg, use };
-    }
-    if (r != null && x.reps > 0 && x.okR !== r) {
-      const top = e.repRange ? e.repRange[1] : x.reps;
-      if (r > top + 8) return { field: 'r', v: r, msg: `${r} reps against a planned ${e.repRange ? e.repRange[0] + '–' + e.repRange[1] : x.reps}.`, use: top };
-    }
-    return null;
-  }
+  // Typed weights and reps, and the typo check: appcore.js.
+  const { cleanW, cleanReps } = window.AppCore;
+  function oddEntry(e, x, w, r) { return window.AppCore.oddEntry(state, e, x, w, r); }
   function openCheck(ei, si, odd, then) {
     applyPendingType();
     ui.sheet = { kind: 'check', ei, si, odd, then }; ui.quietUntil = performance.now() + 400; // the tap that left the field must not answer it
@@ -998,7 +963,7 @@
       // attempts change one at a time.
       if (!fromTyping && x.kind === 'work') e.sets.forEach((y, j) => {
         if (j <= si || y.done || y.kind !== 'work') return;
-        if (x.done ? y.carriedFrom === si : (!y.manualW || y.carriedFrom === si)) { y.actualW = v; y.manualW = v != null && v !== y.w; if (y.manualW) y.carriedFrom = si; else delete y.carriedFrom; }
+        if (x.done ? y.carriedFrom === si : (!y.manualW || y.carriedFrom === si)) { y.actualW = v; y.manualW = v != null && v !== y.w; if (y.manualW) y.carriedFrom = si; else delete y.carriedFrom; if (v != null && x.okW === v) y.okW = v; } // a weight you confirmed is not asked about again on every set
       });
     } else { x.actualReps = v; delete x.autoReps; }
     // A field edit re-aims the remaining sets but never cuts them: the fatigue stop waits for a
@@ -1103,13 +1068,13 @@
       if (rpe == null || !w || !reps) return;
       evidence.push({ w, reps, rpe, first: x === work[0], missed: zero || reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null, planned: x.reps });
     });
-    const C = E.TUNE.correction, peak = !!(E.BLOCKS[s.blockIdx] && E.BLOCKS[s.blockIdx].test);
-    const r = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up: peak ? C.ceilPeak : s.mode === 'light' ? C.ceilLight : C.ceil, inc: state.settings.increment }); // a light session is not pushed up: it exists to cut fatigue
+    const C = E.TUNE.correction, peak = !!(E.BLOCKS[s.blockIdx] && E.BLOCKS[s.blockIdx].test), up = peak ? C.ceilPeak : s.mode === 'light' ? C.ceilLight : C.ceil;
+    const r = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up, inc: state.settings.increment }); // a light session is not pushed up: it exists to cut fatigue
     const missedAny = evidence.some(x => x.missed);
     // The fatigue stop cut sets on a reading that has since been corrected (a typo fixed, an RPE
     // changed, the set unticked): the sets come back on their own.
     if (e.autoCut > 0 && !(r && r.stop) && !typing) { putBackCut(e, e.autoCut); e.autoCut = 0; e.autoStopped = false; if (!quiet) toast(`${e.name}: the cut sets are back`); }
-    const target = r ? E.loadRound(state, r.w) : e.plannedW;
+    const target = r ? E.correctedLoad(state, r.w, e.plannedW, up) : e.plannedW;
     const before = e.target || e.plannedW;
     let changed = 0;
     e.sets.forEach(x => {
@@ -1138,31 +1103,19 @@
     return changed;
   }
   // Settings changed a max mid-session: rebase every undone set of that lift on the new TM.
+  // A max, TM %, bar or plate change mid-session: each main lift's sets not lifted yet are rewritten
+  // (appcore.js rebaseExercise), then re-aimed.
   function rebaseSession() {
     const s = state.current; if (!s || s.phase !== 'lift') return;
-    const S = state.settings; let n = 0;
+    let n = 0;
     for (let ei = 0; ei < s.exercises.length; ei++) {
-      const e = s.exercises[ei]; if (!e.lift || !E.EX[e.ex].tm) continue;
-      const tm = state.lifts[e.lift].tm, mult = E.EX[e.ex].mult;
-      const first = e.sets.find(x => x.kind === 'work');
-      if (!first || first.pct == null) continue;
-      const planned = E.loadRound(state, tm * mult * first.pct);
-      if (planned === e.plannedW) continue;
-      e.plannedW = planned;
-      e.sets.forEach(x => { if (x.done || x.manualW || x.pct == null) return; x.w = E.loadRound(state, tm * mult * x.pct); x.actualW = null; n++; });
-      const one = state.lifts[e.lift].oneRM * mult; // the planned effort follows the new max, so the auto-correction aims right
-      if (one > 0 && e.pctTM != null) { const nr = E.plannedRPE(planned / one, first.reps); e.rpeTarget = nr; e.sets.forEach(x => { if (!x.done && x.kind === 'work') x.rpeTarget = nr; }); }
-      if (!s.isTest && !e.sets.some(x => x.kind === 'warm' && x.done) && S.warmupSets !== false) {
-        const fresh = E.warmups(planned, S.barWeight, S.increment, e.role, S.plates).map(st => ({ w: st.w, reps: st.reps, kind: 'warm', done: false, actualReps: null, rpe: null, actualW: null }));
-        const rest = e.sets.filter(x => x.kind !== 'warm'), single = rest.find(x => x.kind === 'single');
-        if (single && single.w) { const ws = E.openerWarm(single.w, fresh.length ? fresh[fresh.length - 1].w : S.barWeight, S.barWeight, S.increment, S.plates); if (ws) fresh.push({ w: ws, reps: 1, kind: 'warm', done: false, actualReps: null, rpe: null, actualW: null }); }
-        const delta = fresh.length - (e.sets.length - rest.length);
-        if (delta) rest.forEach(y => { if (y.carriedFrom != null) y.carriedFrom += delta; });
-        e.sets = fresh.concat(rest);
+      const r = window.AppCore.rebaseExercise(state, s.exercises[ei], s.isTest); if (!r) continue;
+      n += r.moved;
+      if (r.rebuilt) { // the set list changed under the open sheet and the delete Undo
         if (ui.lastDeleted && ui.lastDeleted.ei === ei) ui.lastDeleted = null;
         if (ui.sheet && ui.sheet.ei === ei) { ui.sheet = null; renderSheet(); }
       }
-      recalcExercise(ei, true);
+      recalcExercise(ei, true, false, true); // re-aimed (and cut sets put back if the stop no longer holds), never cut: the fatigue stop waits for the next set you log, not a Settings change
     }
     if (n) toast('Remaining sets rebased to the new max');
   }
@@ -1493,8 +1446,8 @@
         <div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--good)"></span> Build ×2</span><span><span class="dot" style="background:var(--accent)"></span> Strength ×2</span>${state.settings.includePeak !== false ? '<span><span class="dot" style="background:var(--bad)"></span> Peak + test</span>' : ''}<span>D deload · E easy week</span></div>
         ${blk ? `<p><b>${esc(blk.name)} ${esc(P.variantSet || 'A')}:</b> ${blockText[blk.id]}</p>` : `<p><b>${pos.isDeload ? 'Deload week' : 'Easy week'}:</b> ${pos.isDeload ? `fewer sets at reduced loads; ${pos.inserted ? 'the block then resumes' : 'the next block follows'}.` : 'half the sets at half the loads, on variations.'}</p>`}
         <label class="f dial-row"><span>Volume dial <span class="muted" style="font-weight:500">adds or removes a set on every barbell exercise. It drops with chronic fatigue; a clean Build block earns it back.</span></span><select id="dial" data-action="dial"><option value="-2" ${dial === -2 ? 'selected' : ''}>−2 (two fewer per exercise)</option><option value="-1" ${dial === -1 ? 'selected' : ''}>−1</option><option value="0" ${dial === 0 ? 'selected' : ''}>0 (as written)</option><option value="1" ${dial === 1 ? 'selected' : ''}>+1</option><option value="2" ${dial === 2 ? 'selected' : ''}>+2 (two more per exercise)</option></select></label>`, { sum: `Now: ${esc(pos.label)}${dial ? ` · dial ${dial > 0 ? '+' : ''}${dial}` : ''}` })
-      + foldCard('prog-week', "This week's plan", week.map((s, di) => `<details ${di === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 26px 6px 0;min-height:44px"><b>${esc(s.dayName)}</b><span class="small muted">${s.estMinutes} min</span></summary>
-          <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff'), f = work[0] || e.sets[0], op = e.sets.find(x => x.kind === 'single'), tst = e.sets.some(x => x.kind === 'test'); return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${tst ? 'single + ' : op ? `1×1 + ` : ''}${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${op ? `${op.w} / ` : ''}${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join(''), { sum: `${week.length} sessions, about ${Math.max(...week.map(s => s.estMinutes))} min at most` })
+      + foldCard('prog-week', "This week's plan", week.map((s, di) => `<details ${di === P.dayIdx ? 'open' : ''}><summary class="row between" style="padding:6px 26px 6px 0;min-height:44px"><b>${esc(s.dayName)}</b><span class="small muted">${((t) => `${t.req} min${t.opt ? ` (+${t.opt} optional)` : ''}`)(planMinutes(s))}</span></summary>
+          <div class="tablewrap"><table>${s.exercises.map(e => { const work = e.sets.filter(x => x.kind === 'work' || x.kind === 'backoff'), f = work[0] || e.sets[0], op = e.sets.find(x => x.kind === 'single'), tst = e.sets.some(x => x.kind === 'test'); return `<tr><td>${esc(e.name)}${e.optional ? ' <span class="muted small">(opt.)</span>' : ''}</td><td class="num">${tst ? 'single + ' : op ? `1×1 + ` : ''}${work.length}×${f.reps}${f.plus ? '+' : ''}</td><td class="num">${op ? `${op.w} / ` : ''}${f.w != null ? f.w : (e.load === 'bw' ? 'bw' : '?')}</td><td class="muted small">${e.pctTM != null ? pctLabel(e) : ''}</td></tr>`; }).join('')}</table></div></details>`).join(''), { sum: `${week.length} sessions, about ${Math.max(...week.map(s => planMinutes(s).req))} min at most, plus optional extras` })
       + foldCard('prog-sets', 'Weekly working sets', `${sets}<p class="small muted">Competition lift plus close variations. The cap is the weekly total sets can't pass; sets are added only while you recover.</p>`, { closed: true, sum: LIFTS.map(l => `${LIFTNAME[l]} ${E.weeklySets(state, l)}/${E.capFor(state, l)}`).join(' · ') })
       + foldCard('prog-maxes', 'Maxes and adjustments', `<div class="tablewrap"><table><tr><th>Lift</th><th class="num">1RM</th><th class="num">TM</th><th class="num">Sets</th><th class="num">Load</th><th>Flags</th></tr>${adj}</table></div>
         <p class="small muted">Sets and Load: this week's changes. A flag marks a hard week (missed reps, a crushing session, lasting soreness); two flags each on two lifts suggest a deload.</p>
@@ -1508,6 +1461,18 @@
   }
 
   // ---------- History ----------
+  // A session's sets, notes and buttons. Built only for rows that are open (from ui.histOpen, or
+  // the moment you tap one): with every session shown, building them all was most of the History
+  // tab's time (about 19,000 elements for three years).
+  function histBody(s) {
+    return `<div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
+          <div class="small muted" style="margin-top:6px">${s.durationMin ? s.durationMin + ' min' : ''}${s.cardio && s.cardio.min ? ` · bike ${s.cardio.min} min` : ''}${s.backfill ? ' · logged after the fact' : ''}${s.edited ? ' · edited' : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</div>
+          <div class="btnrow" style="margin-top:6px">${ui.confirmDel === s.id ? `<span class="small">Delete this session for good?</span><button class="btn sm danger-fill" data-action="delete-session" data-id="${s.id}" data-sure="1">Yes, delete</button><button class="btn sm" data-action="delete-cancel">Keep</button>` : `<button class="btn sm" data-action="edit-session" data-id="${s.id}">Edit</button><button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="color:var(--bad)">Delete</button>`}</div>`;
+  }
+  function fillHistBody(el) {
+    const b = el && el.querySelector(':scope > .hist-body'); if (!b || b.firstChild) return;
+    const s = state.sessions.find(x => x.id === el.dataset.id); if (s) b.innerHTML = histBody(s);
+  }
   function renderHistory() {
     const done = state.sessions.filter(s => !s.skipped).slice().reverse();
     const thisWeek = weekStart(Date.now()), WEEK = 7 * 864e5;
@@ -1515,10 +1480,7 @@
     const trend = LIFTS.map(l => { const w = weeklyEst(l); const last = w[w.length - 1], prev = w[w.length - 2]; const lastWk = last ? weekStart(last.x) : 0; const label = lastWk === thisWeek ? 'this week' : lastWk === thisWeek - WEEK ? 'last week' : last ? `week of ${fmtDate(tsISO(lastWk))}` : ''; const adjacent = prev && weekStart(prev.x) === lastWk - WEEK; if (last) latest[l] = Math.round(last.y); return `<div class="stack"><div class="row between"><b>${LIFTNAME[l]}</b><span class="small muted num">1RM ${state.lifts[l].oneRM} · TM ${state.lifts[l].tm}${last ? ` · ${label} ~${Math.round(last.y)}${adjacent ? ` (${last.y >= prev.y ? '+' : ''}${Math.round(last.y - prev.y)})` : ''}` : ''}</span></div><canvas id="c-${l}" height="130" style="height:130px" class="tap-chart" data-action="chart-pick" data-lift="${l}" role="img" aria-label="${LIFTNAME[l]} estimated max by week. Tap a dot for that session's details."></canvas>${chartDetail(l)}</div>`; }).join('');
     return FOLD_ALL + foldCard('hist-trend', 'Estimated 1RM, week by week', `${trend}<div class="row small muted" style="gap:14px"><span><span class="dot" style="background:var(--accent)"></span> weekly average</span><span><span class="dot" style="background:var(--muted)"></span> sessions</span><span>dashed: 1RM</span></div><p class="small"><b>Tap a dot</b> for its session: each set, the max it implies, how much it counted.</p><p class="small muted">Bigger dots carry more weight. Sets under RPE 6.5 count lightly here and rarely move your 1RM, so the line can sit apart from it.</p>`, { dom: 'trend-card', sum: LIFTS.filter(l => latest[l]).map(l => `${LIFTNAME[l]} ~${latest[l]}`).join(' · ') || 'No rated heavy sets yet' })
       + foldCard('hist-ready', 'Readiness', '<canvas id="c-ready" height="140" style="height:140px"></canvas>', { sum: (() => { const r = done.find(s => s.readiness); return r ? `Latest ${r.readiness.score}` : 'No check-ins yet'; })() })
-      + foldCard('hist-sessions', 'Sessions', `${done.length ? (ui.histAll ? done : done.slice(0, 60)).map((s, i) => `<details class="session-item" style="display:block" data-id="${s.id}" ${ui.histOpen && ui.histOpen[s.id] ? 'open' : ''}><summary class="hist-row"><span class="hist-main"><b>${esc(s.dayName)}</b><span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></span><span class="hist-ready">${s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '<span class="muted small" aria-label="No check-in">–</span>'}</span><span class="hist-diff">${s.post && s.post.difficulty ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</span></summary>
-          <div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
-          <div class="small muted" style="margin-top:6px">${s.durationMin ? s.durationMin + ' min' : ''}${s.cardio && s.cardio.min ? ` · bike ${s.cardio.min} min` : ''}${s.backfill ? ' · logged after the fact' : ''}${s.edited ? ' · edited' : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</div>
-          <div class="btnrow" style="margin-top:6px">${ui.confirmDel === s.id ? `<span class="small">Delete this session for good?</span><button class="btn sm danger-fill" data-action="delete-session" data-id="${s.id}" data-sure="1">Yes, delete</button><button class="btn sm" data-action="delete-cancel">Keep</button>` : `<button class="btn sm" data-action="edit-session" data-id="${s.id}">Edit</button><button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="color:var(--bad)">Delete</button>`}</div></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on Today.</p>'}
+      + foldCard('hist-sessions', 'Sessions', `${done.length ? (ui.histAll ? done : done.slice(0, 60)).map((s, i) => `<details class="session-item" style="display:block" data-id="${s.id}" ${ui.histOpen && ui.histOpen[s.id] ? 'open' : ''}><summary class="hist-row"><span class="hist-main"><b>${esc(s.dayName)}</b><span class="muted small">${fmtDate(s.date)} · ${esc(s.blockName || '')} wk ${s.week}${s.mode && s.mode !== 'full' ? ' · ' + E.MODES[s.mode].label : ''}</span></span><span class="hist-ready">${s.readiness ? `<span class="pill ${s.readiness.color}" title="Readiness">${s.readiness.score}</span>` : '<span class="muted small" aria-label="No check-in">–</span>'}</span><span class="hist-diff">${s.post && s.post.difficulty ? `<span class="pill">${DIFF[s.post.difficulty]}</span>` : ''}</span></summary><div class="hist-body">${ui.histOpen && ui.histOpen[s.id] ? histBody(s) : ''}</div></details>`).join('') : '<p class="empty">No sessions yet. Your first check-in is on Today.</p>'}
         ${done.length > 60 && !ui.histAll ? `<button class="btn sm" data-action="hist-all">Show all ${done.length}</button>` : ''}`, { sum: done.length ? `${done.length} logged, latest ${fmtDate(done[0].date)}` : 'None yet' });
   }
   // ---------- Editing a logged session ----------
@@ -1549,9 +1511,11 @@
   let editSaveTimer = null;
   function editSig(x) { return JSON.stringify({ d: x.editDate || x.date, sk: x.skippedSlots || [], p: x.post ? x.post.difficulty : 0, c: x.cardio ? [x.cardio.min || 0, x.cardio.watts || null] : [0, null], n: x.notes || '', e: (x.exercises || []).map(e => [e.ex, (e.sets || []).map(y => [y.kind, y.done ? 1 : 0, y.actualW, y.actualReps, y.rpe])]) }); }
   function openSessionsCard() { if (isFolded('hist-sessions')) { folds['hist-sessions'] = false; saveFolds(); } }
-  function showSessionInHistory(id) {
+  function showSessionInHistory(id) { // every jump to a session: open its row (so it is built) before the render
     openSessionsCard();
-    ui.histOpen = ui.histOpen || {}; ui.histOpen[id] = 1; render();
+    ui.histOpen = ui.histOpen || {}; ui.histOpen[id] = 1;
+    if (state.sessions.filter(s => !s.skipped).reverse().findIndex(s => s.id === id) >= 60) ui.histAll = true; // past the first 60 rows
+    render();
     const el = document.querySelector(`.session-item[data-id="${id}"]`), sc = scroller();
     scrollToY(el ? sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 8 : 0);
   }
@@ -1573,7 +1537,7 @@
     const nEl = $('#sess-notes'); if (nEl) s.notes = nEl.value.slice(0, 1000);
     // Every tick in the editor is "as logged": a set left unticked is one that was not done.
     s.exercises.forEach(e => e.sets.forEach(x => { if (x.done && x.actualReps == null) x.actualReps = x.reps; if (x.done && x.actualW == null && x.w != null) x.actualW = x.w; }));
-    if (newDate !== s.date) { s.date = newDate; s.ts = backTs(newDate); }
+    if (newDate !== s.date) { s.date = newDate; s.ts = editTs(s.id, original.ts || 0, newDate); }
     s.cardio = cm > 0 ? { min: cm, watts: cw, kcal: E.cardioKcal(cm, cw || state.settings.cardioWatts) } : { min: 0 };
     s.exercises.forEach(e => { delete e.fold; e.sets.forEach(x => { delete x.doneAt; delete x.timerSrc; }); }); delete s.lastEi;
     delete s.phase; delete s.editOf; delete s.editDate; delete s.startedAt; delete s.finishedAt; delete s.cardioRun; delete s.setLightRest;
@@ -1638,7 +1602,7 @@
   // Calibrates the maxes from one session and keeps, on the session, what that did (History shows it).
   function calibrateSession(sess) {
     const before = {}; LIFTS.forEach(l => { before[l] = state.lifts[l].oneRM; });
-    const lines = E.calibrate(state, sess); sess.calibrated = true;
+    const lines = E.calibrate(state, sess); sess.calibrated = true; touchSession(sess);
     sess.calib = {}; LIFTS.forEach(l => { sess.calib[l] = [before[l], state.lifts[l].oneRM]; });
     if (lines.length) sess.calibLines = lines.slice(0, 6); else delete sess.calibLines;
     return lines;
@@ -1900,7 +1864,7 @@
       case 'setup-back': ui.setupStep = Math.max(0, ui.setupStep - 1); render(); break;
       case 'setup-calc': { const dr = draft(); dr.calc[d.lift] = dr.calc[d.lift] ? null : {}; render(); break; }
       case 'setup-apply-calc': { const dr = draft(), c = dr.calc[d.lift] || {}; const w = Number(c.w), r = Number(c.r), e = Number(c.e) || 8; if (w > 0 && r > 0) { dr[d.lift] = Math.round(E.e1rm(w, r, e) / 2.5) * 2.5; dr.calc[d.lift] = null; render(); } else toast('Enter weight and reps'); break; }
-      case 'setup-plate': { const dr = draft(), p = Number(d.p); dr.plates = dr.plates.includes(p) ? dr.plates.filter(x => x !== p) : dr.plates.concat(p); render(); break; }
+      case 'setup-plate': { const dr = draft(), p = Number(d.p); if (dr.plates.includes(p) && dr.plates.length === 1) { toast('Keep at least one plate size'); break; } dr.plates = dr.plates.includes(p) ? dr.plates.filter(x => x !== p) : dr.plates.concat(p); render(); break; }
       case 'setup-day': { const dr = draft(); dr.days = dr.days.includes(d.d) ? dr.days.filter(x => x !== d.d) : dr.days.concat(d.d); render(); break; }
       case 'setup-finish': finishSetup(); break;
       case 'checkin': startCheckin(); break;
@@ -1971,14 +1935,7 @@
         if (best) { ui.chartSel = { lift, id: best.id }; redrawTrend(); }
         break;
       }
-      case 'chart-open': {
-        ui.histOpen = ui.histOpen || {}; ui.histOpen[d.id] = 1;
-        const done = state.sessions.filter(s => !s.skipped).slice().reverse(); if (done.findIndex(s => s.id === d.id) >= 60) ui.histAll = true;
-        openSessionsCard(); render();
-        const el = document.querySelector(`.session-item[data-id="${d.id}"]`), sc = scroller();
-        if (el) scrollToY(sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 8);
-        break;
-      }
+      case 'chart-open': showSessionInHistory(d.id); break;
       case 'hist-all': ui.histAll = true; render(); break;
       case 'report-all': ui.reportAll = state.lastReport ? state.lastReport.title + '|' + state.lastReport.lines.length : null; render(); break;
       case 'edit-save': saveEdit(); break;
@@ -2023,7 +1980,7 @@
       case 'aside-del-confirm': ui.confirm = 'aside'; render(); break;
       case 'aside-del': try { localStorage.removeItem(Store.key + '.unreadable'); } catch (e) { /* ignore */ } ui.confirm = null; render(); toast('Removed'); break;
       case 'reset-confirm': ui.confirm = 'reset'; render(); break;
-      case 'reset': { stopTimer(); releaseAwake(); for (const s of state.sessions) Store.deleteSession(s.id); state = E.defaultState(); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; ui.pendingRestore = null; ui.backfill = null; ui.showImport = false; ui.editSets = {}; ui.lastDeleted = null; ui.lastEi = null; renderSheet(); save(); render(); break; }
+      case 'reset': { stopTimer(); releaseAwake(); const gone = state.sessions.map(s => s.id); state = E.defaultState(); for (const id of gone) Store.deleteSession(id); ui.confirm = null; ui.setupStep = 0; ui.draft = null; ui.checkin = null; ui.sheet = null; ui.pendingRestore = null; ui.backfill = null; ui.showImport = false; ui.editSets = {}; ui.lastDeleted = null; ui.lastEi = null; renderSheet(); save(); render(); break; }
       case 'delete-cancel': ui.confirmDel = null; render(); break;
       case 'max-apply': if (ui.pendingMax) { const pm = ui.pendingMax; ui.pendingMax = { l: pm.l, v: pm.v, ok: true }; applySetting('1rm:' + pm.l, pm.v); ui.pendingMax = null; render(); } break;
       case 'max-cancel': ui.pendingMax = null; render(); break;
@@ -2072,6 +2029,7 @@
       if (!fromAside) fresh.current = null;
       fresh.timer = null;
       stopTimer();
+      if (Store.db && prev.deletedIds) fresh.deletedIds = window.AppCore.noteLive(prev.deletedIds, fresh.sessions.map(x => x.id)); // the account copy's deletes stand, except a session the backup brings back
       try { state = fresh; migrate(); } catch (e) { state = prev; throw e; }
       if (fromAside) { try { localStorage.removeItem(Store.key + '.unreadable'); } catch (e) { /* ignore */ } }
       postSw({ type: 'rest-cancel' }); Store.pushAll(state);
@@ -2283,7 +2241,7 @@
       clearTimeout(notesTimer); notesTimer = null;
       try { sessionStorage.setItem('rs-scroll', JSON.stringify({ view, y: scroller().scrollTop, ts: ui.todayScroll || 0, id: state.current ? state.current.id + ':' + state.current.phase : '' })); sessionStorage.setItem('rs-sheet', ui.sheet && !ui.sheet.kind ? JSON.stringify(ui.sheet) : ''); } catch (e) { /* ignore */ }
       const n = $('#sess-notes'); if (n && state.current) state.current.notes = n.value.slice(0, 1000);
-      Store.saveLocal(state); Store.flush();
+      Store.saveLocal(state, state.updatedAt !== Store.fullAt); Store.flush(); // the uncached pack once per change (a close sends hidden and pagehide; a rest spent in another app, several hides)
     } catch (e) { /* never block closing */ }
   }
   document.addEventListener('touchend', () => { if (booted && state && state.current) { unlockAudio(); keepAwake(); } }, { passive: true }); // iOS wants a gesture for both, and a page it reopened has had none

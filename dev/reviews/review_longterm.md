@@ -1,4 +1,5 @@
 # Long-term progression review: Readyset engine (months-to-years horizon)
+> Historical snapshot, 2026-10-26: this reviewed the app as it was then. The app has changed since; PROGRAM_GUIDE.md describes it as it is now.
 
 Scope: `src/engine.js` (BLOCKS, CAPS, advanceDay/learned, weeklyReview, calibrate, mesoReview, startActiveRest, accessoryProgress) and `PROGRAM_GUIDE.md`, read against the book notes (B: fatigue/SRA, C: variation, phase potentiation, individual differences, periodization) and the common practice of RP, Juggernaut, Helms, Nuckols and Barbell Medicine. Lifter: intermediate, 4 days, ~1 hour, home gym, previously buried by fatigue, wants maximal sustainable strength and muscle. Nothing in the app was edited; throwaway scripts are in `...\scratchpad\review_longterm\` (`vol.js`, `sim_long.js`, patched engine copies).
 

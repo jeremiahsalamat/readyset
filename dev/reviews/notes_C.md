@@ -1,4 +1,5 @@
 # Scientific Principles of Strength Training (Israetel, Hoffmann, Smith) — Rule sheet C
+> Historical snapshot, 2026-10-26: book notes made for the program reviews of that date, not updated since.
 ## Chapters 7–11: Variation, Phase Potentiation, Individual Differences, Periodization for Powerlifting, Myths/Fallacies/Fads (book pp. 243–372)
 
 Source: extracted text `book/pages/C_variation_phase_individual_periodization.txt`. Page numbers in brackets are book pages.

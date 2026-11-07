@@ -56,11 +56,15 @@ should not be loaded again on Friday. Friday is upper body only.
 Sessions are sized to about 45-75 minutes of lifting with 3 / 2 / 1.5 minute rests; in the
 Strength and Peak blocks the main lift gets 4 minutes, because heavy triples and singles are
 limited by the nervous system and short rests there turn strength work into conditioning. The
-book gives no rest-period numbers; those are conventional. An added set never pushes a session
-past about 75 minutes of lifting: the weekly review will not add a set, to a main lift or to the
-accessories, if any day in the rest of the block would run past it, and set counts a block inherits
-at its start are checked the same way. Main lifts come first: when time is short, a lift's earned
-set takes the accessory set's place.
+book gives no rest-period numbers; those are conventional. The 75 minutes is a target for the
+work the program requires, not a limit on you: the optional slots (abs, biceps, lateral raise) are
+left out of it, so they can add 5-10 minutes on the days you choose to do them, and nothing stops
+a session that runs longer. What the program prescribes stays time-efficient: the weekly review
+will not add a set, to a main lift or to the accessories, if the required work of any day in the
+rest of the block would run past about 75 minutes, and set counts a block inherits at its start are
+checked the same way. Because the optional slots no longer count, they never cost a main lift an
+earned set. Main lifts come first: when time is short, a lift's earned set takes the accessory
+set's place. Today and the Program tab show the required time, with the optional minutes beside it.
 
 ### Variations rotate once per block
 
@@ -88,8 +92,10 @@ bar twice a week, which is what the book's frequency guidance is about (p.219).
 | Bench (comp + barbell variants) | 9 / 10 / 12 | 8 / 10 / 9 | 18 / 16 / 12 |
 | Deadlift (comp + paused/deficit) | A 3 / 4 / 4, B 6 / 7 / 8 | 6 / 7 / 6 | 10 / 9 / 6 |
 
-In Build the 75-minute budget sets the real top, about 9 / 13 / 5 (deadlift 9 in Build B), before any
-ceiling is reached.
+With the optional slots out of the budget, one lift alone can climb its full three earned sets in
+Build (about 11 / 15 / 7, deadlift 11 in Build B) and two in Strength (8 / 11 / 8) before the
+75 minutes binds; when several lifts climb at once, the budget for the required work is what stops
+them first.
 These start low on purpose. The book's advice for anyone coming off a program that buried them is
 to "start with a much lower volume than they use, and ease in. Increasing volume when you're
 recovered is MUCH easier and safer than decreasing volume when you're already beat up" (p.164). The
@@ -106,7 +112,7 @@ wore you down.
 On top of the per-lift counts sits the **volume dial**, a lasting offset of −2 to +2 sets on every
 barbell exercise (−1 is about 2 squat, 3 bench and 1 deadlift sets a week) that the Program tab shows and lets you set by hand. It steps down (once per block at most)
 when the chronic-fatigue signals below fire, and climbs back one step after a clean Build block. Above
-zero it is by hand only: at the 75-minute budget a positive dial does not fit, and it never reaches
+zero it is by hand only (a +1 dial adds about 6-7 minutes of required work a session), and it never reaches
 the Peak. At −2 the Training Max percentage comes down instead (2.5 points at a time, to 85%). Because the high-volume Build
 block is where the dial is lost, only a clean Build block earns a step back below zero (a
 low-volume Strength block is clean almost every time and would hand it back too early). A
@@ -154,10 +160,11 @@ too.
 Every barbell lift starts with warm-up sets built from the first working weight, not from the 1RM:
 then steps at roughly 40%, 55%, 70%, 80% and 90% of the working weight, with reps falling from 8
 to a single as the load rises. Jumps shrink near the top and the last step is a single at about
-90%, so the first work set never arrives as a surprise. Working weights of 300 lb and up use the
-classic four-step ramp (50% × 5, 65% × 3, 78% × 2, 88% × 1) after the bar, which gets a heavy
-squat or deadlift warm without spending the session on warm-ups; the second barbell lift of a
-session, already warm, gets three steps. In Strength week 3 the main lift adds an **opener**: one
+90%, so the first work set never arrives as a surprise. Working weights of 300 lb and up take
+fewer reps per step (40% × 5, 55% × 3, 70% × 2, 80% × 1, 90% × 1), and 450 lb and up one step
+more (30% × 5, 45% × 5, 60% × 3, 72% × 2, 82% × 1, 90% × 1), which gets a heavy squat or
+deadlift warm without spending the session on warm-ups; the second barbell lift of a session,
+already warm, gets two or three steps. Steps closer than 10 lb to the one before are left out. In Strength week 3 the main lift adds an **opener**: one
 single at about 92% of your 1RM (RPE 8, two clean reps in reserve) after the warm-ups and before
 the triples. It is the single most useful piece of information the app gets about your real max,
 it practises the thing powerlifting is actually about, and it is not a test: set the safeties and
@@ -195,7 +202,9 @@ the next set drops by what the table says (about 9%), not by a fixed step.
   better. Grinding on past that point costs more recovery than it buys, and it is exactly the kind
   of session that used to bury you.
 - Deload, easy and test weeks are exempt; their loads are light on purpose.
-- Changing a max in Settings during a session rebases every undone set on the new Training Max.
+- Changing a max in Settings during a session rebases every undone set on the new Training Max
+  (and a plate or bar change re-rounds them to what the plates make). A rebase never cuts sets on
+  its own: the fatigue stop waits for the next set you log.
 
 ### After a session: the maxes calibrate themselves
 
@@ -277,7 +286,8 @@ those first seconds after switching away.
 
 A number that is probably a slip of the thumb (36 for 360, a weight under the empty bar, 18 reps for
 8, a test single 15% over your max) is asked about before it can move the next sets or the maxes:
-use the planned number, keep yours, or fix it. Calibration also leaves out a set lifted far from
+use the planned number, keep yours, or fix it. A weight you keep carries to the later sets without
+asking again. Calibration also leaves out a set lifted far from
 its planned weight (under 60% or over 140% of it) unless you kept that number at the check, and
 says so. A fatigue stop that was triggered by a number you then correct undoes itself.
 
@@ -299,7 +309,7 @@ For each competition lift the app scores the week:
 - Missed reps on a second lift: −1.
 
 On target alone holds. Score +2 or better adds a set next week on the competition lift (until the run's ceiling, the
-phase cap, or the 75-minute session budget; with calibration off, a very easy week at the ceiling
+phase cap, or the 75-minute budget for the required work; with calibration off, a very easy week at the ceiling
 earns a bigger load jump instead). Sets logged without an RPE give no read on effort, so they never
 count as "on target" and never earn a set. When on target plus recovered is all the good news, a set is added at most every second week,
 so a lifter who simply hits the numbers climbs slowly rather than in a straight line (p.164).

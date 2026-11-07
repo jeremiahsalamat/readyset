@@ -110,6 +110,10 @@
     const cl = get(s, 'calibLines');
     if (Array.isArray(cl)) { const L = cl.slice(0, 6).map(x => str(x, 300)).filter(Boolean); if (L.length) out.calibLines = L; }
     const phase = oneOf(get(s, 'phase'), ['lift', 'post', 'cardio', 'edit'], null);
+    // pk: 1 marks a finished session stored compactly (appcore.js compactSession): a done set
+    // without a weight or reps of its own was lifted as planned, so they come back as the plan's and
+    // every reader sees what it saw before. Without the mark, a missing value stays missing.
+    if (!phase && get(s, 'pk') === 1) for (const e of out.exercises) for (const x of e.sets) if (x.done) { if (x.actualW == null) x.actualW = x.w; if (x.actualReps == null) x.actualReps = x.reps; }
     if (!phase) for (const e of out.exercises) for (const x of e.sets) { x.autoW = false; if (!e.repRange) x.autoReps = false; } // only unticking in an open session reads these; an edit re-derives reps on rep-range sets
     if (phase) {
       out.phase = phase; out.startedAt = num(get(s, 'startedAt'), 0, 4e12, Date.now()); out.finishedAt = numOrNull(get(s, 'finishedAt'), 0, 4e12);
@@ -263,6 +267,9 @@
     const T = get(raw, 'timer');
     d.timer = isObj(T) ? { end: num(get(T, 'end'), 0, 4e12, 0), total: int(get(T, 'total'), 1, 3600, 90), label: str(get(T, 'label'), 80), firedAt: num(get(T, 'firedAt'), 0, 4e12, 0) } : null;
     d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(-2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
+    // The claude.ai copy's deleted session ids (appcore.js noteDeleted): only there, and only when any.
+    const DI = get(raw, 'deletedIds');
+    if (Array.isArray(DI)) { const ids = Array.from(new Set(DI.slice(-1000).filter(x => idStr(x, null)))).slice(-300); if (ids.length) d.deletedIds = ids; }
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
     d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);
     d.backupOffer = bool(get(raw, 'backupOffer'));

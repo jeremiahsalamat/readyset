@@ -1,4 +1,5 @@
 # Notes B — Fatigue Management (Ch. 5, pp. 104–185) and Stimulus-Recovery-Adaptation (Ch. 6, pp. 186–242)
+> Historical snapshot, 2026-10-26: book notes made for the program reviews of that date, not updated since.
 
 Source: *Scientific Principles of Strength Training* (Israetel, Hoffmann, Smith), extracted text `B_fatigue_SRA.txt`. Page numbers in brackets are the book's printed page numbers. Quotes are verbatim; everything else is a paraphrase of what the book says, with no outside opinion added.
 

@@ -1,4 +1,5 @@
 # Readyset autoregulation and fatigue-management review
+> Historical snapshot, 2026-10-27: this reviewed the app as it was then. The app has changed since; PROGRAM_GUIDE.md describes it as it is now.
 
 Reviewed: `C:\Users\Jerm\Documents\PowerliftingApp\src\engine.js` as saved at **2026-10-26 22:07:44** (785 lines,
 snapshot in `scratchpad\review_autoreg\engine_snapshot.js`). The file was being edited while this review ran

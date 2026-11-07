@@ -1,4 +1,5 @@
 # Scientific Principles of Strength Training (Israetel, Hoffmann, Smith) — Rule sheet, Part A
+> Historical snapshot, 2026-10-26: book notes made for the program reviews of that date, not updated since.
 ## Chapters 1–4: Important Terms, The Training Principles, Specificity, Overload (book pp. 12–103)
 
 Page numbers in brackets are the book's printed page numbers. Only statements the book makes are recorded; nothing is added.

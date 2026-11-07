@@ -3,7 +3,7 @@
 // base * (1 + gains) - lossPerF * F; gains accrue 0.3%/wk only while F < cap. Felt RPE = table RPE + rpePerF * F
 // + noise; reported RPE = felt + bias. Readiness answers, soreness and the post-session rating are driven by F.
 // Usage: node sim4.js <engine.js> <normal|fragile|sturdy|overreach> <variant> [bias] [verbose]
-require(process.argv[2]); const E = globalThis.Engine;
+require(require('path').resolve(process.argv[2])); const E = globalThis.Engine;
 const profile = process.argv[3] || 'normal', variant = process.argv[4] || 'app', bias = Number(process.argv[5] || 0), verbose = process.argv[6] === 'verbose';
 let seed = 11; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 const gauss = () => (rnd() + rnd() + rnd() - 1.5) * 1.1;

@@ -15,7 +15,7 @@ def read(name):
     with open(os.path.join(SRC, name), encoding='utf-8', newline='') as f:
         return f.read().replace('\r\n', '\n')
 
-css, body, engine, sanitize, app = read('styles.css'), read('body.html'), read('engine.js'), read('sanitize.js'), read('app.js')
+css, body, engine, sanitize, appcore, app = read('styles.css'), read('body.html'), read('engine.js'), read('sanitize.js'), read('appcore.js'), read('app.js')
 FONTS = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">'
 
 head_common = (
@@ -23,7 +23,7 @@ head_common = (
     '<meta name="claude:viewport-fit-sides" content="cover">\n'
     + FONTS + '\n<style>\n' + css + '\n</style>\n'
 )
-inline_scripts = ['\n' + engine + '\n', '\n' + sanitize + '\n', '\n' + app + '\n']
+inline_scripts = ['\n' + engine + '\n', '\n' + sanitize + '\n', '\n' + appcore + '\n', '\n' + app + '\n']
 scripts = ''.join('<script>' + x + '</script>\n' for x in inline_scripts)
 
 # 1) Artifact page: content only; the publisher wraps it in its own skeleton. The home-screen
@@ -104,7 +104,7 @@ self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Pr
 // the next build's) still has it. Thawed more than 5 s late means you are back and the page says so.
 // iOS ignores notification tags, so two showNotification calls are always two banners.
 const REST_CACHE = 'readyset-rest', REST_KEY = './__rest__';
-let restTimer = null, restDone = null, restShown = 0;
+let restTimer = null, restDone = null, restShown = 0, restAt = 0, restOff = 0; // restOff: the deadline the page cancelled (a late 'due' for it is stale)
 const restSave = r => caches.open(REST_CACHE).then(c => (r ? c.put(REST_KEY, new Response(JSON.stringify(r))) : c.delete(REST_KEY))).catch(() => {});
 const restLoad = () => caches.open(REST_CACHE).then(c => c.match(REST_KEY)).then(m => (m ? m.json() : null)).catch(() => null);
 function restArm(r) {
@@ -127,9 +127,9 @@ async function restFire(r, handed) { // handed: the hidden page says this rest i
 self.addEventListener('message', e => {
   const m = e.data || {};
   let p = null;
-  if (m.type === 'rest-schedule' && m.at) { const r = { at: +m.at, body: String(m.body || 'Next set').slice(0, 80) }; if (restShown !== r.at) p = restSave(r).then(() => restArm(r)); }
-  else if (m.type === 'rest-due' && m.at) { restArm(null); p = restFire({ at: +m.at, body: m.body }, true); }
-  else if (m.type === 'rest-cancel') p = restSave(null).then(() => restArm(null));
+  if (m.type === 'rest-schedule' && m.at) { const r = { at: +m.at, body: String(m.body || 'Next set').slice(0, 80) }; restAt = r.at; restOff = 0; if (restShown !== r.at) p = restSave(r).then(() => restArm(r)); }
+  else if (m.type === 'rest-due' && m.at) { if (+m.at !== restOff) { restArm(null); p = restFire({ at: +m.at, body: m.body }, true); } }
+  else if (m.type === 'rest-cancel') { restOff = restAt; restAt = 0; p = restSave(null).then(() => restArm(null)); }
   if (p && e.waitUntil) { try { e.waitUntil(p); } catch (err) { /* some browsers refuse long waits */ } }
 });
 self.addEventListener('notificationclick', e => {
@@ -170,23 +170,10 @@ self.addEventListener('fetch', e => {
 });
 """
 
-# The build id covers everything a phone could be running: page, worker and manifest. An unchanged
-# build keeps its id, so phones only reload for real changes.
-build_id = hashlib.sha256((index + SW_TEMPLATE + manifest).encode('utf-8')).hexdigest()[:12]
-index = index.replace('__BUILD__', build_id)
-with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(index)
-with open(os.path.join(DIST, 'manifest.webmanifest'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(manifest)
-with open(os.path.join(DIST, 'version.txt'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(build_id + '\n')
-with open(os.path.join(DIST, 'sw.js'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write("const BUILD = '" + build_id + "';\n" + SW_TEMPLATE)
-
 # 3) Icons: a loaded barbell (sleeves, collars, three plates a side) in cream on a warm orange
 #    ground, full-bleed (iOS and Android apply their own corner masks). Rendered with 3x
 #    supersampling so the edges are smooth, written as a raw PNG (no image libraries needed).
-def png(size, path):
+def png(size):
     SS = 3
     N = size * SS
     bg_top, bg_bot = (237, 104, 46), (206, 74, 14)
@@ -230,16 +217,33 @@ def png(size, path):
     raw = b''.join(rows)
     def chunk(t, d): return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
     data = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b'')
-    with open(path, 'wb') as f: f.write(data)
+    return data
 
-for s in (180, 192, 512):
-    png(s, os.path.join(DIST, f'icon-{s}.png'))
+icons = {s: png(s) for s in (180, 192, 512)}
+for s in icons:
+    with open(os.path.join(DIST, f'icon-{s}.png'), 'wb') as f: f.write(icons[s])
+
+# The build id covers everything a phone could be running: page, worker, manifest and icons (a new
+# id is what makes the worker fetch its assets again). An unchanged build keeps its id, so phones
+# only reload for real changes.
+build_id = hashlib.sha256((index + SW_TEMPLATE + manifest).encode('utf-8') + b''.join(icons[s] for s in sorted(icons))).hexdigest()[:12]
+index = index.replace('__BUILD__', build_id)
+with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write(index)
+with open(os.path.join(DIST, 'manifest.webmanifest'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write(manifest)
+with open(os.path.join(DIST, 'version.txt'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write(build_id + '\n')
+with open(os.path.join(DIST, 'sw.js'), 'w', encoding='utf-8', newline='\n') as f:
+    f.write("const BUILD = '" + build_id + "';\n" + SW_TEMPLATE)
+
 
 
 # Self-check: every inline script in the written file must hash to a value in its CSP, byte for byte.
 import re as _re
 _html = open(os.path.join(DIST, 'index.html'), 'rb').read()
 _csp = _re.search(rb'Content-Security-Policy" content="([^"]*)"', _html).group(1).decode()
+assert len(_re.findall(rb'<script[\s>]', _html)) == len(_re.findall(rb'<script>', _html)), 'a script tag with attributes: the CSP allows only hashed inline scripts'
 for _m in _re.finditer(rb'<script>(.*?)</script>', _html, _re.S):
     _h = "'sha256-" + base64.b64encode(hashlib.sha256(_m.group(1)).digest()).decode() + "'"
     assert _h in _csp, 'CSP hash mismatch for an inline script (line endings?)'

@@ -8,7 +8,7 @@
 // CLI (same output line as the old sim3): node sim3.js <engine.js> [profile] [lens] [weeks] [seed]
 //   lens: legacy (old sim3), A (app wiring), B (A + realistic noise, structural gain), F (B + load-based stimulus)
 const path = require('path');
-const ENGINE = path.join(__dirname, 'engine.js');
+const ENGINE = path.join(__dirname, '..', '..', 'src', 'engine.js');
 const PHS = {
   normal:  { tauFit: 42, tauFat: 9,  kFit: 0.0022, kFat: 0.0115, noise: 0.45, ceiling: 1.35, satur: 12 },
   fragile: { tauFit: 42, tauFat: 14, kFit: 0.0019, kFat: 0.0160, noise: 0.45, ceiling: 1.30, satur: 10 },
@@ -145,7 +145,8 @@ function run(opts) {
     const s = E.buildSession(st, mode);
     Object.assign(s, { id: 's' + i, ts: Date.UTC(2026, 0, 5) + day * 864e5, date: new Date(Date.UTC(2026, 0, 5) + day * 864e5).toISOString().slice(0, 10), readiness: rs, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, mode, skippedSlots: [] });
     if (!opts.appLike) s.date = '2026-01-01';
-    if (!pos.isDeload && !pos.rest && !pos.isTest) { M.maxMin = Math.max(M.maxMin, s.estMinutes); if (s.estMinutes > 75) M.over75++; }
+    // maxMin/over75: the whole session; maxReq/overReq75: without the optional slots, what the time budget covers (engines before F7 have no required estimate: same figure)
+    if (!pos.isDeload && !pos.rest && !pos.isTest) { const req = E.estimateMinutes.length > 1 ? E.estimateMinutes(s, true) : s.estMinutes; M.maxMin = Math.max(M.maxMin, s.estMinutes); if (s.estMinutes > 75) M.over75++; M.maxReq = Math.max(M.maxReq || 0, req); if (req > 75) M.overReq75 = (M.overReq75 || 0) + 1; }
     let worst = 0; const overByEx = [];
     const bk = pos.rest ? 'rest' : pos.isDeload ? 'deload' : pos.isTest ? 'test' : pos.block.id;
     for (const e of s.exercises) {
@@ -185,9 +186,10 @@ function run(opts) {
           // as recalcExercise runs it: opener counts, misses flagged, Peak ceiling, the fatigue stop cuts the rest
           evidence.push({ w, reps, rpe, first: x === work[0], missed: reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null, planned: x.reps });
           const C = E.TUNE.correction;
-          const c = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up: pos.block.test ? C.ceilPeak : (mode === 'light' && C.ceilLight != null) ? C.ceilLight : C.ceil, inc: st.settings.increment });
+          const up = pos.block.test ? C.ceilPeak : (mode === 'light' && C.ceilLight != null) ? C.ceilLight : C.ceil;
+          const c = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up, inc: st.settings.increment });
           if (c) {
-            const tgt = E.loadRound(st, c.w); work.forEach(y => { if (!y.done) y.actualW = tgt; });
+            const tgt = E.correctedLoad ? E.correctedLoad(st, c.w, e.plannedW, up) : E.loadRound(st, c.w); work.forEach(y => { if (!y.done) y.actualW = tgt; });
             if (c.stop && work.some(y => !y.done && y !== x)) { stopped = true; M.stops++; }
           }
         }

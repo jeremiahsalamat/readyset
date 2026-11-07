@@ -14,7 +14,7 @@
   --warn: #8a6400; --warn-soft: #fbf0cc;
   --bad: #c73a32;  --bad-soft: #fbe0de; --bad-ink: #ad2f28;
   --on-good: #ffffff; --on-bad: #ffffff;
-  --field-line: #8f98a6;    /* input outlines: 3:1 against the card */
+  --field-line: #87909d;    /* input outlines: 3:1 against the card (3.2:1 on white) */
   --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
   --body: "Barlow", "Helvetica Neue", Arial, system-ui, sans-serif;
   --radius: 10px;
@@ -155,7 +155,7 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 /* Swipe to delete: the row's cells slide left by --sx and the Delete button follows them in. */
 .set > *:not(.swipe-del) { transform: translateX(var(--sx, 0px)); transition: transform .18s ease; }
 .set.swiping > *:not(.swipe-del) { transition: none; }
-.set .swipe-del { position: absolute; top: 0; bottom: 0; right: calc(-84px - var(--sx, 0px)); width: 84px; border: 0; background: var(--bad); color: #fff; font-family: var(--display); font-weight: 700; font-size: .95rem; text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; justify-content: center; transition: right .18s ease; }
+.set .swipe-del { position: absolute; top: 0; bottom: 0; right: calc(-84px - var(--sx, 0px)); width: 84px; border: 0; background: var(--bad); color: var(--on-bad); font-family: var(--display); font-weight: 700; font-size: .95rem; text-transform: uppercase; letter-spacing: .05em; display: flex; align-items: center; justify-content: center; transition: right .18s ease; }
 .set.swiping .swipe-del { transition: none; }
 .set .swipe-del:active { filter: brightness(.9); }
 .set.is-warm { min-height: 46px; padding-block: 4px; }

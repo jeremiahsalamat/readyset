@@ -61,6 +61,15 @@
     return bar + 2 * a / U;
   }
   function loadRound(state, x) { const S = state.settings; return barRound(x, S.barWeight > 0 ? S.barWeight : 45, S.increment > 0 ? S.increment : 5, S.plates); }
+  // The in-session correction's weight on the plates: the nearest total, except that it never
+  // passes the cap over the planned weight (a +2.5% cap on 300 is 307.5: 305, not 310).
+  function correctedLoad(state, w, plannedW, up) {
+    let t = loadRound(state, w);
+    if (!(plannedW > 0)) return t;
+    const ceil = plannedW * (up > 0 ? up : TUNE.correction.ceil), half = (state.settings.increment > 0 ? state.settings.increment : 5) / 2;
+    for (let k = 1; t > ceil + 1e-9 && t > plannedW && k <= 40; k++) { const c = loadRound(state, t - k * half); if (c < t) { t = Math.max(plannedW, c); k = 0; } }
+    return t;
+  }
   // The last warm-up before a near-max opener single: one single at about 90% of it, when the jump
   // from the ramp would be more than 10% (engine and mid-session rebases use the same rule).
   function openerWarm(ow, lastWarm, bar, inc, plates) { if (ow - lastWarm > ow * 0.1) { const ws = barRound(ow * 0.9, bar, inc, plates); if (ws > lastWarm + 5 && ws < ow) return ws; } return null; }
@@ -223,7 +232,7 @@
     // first set predicts harder later sets); an easy day may push the remaining sets up by at most
     // 2.5% (never in Peak). Stop rules: a miss, a non-first set 2+ over target, or the floor.
     correction: { firstSetWeight: 0.5, firstSetHardWeight: 1.0, floor: 0.85, ceil: 1.025, ceilPeak: 1.0, ceilLight: 1.0, minRpe: 4, lowRpeWeight: 0.35, stopOver: 2, stopMin: 8.5, floorStep: 0.925, floorHard: 1 },
-    sessionCapMin: 75, // the top of the owner's 60-75 minute budget; estimates assume a full rest after every set
+    sessionCapMin: 75, // the top of the owner's 60-75 minute budget for the required work (optional slots are extra, never counted); estimates assume a full rest after every set
     calibrate: { downAt: 0.97, downMax: 0.95, downConfHigh: 1.5, downSure: 0.95, upAt: 1.02, upMax: 1.025, upFastAt: 1.04, allowance: 0.03, blockFloor: 0.90, blockFloorMissed: 0.85, minRpe: 6.5 },
     review: { add: 2, cut: -2, bigCut: -4, onTarget: 1 },
     // Deload-now triggers: within the week, and across the block (chronic under-recovery that
@@ -232,7 +241,7 @@
     // Volume dial: a lasting, program-wide set offset (-2..+2) that finds the lifter's recoverable
     // volume across blocks. Down one step whenever block-level fatigue forces a deload; up one step
     // after a block that stayed clean while already adding sets.
-    dial: { min: -2, max: 2, autoMax: 0 }, // at the 75-minute budget a positive dial does not fit (+1 is 76-79 min), so above 0 is by hand only
+    dial: { min: -2, max: 2, autoMax: 0 }, // above 0 by hand only (+1 is 68-71 min of required work, inside the budget since the optional slots left it)
   };
 
   // Hard weekly caps on working sets for each competition pattern (comp lift + barbell variants).
@@ -475,9 +484,14 @@
     return out;
   }
 
-  function estimateMinutes(sess) {
+  // Minutes of lifting, warm-ups and full rests included. required: without the optional slots
+  // (abs, biceps, lateral raise). The time budget is for the required work, so what the program
+  // prescribes stays time-efficient, while an optional extra the lifter chooses to do may run the
+  // session longer and never stops a main lift earning a set.
+  function estimateMinutes(sess, required) {
     let s = 8;
     for (const e of sess.exercises) {
+      if (required && e.optional) continue;
       const warm = e.sets.filter(x => x.kind === 'warm').length, n = e.sets.length - warm;
       s += n * (e.rest / 60 + 0.75) + warm * 1.1 + (warm ? 0.5 : e.role === 'primary' ? 5 : e.role === 'secondary' ? 3 : 1);
     }
@@ -750,7 +764,7 @@
         if (canAdd) { setAdj[lift] += 1; P.lastAddWeek = Object.assign({}, P.lastAddWeek || {}, { [lift]: P.week }); log.push(`${names[lift]}: +1 set next week (${why.join(', ')}).`); }
         else if (soft && addedLastWeek) log.push(`${names[lift]}: on target; a set was added last week, so holding to let it settle.`);
         else if (score >= 3 && !calib && loadAdj[lift] < 0.05) { loadAdj[lift] += 0.025; log.push(`${names[lift]}: at the set cap, so a bigger jump next week (+2.5%).`); }
-        else log.push(`${names[lift]}: recovering well, holding (${!inTime ? `another set would pass ${TUNE.sessionCapMin} minutes` : !underCap ? 'at the weekly set cap' : 'at this block\'s set ceiling'}).`);
+        else log.push(`${names[lift]}: recovering well, holding (${!inTime ? `the required work would pass ${TUNE.sessionCapMin} minutes` : !underCap ? 'at the weekly set cap' : 'at this block\'s set ceiling'}).`);
         flags[lift] = 0;
       } else if (score <= -2) {
         const big = score <= -4;
@@ -768,7 +782,7 @@
       // Accessories are decided after the lifts, against the set counts the lifts just earned, and a
       // lift that later needs the time takes the accessory set back (above).
       if (blockMaxMinutesWith(state, setAdj, Object.assign({}, setAdj, { acc: setAdj.acc + 1 })) <= TUNE.sessionCapMin) { setAdj.acc += 1; log.push('Accessories: +1 set next week.'); }
-      else log.push(`Accessories: holding (another set would pass ${TUNE.sessionCapMin} minutes).`);
+      else log.push(`Accessories: holding (the required work would pass ${TUNE.sessionCapMin} minutes).`);
     }
     if (anyFlag && setAdj.acc > 0) { setAdj.acc -= 1; log.push('Accessories: -1 set to free up recovery.'); }
 
@@ -844,7 +858,8 @@
     return n;
   }
   // Longest session left in this block (next week to its last accumulation week) that a change of
-  // set counts from baseAdj to newAdj lengthens. 0 when no session gets longer.
+  // set counts from baseAdj to newAdj lengthens, in minutes of required work (optional slots are
+  // left out: they are the lifter's choice, not the plan's). 0 when no session gets longer.
   function blockMaxMinutesWith(state, baseAdj, newAdj, fromWeek) {
     const P0 = state.program, block = BLOCKS[P0.blockIdx];
     const base = JSON.parse(JSON.stringify(P0)), P = JSON.parse(JSON.stringify(P0));
@@ -855,7 +870,7 @@
       base.week = w; P.week = w;
       for (let d = 0; d < DAYS.length; d++) {
         base.dayIdx = d; P.dayIdx = d;
-        const before = buildSession(probeBase, 'full').estMinutes, after = buildSession(probe, 'full').estMinutes;
+        const before = estimateMinutes(buildSession(probeBase, 'full'), true), after = estimateMinutes(buildSession(probe, 'full'), true);
         if (after > before) m = Math.max(m, after);
       }
     }
@@ -1211,7 +1226,7 @@
     };
   }
 
-  root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, floorTo, loadStep, barRound, loadRound, openerWarm, plateLoad, EX, SWAPS, BLOCKS, MACRO, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
+  root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, floorTo, loadStep, barRound, loadRound, correctedLoad, openerWarm, plateLoad, EX, SWAPS, BLOCKS, MACRO, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
     readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, liftCorrection, sessionEstimate, calibrate, fatigueAllowance, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
     positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes, weeklySetsWith, clampProgram, MAX_EVIDENCE_REPS, TUNE, applyTune, CAPS_BY_BLOCK, capFor, layoffAdjust, layoffCut, stallCheck };
 })(typeof window !== 'undefined' ? window : globalThis);

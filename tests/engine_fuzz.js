@@ -3,7 +3,8 @@
 const path = require('path');
 require(path.join(__dirname, '..', 'src', 'engine.js'));
 require(path.join(__dirname, '..', 'src', 'sanitize.js'));
-const E = globalThis.Engine;
+require(path.join(__dirname, '..', 'src', 'appcore.js'));
+const E = globalThis.Engine, AC = globalThis.AppCore;
 let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
 const pick = (a) => a[Math.floor(rnd() * a.length)];
 let fails = 0, checks = 0;
@@ -261,7 +262,7 @@ for (const includePeak of [true, false]) {
   expect(E.stallCheck(mk()) === null, 'no stall without a previous macro');
   const st5b = mk(); st5b.lifts.squat.macroEst = 365; st5b.lifts.squat.est = 366; st5b.lifts.squat.rated = 10; expect(E.stallCheck(st5b) === null && st5b.lifts.squat.stallRun === 1, 'one flat macro only starts the count', st5b.lifts.squat);
   st5b.lifts.squat.macroRated = 0; st5b.lifts.squat.est = 500; st5b.lifts.squat.rated = 20; expect(E.stallCheck(st5b) === null && st5b.lifts.squat.stallRun === 0, 'a macro that moved clears the count', st5b.lifts.squat);
-  const st5c = mk(); st5c.lifts.squat.macroEst = 365; st5c.lifts.squat.est = 366; st5c.lifts.squat.rated = 10; st5c.lifts.squat.stallRun = 1; st5c.learned = { build: { squat: 1 } }; const sc = E.stallCheck(st5c); expect(sc && /no room/.test(sc.lines[0]) && st5c.learned.build.squat === 1, 'no set promised when a session has no room for it', sc);
+  const st5c = mk(); st5c.settings.restPrimary = 240; st5c.settings.restSecondary = 180; /* long rests: the required work has no room (optional slots never count, F7) */ st5c.lifts.squat.macroEst = 365; st5c.lifts.squat.est = 366; st5c.lifts.squat.rated = 10; st5c.lifts.squat.stallRun = 1; st5c.learned = { build: { squat: 1 } }; const sc = E.stallCheck(st5c); expect(sc && /no room/.test(sc.lines[0]) && st5c.learned.build.squat === 1, 'no set promised when a session has no room for it', sc);
   const st5d = mk(); st5d.lifts.squat.macroEst = 365; st5d.lifts.squat.est = 366; st5d.lifts.squat.rated = 10; st5d.lifts.squat.stallRun = 1; st5d.program.macroDialDown = true; expect(E.stallCheck(st5d) === null && !(st5d.learned.build || {}).squat && st5d.program.macroDialDown === false, 'no upward step in a macro where the dial stepped down', st5d.learned);
   // Sanitizer: a session being edited keeps its target id; one without it is dropped; defaults.
   const st6 = E.sanitizeState({ lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true, current: { id: 's_1', phase: 'edit', editOf: 's_0', exercises: [] } });
@@ -373,7 +374,8 @@ for (const includePeak of [true, false]) {
   const cur = E.buildSession(full, 'full'); Object.assign(cur, { id: 's9', ts: 5, date: '2026-01-02', phase: 'lift', startedAt: 5, mesoCount: 0, blockIdx: 0, dayIdx: 0, notes: '', skippedSlots: [] });
   cur.exercises.forEach(e => e.sets.forEach((x, i) => { x.done = i < 2; x.actualReps = i < 2 ? x.reps : null; x.rpe = i === 1 ? 7 : null; x.actualW = null; }));
   full.current = cur; full.timer = { end: 99, total: 120, label: 'Squat' };
-  // Mirrors app.js packer(): what the phone stores must load back to exactly the same state.
+  // The format every build before compaction wrote (frozen here: old saves and backups must keep
+  // loading exactly as they did). The app's own packer, appcore.js, is checked against it below.
   const DROP_FALSE = new Set(['ind', 'open', 'done', 'manualW', 'hitFloor', 'autoStopped', 'needsWeight', 'optional', 'skipped', 'isDeload', 'isTest', 'isRest', 'paused', 'setLightRest', 'calibrated', 'timerSrc', 'autoReps', 'autoW', 'minTyped', 'macroWasFlagged']);
   const packer = (k, v) => (k === 'kind' && v === 'work') ? undefined : ((k === 'dayId' || k === 'dayName' || k === 'blockName') && typeof v === 'string') ? undefined : (v === null || v === '' || v === undefined) ? undefined : (v === false && DROP_FALSE.has(k)) ? undefined : (v === 0 && (k === 'plus' || k === 'cut')) ? undefined : ((k === 'cue' || k === 'startHint' || k === 'load') && typeof v === 'string') ? undefined : v;
   // A few stored sessions too, with every kind of flag set and unset.
@@ -382,6 +384,8 @@ for (const includePeak of [true, false]) {
   const a1 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(full)), { trusted: true })), a2 = JSON.stringify(E.sanitizeState(JSON.parse(JSON.stringify(full, packer)), { trusted: true }));
   if (a1 !== a2) { let i = 0; while (a1[i] === a2[i]) i++; console.log('compact diff at', a1.slice(Math.max(0, i - 120), i + 60), '\n vs', a2.slice(Math.max(0, i - 120), i + 60)); }
   expect(a1 === a2, 'a compacted save loads back identically', a1.length + ' vs ' + a2.length);
+  const a3 = JSON.stringify(E.sanitizeState(JSON.parse(AC.pack(full)), { trusted: true }));
+  expect(a1 === a3, "the app's own packer (finished sessions compacted) loads back identically", a1.length + ' vs ' + a3.length);
 }
 // ---------- Final algorithm audit: the rules this change set added ----------
 {
@@ -511,6 +515,143 @@ for (const includePeak of [true, false]) {
   // Fatigue-stop sets survive a reload.
   const cutSess = load({ lifts: { squat: { oneRM: 340 }, bench: { oneRM: 285 }, deadlift: { oneRM: 370 } }, setupDone: true, current: { id: 'c', phase: 'lift', exercises: [{ ex: 'comp_squat', lift: 'squat', role: 'primary', slotKey: 'squat_primary', cut: 2, autoCut: 2, autoStopped: true, sets: [{ kind: 'work', w: 200, reps: 8 }] }] } });
   expect(cutSess.current.exercises[0].autoCut === 2, 'autoCut is kept', cutSess.current.exercises[0]);
+}
+// ---------- Audit 12: the in-session cap holds on the plates ----------
+{
+  // 300 planned with 5 lb jumps: +2.5% is 307.5, which the nearest-total rounding used to make 310 (+3.3%).
+  const st12 = E.sanitizeState({ lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true });
+  expect(E.correctedLoad(st12, 307.5, 300, 1.025) === 305, 'a correction never rounds past the +2.5% cap', E.correctedLoad(st12, 307.5, 300, 1.025));
+  expect(E.correctedLoad(st12, 300.2, 300, 1.0) === 300, 'Peak and light sessions stay at the plan', E.correctedLoad(st12, 300.2, 300, 1.0));
+  expect(E.correctedLoad(st12, 262, 300, 1.025) === E.loadRound(st12, 262), 'a correction down rounds as before', E.correctedLoad(st12, 262, 300, 1.025));
+  // Every plate set, bar and planned weight: never over the cap unless the cap is under the plan itself, never under the plan when rounding up.
+  const PL = [[45, 35, 25, 10, 5, 2.5], [45, 25, 10, 5], [45], [45, 35, 25, 10, 5, 2.5, 1.25], [55, 15, 10]];
+  for (let i = 0; i < 3000; i++) {
+    const plates = pick(PL), bar = pick([15, 35, 45, 55]);
+    const s = E.sanitizeState({ lifts: { squat: { oneRM: 300 }, bench: { oneRM: 200 }, deadlift: { oneRM: 400 } }, setupDone: true, settings: { plates, barWeight: bar } });
+    const planned = E.loadRound(s, bar + rnd() * 400), up = pick([1, 1.025]), w = planned * (0.8 + rnd() * 0.3);
+    const t = E.correctedLoad(s, Math.min(w, planned * up), planned, up);
+    expect(t <= Math.max(planned, planned * up) + 1e-9 && (w <= planned || t >= planned - 1e-9) && t === E.loadRound(s, t), 'corrected loads stay on the plates and inside the cap', { plates, bar, planned, up, w, t });
+  }
+}
+// ---------- Audit 12, cycle 2: the reviews only write what they own ----------
+// app.js packs each stored session once and keeps it (packState): an engine call that changed a
+// logged session in place would be saved stale. The weekly review writes only its own program fields.
+{
+  const OWN = new Set(['readinessHist', 'readinessBase', 'readinessLowWeeks', 'dialMovesBlock', 'macroDialDown', 'blockClean', 'lastAddWeek']);
+  for (let round = 0; round < 60; round++) {
+    const st = E.sanitizeState({ lifts: { squat: { oneRM: 300 + rnd() * 150 }, bench: { oneRM: 200 + rnd() * 100 }, deadlift: { oneRM: 350 + rnd() * 150 } }, setupDone: true, settings: { includePeak: rnd() < 0.5 } });
+    for (let k = Math.floor(rnd() * 30); k > 0; k--) E.advanceDay(st);
+    const P = st.program, week = [];
+    if (E.position(st).rest) continue;
+    for (let d = 0; d < 4; d++) {
+      P.dayIdx = d;
+      const s = E.buildSession(st, pick(['full', 'full', 'trim', 'light']));
+      Object.assign(s, { id: 'r' + round + d, ts: 1.7e12 + round * 1e9 + d * 1e8, date: '2026-0' + (1 + (round % 9)) + '-1' + d, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: d, skippedSlots: [], post: { difficulty: 1 + Math.floor(rnd() * 4) },
+        readiness: { score: Math.round(20 + rnd() * 70), color: pick(['green', 'yellow', 'red']) }, soreness: rnd() < 0.7 ? { legs: 1 + Math.floor(rnd() * 4), push: 1 + Math.floor(rnd() * 4), hinge: 1 + Math.floor(rnd() * 4) } : undefined });
+      s.exercises.forEach(e => e.sets.forEach(x => { x.done = rnd() < 0.9; x.actualW = x.w; x.actualReps = x.reps - (rnd() < 0.1 ? 1 : 0); x.rpe = x.kind === 'warm' || rnd() < 0.15 ? null : Math.round((6 + rnd() * 4) * 2) / 2; }));
+      week.push(JSON.parse(JSON.stringify(s)));
+    }
+    P.dayIdx = 3;
+    const sessBefore = JSON.stringify(week), progBefore = JSON.parse(JSON.stringify(P)), otherBefore = JSON.stringify({ lifts: st.lifts, learned: st.learned, acc: st.acc, settings: st.settings });
+    E.weeklyReview(st, week, week);
+    expect(JSON.stringify(week) === sessBefore, 'the weekly review never writes to a logged session');
+    const wrote = Object.keys(Object.assign({}, progBefore, P)).filter(k => JSON.stringify(P[k]) !== JSON.stringify(progBefore[k]) && !OWN.has(k));
+    expect(wrote.length === 0, 'the weekly review writes only its own program fields', wrote);
+    expect(JSON.stringify({ lifts: st.lifts, learned: st.learned, acc: st.acc, settings: st.settings }) === otherBefore, 'the weekly review leaves maxes, learned counts, accessories and settings alone');
+    E.mesoReview(st, week, !!E.position(st).block.test); for (const s of week) E.calibrate(st, s); E.stallCheck && E.stallCheck(st);
+    expect(JSON.stringify(week) === sessBefore, 'meso review and calibration never write to a logged session');
+  }
+}
+const LIFTS_F7 = ['squat', 'bench', 'deadlift'];
+// ---------- The time budget (F7): it covers the required work; optional slots never block a set ----------
+{
+  const mk = () => E.sanitizeState({ lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true });
+  const s0 = mk(); s0.program.dayIdx = 0; const plan = E.buildSession(s0, 'full');
+  const opt = plan.exercises.filter(e => e.optional);
+  expect(opt.length > 0 && E.estimateMinutes(plan, true) < E.estimateMinutes(plan) && E.estimateMinutes(plan) === plan.estMinutes, 'the required estimate leaves out the optional slots; estMinutes is still the whole session', { req: E.estimateMinutes(plan, true), all: plan.estMinutes });
+  // Strength week 2: a set the review earns fits the required work, whatever the optional slots take.
+  const st = mk(); st.program.blockIdx = E.BLOCKS.findIndex(b => b.id === 'strength'); st.program.week = 2; st.program.macroPos = E.MACRO.findIndex(m => m.block === 'strength');
+  const good = [0, 1, 2, 3].map(d => { st.program.dayIdx = d; const s = E.buildSession(st, 'full'); s.exercises.forEach(e => e.sets.forEach(x => { x.done = true; x.actualW = x.w; x.actualReps = x.reps; x.rpe = x.kind === 'warm' ? null : Math.max(5, (x.rpeTarget || 7) - 1); })); return Object.assign(s, { id: 'g' + d, ts: d + 1, date: '2026-03-0' + (d + 2), mesoCount: 0, blockIdx: st.program.blockIdx, dayIdx: d, skippedSlots: [], post: { difficulty: 1 }, soreness: { legs: 1, push: 1, hinge: 1 }, readiness: { score: 80, color: 'green' } }); });
+  st.program.dayIdx = 3;
+  const rv = E.weeklyReview(st, good, good);
+  expect(LIFTS_F7.some(l => rv.setAdj[l] > 0), 'Strength week 2 can earn a set now that optional slots do not count', rv.log);
+  // Whatever the review adds, every session left in the block keeps its required work inside the budget.
+  st.program.setAdj = rv.setAdj; let worst = 0;
+  for (let w = 3; w <= E.BLOCKS[st.program.blockIdx].weeks; w++) for (let d = 0; d < 4; d++) { st.program.week = w; st.program.dayIdx = d; worst = Math.max(worst, E.estimateMinutes(E.buildSession(st, 'full'), true)); }
+  expect(worst <= E.TUNE.sessionCapMin, 'the required work stays inside the budget after an earned set', worst);
+}
+// ---------- Storage compaction (F8): finished sessions store less, and load back the same ----------
+// Realistic states: 36 simulated weeks (warm-ups, openers, test weeks, corrected and missed sets),
+// a session in progress, typed and carried weights, edits, bodyweight work, an Undo copy, and sets
+// an old build stored with no weight. Each must survive sanitize -> pack -> sanitize byte for byte,
+// in the new format and in the format older builds wrote.
+{
+  const legacyPack = (v) => JSON.stringify(v, (k, x) => (k === 'kind' && x === 'work') ? undefined : ((k === 'dayId' || k === 'dayName' || k === 'blockName') && typeof x === 'string') ? undefined : (x === null || x === '' || x === undefined) ? undefined : (x === false && new Set(['ind', 'open', 'done', 'manualW', 'hitFloor', 'autoStopped', 'needsWeight', 'optional', 'skipped', 'isDeload', 'isTest', 'isRest', 'paused', 'setLightRest', 'calibrated', 'timerSrc', 'autoReps', 'autoW', 'minTyped', 'macroWasFlagged']).has(k)) ? undefined : (x === 0 && (k === 'plus' || k === 'cut')) ? undefined : ((k === 'cue' || k === 'startHint' || k === 'load') && typeof x === 'string') ? undefined : x);
+  const sim = require(path.join(__dirname, '..', 'dev', 'sim', 'sim3.js'));
+  const SE = globalThis.Engine; // sim3 loads the engine afresh; keep the copy the rest of this file uses
+  const base = sim.run(Object.assign(sim.lens.A('normal'), { engine: path.join(__dirname, '..', 'src', 'engine.js'), weeks: 36, seed: 3 })).st;
+  globalThis.Engine = SE;
+  const clean = (raw) => E.sanitizeState(JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw)), { trusted: true });
+  const roundTrip = (S1, tag) => {
+    const j1 = JSON.stringify(S1), packed = AC.pack(S1), S2 = clean(packed), j2 = JSON.stringify(S2);
+    if (j1 !== j2) { let i = 0; while (j1[i] === j2[i]) i++; console.log('round-trip diff (' + tag + ')', j1.slice(Math.max(0, i - 160), i + 60), '\n vs', j2.slice(Math.max(0, i - 160), i + 60)); }
+    expect(j1 === j2, 'sanitize -> pack -> sanitize is byte-identical (' + tag + ')', j1.length + ' vs ' + j2.length);
+    expect(JSON.stringify(clean(legacyPack(S1))) === j1, 'the old stored format still loads to the same state (' + tag + ')');
+    return packed;
+  };
+  base.settings.cardioMin = 40;
+  let S1 = clean(base);
+  expect(S1.sessions.length > 120, 'the simulated history is long', S1.sessions.length);
+  const kinds = new Set(); for (const s of S1.sessions) for (const e of s.exercises) for (const x of e.sets) if (x.done) kinds.add(x.kind + (x.actualW !== x.w ? '~w' : '') + (x.actualReps < x.reps ? '~miss' : ''));
+  expect(['warm', 'work', 'single', 'test', 'work~w', 'test~w'].every(k => kinds.has(k)), 'the history has warm-ups, openers, tests and corrected sets', [...kinds]);
+  const packed0 = roundTrip(S1, 'simulated history');
+  const legacy0 = legacyPack(S1);
+  expect(packed0.length < legacy0.length * 0.85, 'compaction stores at least 15% less', packed0.length + ' vs ' + legacy0.length);
+  const stored0 = JSON.parse(packed0);
+  expect(stored0.sessions.filter(s => s.pk === 1).length > S1.sessions.length * 0.8, 'most finished sessions are compacted', stored0.sessions.filter(s => s.pk === 1).length);
+  // The hand-made cases on top: an edited session, a typed weight, a bodyweight set, an old-build set with no weight on record, an Undo copy, and an open session.
+  const st = JSON.parse(JSON.stringify(S1));
+  const last = st.sessions[st.sessions.length - 1], first = st.sessions.find(s => !s.skipped && s.exercises.length);
+  last.edited = true; last.exercises[0].sets.filter(x => x.kind === 'work' && x.done)[0].actualW += 10;
+  const missed = st.sessions[st.sessions.length - 3].exercises[0].sets.filter(x => x.kind === 'work' && x.done); missed[missed.length - 1].actualReps -= 2; // missed reps
+  const oldSess = st.sessions[st.sessions.length - 2], oldSet = oldSess.exercises[0].sets.find(x => x.done && x.w != null);
+  oldSet.actualW = null; oldSet.actualReps = null; // as an old build stored it: "as planned" was left unsaid
+  first.exercises.push({ slotKey: 'abs', ex: 'hanging_raise', role: 'accessory', optional: true, rest: 60, sets: [{ w: null, reps: 12, kind: 'work', done: true, actualW: null, actualReps: 12 }, { w: null, reps: 12, kind: 'work', done: true, actualW: 25, actualReps: 10, manualW: true }] });
+  st.undo = { label: 'Deleted Squat day', snap: JSON.stringify({ program: st.program, lifts: st.lifts }), restoreSession: JSON.parse(JSON.stringify(st.sessions[5])) };
+  st.program.dayIdx = 1;
+  const cur = E.buildSession(E.sanitizeState(st, { trusted: true }), 'full');
+  Object.assign(cur, { id: 's_open', ts: Date.now(), date: '2027-01-04', phase: 'lift', startedAt: Date.now(), mesoCount: st.program.mesoCount, blockIdx: st.program.blockIdx, dayIdx: 1, notes: '', skippedSlots: [] });
+  const cw = cur.exercises[0].sets.filter(x => x.kind === 'work');
+  cur.exercises[0].sets.forEach(x => { if (x.kind === 'warm') { x.done = true; x.actualW = x.w; x.actualReps = x.reps; x.autoW = true; x.autoReps = true; } });
+  cw[0].done = true; cw[0].actualW = cw[0].w; cw[0].actualReps = cw[0].reps; cw[0].rpe = 7; cw[0].doneAt = Date.now();
+  cw[1].actualW = cw[1].w + 10; cw[1].manualW = true; if (cw[2]) { cw[2].actualW = cw[1].actualW; cw[2].manualW = true; cw[2].carriedFrom = cur.exercises[0].sets.indexOf(cw[1]); }
+  st.current = cur;
+  S1 = clean(st);
+  expect(S1.current && S1.current.phase === 'lift' && S1.undo && S1.undo.restoreSession, 'the hand-made state has an open session and an Undo copy');
+  const packed1 = roundTrip(S1, 'hand-made cases');
+  const stored1 = JSON.parse(packed1);
+  expect(!stored1.current.pk && stored1.current.exercises[0].sets.filter(x => x.done).every(x => x.actualW != null && x.actualReps != null), 'the open session is never compacted');
+  expect(stored1.undo.restoreSession.pk === 1, "the Undo copy's session is compacted and comes back", stored1.undo.restoreSession.pk);
+  const back = clean(packed1);
+  const ob = back.sessions.find(s => s.id === oldSess.id).exercises[0].sets.find(x => x.done && x.w != null);
+  expect(ob.actualW === null && ob.actualReps === null && !stored1.sessions.find(s => s.id === oldSess.id).pk, 'a set an old build stored with no weight stays that way (its session is stored as it is)', ob);
+  const bw = back.sessions.find(s => s.id === first.id).exercises.filter(e => e.ex === 'hanging_raise').pop();
+  expect(bw.sets[0].actualW === null && bw.sets[0].actualReps === 12 && bw.sets[1].actualW === 25 && bw.sets[1].actualReps === 10, 'bodyweight sets, plain and loaded, come back', bw.sets);
+  // The per-session cache gives exactly the uncached bytes, before and after a touched change.
+  expect(AC.packState(S1) === AC.pack(S1) && AC.packState(S1) === AC.pack(S1), 'the cached pack equals the uncached pack');
+  const ts = S1.sessions[S1.sessions.length - 1]; ts.soreness = { legs: 3, push: 2, hinge: 4 }; AC.touchSession(ts);
+  expect(AC.packState(S1) === AC.pack(S1), 'after a touched change too');
+  // Random edits of the stored history: weights and reps on and off the plan, unticked sets, no weight.
+  for (let round = 0; round < 150; round++) {
+    const r = JSON.parse(JSON.stringify(S1)); r.current = null; r.undo = null;
+    for (let k = 0; k < 12; k++) {
+      const s = pick(r.sessions); if (!s.exercises.length) continue; const e = pick(s.exercises); if (!e.sets.length) continue; const x = pick(e.sets);
+      const m = Math.floor(rnd() * 7);
+      if (m === 0) x.actualW = x.w; else if (m === 1) x.actualW = (x.w || 0) + pick([-10, 2.5, 5]); else if (m === 2) x.actualReps = Math.max(0, x.reps - 1); else if (m === 3) x.done = !x.done;
+      else if (m === 4) x.actualW = null; else if (m === 5) { x.w = null; x.actualW = pick([null, 20]); } else x.actualReps = x.reps + pick([0, 2]);
+    }
+    roundTrip(clean(r), 'random edits ' + round);
+  }
 }
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);

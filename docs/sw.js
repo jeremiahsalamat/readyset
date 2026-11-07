@@ -1,4 +1,4 @@
-const BUILD = 'aae58c78c54c';
+const BUILD = '0b8a6315bc72';
 const CACHE = 'readyset-' + BUILD;
 const PAGE = './index.html', ASSETS = ['./manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'], FONT_CACHE = 'readyset-fonts'; // fonts outlive a build: every update used to wipe them
@@ -23,7 +23,7 @@ self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Pr
 // the next build's) still has it. Thawed more than 5 s late means you are back and the page says so.
 // iOS ignores notification tags, so two showNotification calls are always two banners.
 const REST_CACHE = 'readyset-rest', REST_KEY = './__rest__';
-let restTimer = null, restDone = null, restShown = 0;
+let restTimer = null, restDone = null, restShown = 0, restAt = 0, restOff = 0; // restOff: the deadline the page cancelled (a late 'due' for it is stale)
 const restSave = r => caches.open(REST_CACHE).then(c => (r ? c.put(REST_KEY, new Response(JSON.stringify(r))) : c.delete(REST_KEY))).catch(() => {});
 const restLoad = () => caches.open(REST_CACHE).then(c => c.match(REST_KEY)).then(m => (m ? m.json() : null)).catch(() => null);
 function restArm(r) {
@@ -46,9 +46,9 @@ async function restFire(r, handed) { // handed: the hidden page says this rest i
 self.addEventListener('message', e => {
   const m = e.data || {};
   let p = null;
-  if (m.type === 'rest-schedule' && m.at) { const r = { at: +m.at, body: String(m.body || 'Next set').slice(0, 80) }; if (restShown !== r.at) p = restSave(r).then(() => restArm(r)); }
-  else if (m.type === 'rest-due' && m.at) { restArm(null); p = restFire({ at: +m.at, body: m.body }, true); }
-  else if (m.type === 'rest-cancel') p = restSave(null).then(() => restArm(null));
+  if (m.type === 'rest-schedule' && m.at) { const r = { at: +m.at, body: String(m.body || 'Next set').slice(0, 80) }; restAt = r.at; restOff = 0; if (restShown !== r.at) p = restSave(r).then(() => restArm(r)); }
+  else if (m.type === 'rest-due' && m.at) { if (+m.at !== restOff) { restArm(null); p = restFire({ at: +m.at, body: m.body }, true); } }
+  else if (m.type === 'rest-cancel') { restOff = restAt; restAt = 0; p = restSave(null).then(() => restArm(null)); }
   if (p && e.waitUntil) { try { e.waitUntil(p); } catch (err) { /* some browsers refuse long waits */ } }
 });
 self.addEventListener('notificationclick', e => {

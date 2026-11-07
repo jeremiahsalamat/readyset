@@ -1,4 +1,5 @@
 # Readyset program review against the evidence-based powerlifting canon
+> Historical snapshot, 2026-10-26: this reviewed the app as it was then. The app has changed since; PROGRAM_GUIDE.md describes it as it is now.
 
 Scope: `src/engine.js` (BLOCKS, DAYS, REST, TEST, CAPS, buildSession, warmups, weeklyReview, calibrate, advanceDay) and `PROGRAM_GUIDE.md`, checked against Reactive Training Systems (Tuchscherer), Juggernaut / JuggernautAI, Stronger By Science (Nuckols), The Strength Athlete, Calgary Barbell, Helms' Muscle & Strength Pyramids, Barbell Medicine, Sheiko, and the volume / frequency / proximity-to-failure / deload literature. Lifter: intermediate (3+ yr), home gym, 4 x 50-70 min, strength first and some muscle, no meet, must not be buried by fatigue (burnt out on GZCL J&T 2.0, which runs an AMRAP on every T1 top set plus heavy T2 volume).
 

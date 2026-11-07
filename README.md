@@ -8,8 +8,9 @@ Program logic is explained in [PROGRAM_GUIDE.md](PROGRAM_GUIDE.md).
 **The app (installable, works offline):** https://jeremiahsalamat.github.io/readyset/
 
 Open that link in Safari, then Share → *Add to Home Screen*. It installs as a standalone app with
-the barbell icon, works with no connection, and keeps your data in the phone's storage. Use *Copy
-backup* in Settings every few weeks and paste it somewhere safe (Notes works).
+the barbell icon, works with no connection, and keeps your data in the phone's storage, which is
+the only copy. *Save backup file* in Settings whenever you like (the newest file is all you need)
+and keep it somewhere safe, such as Files or iCloud Drive.
 
 **Backup copy:** the same app is also published as a private claude.ai artifact
 (https://claude.ai/artifact/3nBmAmwFdemozpSyvjyNCB). It stores data in your Claude account instead
@@ -30,14 +31,17 @@ git push
 Pages rebuilds in about a minute. The installed app checks `version.txt` every time it comes to
 the front and reloads itself when a new build is there (immediately when idle, after a tap on the
 banner mid-session); all data lives in storage and survives the reload. Each build carries a
-content hash (`meta readyset-build`, `docs/version.txt`, the service-worker cache name), so an
-unchanged build never triggers a reload. Never ask the owner to delete and re-add the icon: that
+content hash of the page, worker, manifest and icons (`meta readyset-build`, `docs/version.txt`,
+the service-worker cache name), so an unchanged build never triggers a reload. Never ask the owner to delete and re-add the icon: that
 deletes the data.
 
 ## Files
 
 ```
 src/engine.js     training logic: blocks, sessions, readiness, weekly review, TM updates
+src/sanitize.js   rebuilds every stored, pasted or synced state from a whitelist
+src/appcore.js    the UI's testable parts: storage packing, backfill timestamps, typo check,
+                  mid-session rebase, layoff tiers, the claude.ai copy's merge
 src/app.js        UI: setup, today, session logger, post-session, cardio, program, history, settings
 src/styles.css    design tokens and layout
 src/body.html     page shell
@@ -81,6 +85,7 @@ erases everything and cannot be undone.
 
 ```bash
 node tests/engine_fuzz.js
+node tests/app_units.js
 node tests/sw_budget.js
 ```
 
@@ -90,7 +95,16 @@ sane), rep-max math properties, in-session correction caps, readiness ranges, a 
 through the state machine with random early deloads and easy weeks, degenerate review inputs, and
 a hostile backup (prototype keys, markup in names, out-of-range values, unknown exercise ids), and
 regression checks for every rule in the guide (openers, bonus-rep caps, earned sets, the stop
-rule, calibration guards, the layoff and stall rules, the dial, the readiness triggers).
+rule, calibration guards, the layoff and stall rules, the dial, the readiness triggers), and that the
+reviews never write to a logged session; that the time budget covers only the required work; and
+that storage compaction is lossless (36 simulated weeks plus hand-made cases round-trip byte for
+byte, in the new format and the old one). `app_units.js` covers `src/appcore.js`: the per-session
+pack cache against an uncached pack, where a session logged after the fact lands among that date's
+sessions, the typo check and number cleaning, the mid-session rebase after a max or plate change,
+the layoff rule's tiers, and the claude.ai copy's merge against a stubbed account store (a delete
+that never landed stays deleted; Undo and a restore bring a session back). `sw_budget.js` runs the built `docs/sw.js` (so build first)
+with stubbed caches and network: a return never waits on the network, offline, updates, fonts, the
+captive-portal guard, and one rest banner per deadline (a cancel, a restarted worker, the 5 s limit).
 
 The training rules were tuned with the simulators in `dev/sim/`: `sim2.js` fits the calibration
 against a hidden true max; `sim3.js` is a fitness-fatigue model of four lifter types (normal,
@@ -101,9 +115,11 @@ fatigue, never by the app's own numbers. Run one with
 node dev/sim/run3.js fragile baseline 36 7
 ```
 
-(profile, variant from `dev/sim/variants.js` or a preset name from `applyTune`, weeks, seed; add
-`verbose` for the week-by-week log). `jt2like` is the high-volume program that buried the owner,
-kept as the yardstick. The three review reports the rules came from are in `dev/reviews/`.
+(profile, lens, weeks, seed). The lens is `legacy` (or `baseline`, the old sim3), `A` (the app's
+wiring), `B` (A plus realistic rating noise and structural gain) or `F` (B plus load-based
+stimulus); judge a change under both B and F, over several seeds. `sim3.run()` takes `preload` and
+`patch` hooks for variants, and `dev/sim/variants.js` holds the older named variants (`jt2like`, the
+high-volume program that buried the owner, is the yardstick) for scripts that call `applyVariant`. The three review reports the rules came from are in `dev/reviews/`.
 
 ## Security
 
