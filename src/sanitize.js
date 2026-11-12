@@ -1,4 +1,4 @@
-/* Readyset state sanitizer. Every state object that comes from outside the running page
+/* ReadySet state sanitizer. Every state object that comes from outside the running page
    (localStorage, a pasted or chosen backup, the artifact store) passes through here before
    use. It rebuilds a fresh state from a whitelist of fields, coerces every value to its type and
    range, and drops anything unknown, so a corrupted or tampered backup can neither crash the page
@@ -91,7 +91,7 @@
       durationMin: int(get(s, 'durationMin'), 0, 600, 0), notes: str(get(s, 'notes'), 1000), calibrated: bool(get(s, 'calibrated')), savedAt: numOrNull(get(s, 'savedAt'), 0, 4e12),
       skippedSlots: (Array.isArray(get(s, 'skippedSlots')) ? get(s, 'skippedSlots') : []).filter(k => SLOT_KEYS.includes(k)).slice(0, 10),
       soreness: isObj(so) ? { legs: int(get(so, 'legs'), 1, 4, 1), push: int(get(so, 'push'), 1, 4, 1), hinge: int(get(so, 'hinge'), 1, 4, 1) } : null,
-      exercises: (Array.isArray(get(s, 'exercises')) ? get(s, 'exercises') : []).slice(0, 12).map(e => sanitizeExercise(e, state, !oneOf(get(s, 'phase'), ['lift', 'post', 'cardio', 'edit'], null))).filter(Boolean),
+      exercises: (Array.isArray(get(s, 'exercises')) ? get(s, 'exercises') : []).slice(0, 12).map(e => sanitizeExercise(e, state, !oneOf(get(s, 'phase'), ['lift', 'post', 'cardio'], null))).filter(Boolean),
       notesList: undefined,
     };
     delete out.notesList;
@@ -267,8 +267,9 @@
     const T = get(raw, 'timer');
     d.timer = isObj(T) ? { end: num(get(T, 'end'), 0, 4e12, 0), total: int(get(T, 'total'), 1, 3600, 90), label: str(get(T, 'label'), 80), firedAt: num(get(T, 'firedAt'), 0, 4e12, 0) } : null;
     d.extraCardio = (Array.isArray(get(raw, 'extraCardio')) ? get(raw, 'extraCardio') : []).slice(-2000).filter(isObj).map(c => ({ date: dateStr(get(c, 'date'), '2000-01-01'), min: int(get(c, 'min'), 1, 600, 30), kcal: int(get(c, 'kcal'), 0, 10000, 0) }));
-    // The claude.ai copy's deleted session ids (appcore.js noteDeleted): only there, and only when any.
-    const DI = get(raw, 'deletedIds');
+    // The claude.ai copy's deleted session ids (appcore.js noteDeleted): only there, only when any, and
+    // only from this device or its own account (a backup never carries the list; a hand-made one cannot delete sessions).
+    const DI = trusted ? get(raw, 'deletedIds') : null;
     if (Array.isArray(DI)) { const ids = Array.from(new Set(DI.slice(-1000).filter(x => idStr(x, null)))).slice(-300); if (ids.length) d.deletedIds = ids; }
     d.lastBackupAt = numOrNull(get(raw, 'lastBackupAt'), 0, 4e12);
     d.lastBackupKind = oneOf(get(raw, 'lastBackupKind'), ['clipboard', 'file', 'cloud', 'restore'], null);

@@ -1,6 +1,6 @@
-# Readyset: the program and why it is built this way
+# ReadySet: the program and why it is built this way
 
-Readyset is a four-day powerlifting program that adapts to how you recover. Everything below is
+ReadySet is a four-day powerlifting program that adapts to how you recover. Everything below is
 condensed from Israetel, Hoffmann & Smith, *Scientific Principles of Strength Training* (2020),
 with the rules that go beyond the book (RPE stops, openers, the layoff and stall rules) drawn from
 common powerlifting coaching practice and checked in a fatigue simulation before they went in.
@@ -182,6 +182,13 @@ sets the remaining sets to the weight that would land the planned reps at the ta
 same table. So RPE 8 on a set planned at RPE 5 is three reps closer to failure than intended, and
 the next set drops by what the table says (about 9%), not by a fixed step.
 
+**Missed reps or stopped short.** A set with fewer reps than planned counts as *missed reps* only
+when you rate it RPE 9 or more or leave it unrated (then it reads as RPE 10 at the reps you got),
+or when it did not go up at all (0 reps, at any rating). Rated RPE 8.5 or below, it *stopped short*
+with reps left: it is not a failure, and it counts like any set through its reps and RPE (5 reps at
+RPE 7 reads as a set of 8 to failure). The same rule holds everywhere below: the first-set weight,
+the fatigue stop, the floor, calibration, the History detail and the weekly review.
+
 - The first working set counts half: it often feels heaviest for reasons that are not fitness.
   One hard first set therefore moves the next set about half way; a second hard set confirms it
   and the full correction lands. A first set that was clearly hard (1.5+ RPE over target, or reps
@@ -195,7 +202,7 @@ the next set drops by what the table says (about 9%), not by a fixed step.
 - A weight you type into an undone set yourself is left alone.
 - Limits per exercise: never below 85% or above 102.5% of the planned weight (100% in Peak and in
   light sessions, which exist to cut fatigue).
-- **The fatigue stop.** The RTS-style rule most coaches use: a missed rep, a set that is still two
+- **The fatigue stop.** The RTS-style rule most coaches use: missed reps (not a set stopped short), a set that is still two
   or more RPE over target (and at least RPE 8.5, so an easy day planned at RPE 5 is not cut short by
   an RPE 7 set) after the weight has already been corrected, or the floor being reached, ends the
   exercise. The remaining sets are cut automatically, with a Restore button if you know
@@ -217,11 +224,12 @@ half weight. Rating every set 1 RPE too high ends up with loads about 3% lighter
 - If today's estimate is more than 3% under the current 1RM, the 1RM drops to it at once, at most
   5% per session. Fatigue management is the priority, so bad news is acted on immediately. The one
   guard: sets far from failure (reported and planned under RPE 7) are vague evidence, so they can
-  only lower a max when the shortfall is 5% or more, or when reps were missed. In the program's very
+  only lower a max when the shortfall is 5% or more, or when reps were missed (a set stopped short at
+  RPE 8.5 or below is not a miss: it neither blocks a rise nor opens the 15% floor below). In the program's very
   first week a drop is the number you entered being corrected, not fatigue: it does not count toward
   the "max lowered twice" signal, and the 6% test starts over from the new max.
 - The 1RM rises only on a smoothed estimate (half today, half history), by at most 2.5% per
-  session and at most once per week per lift, never after a session rated "crushed me", never on
+  session (on the 2.5 lb grid, rounded so it never passes the cap; a light max can still move one step) and at most once per week per lift, never after a session rated "crushed me", never on
   one set's evidence, and a fast rise (today's sets alone more than 4% over) needs at least one set
   near failure.
 - Sets under RPE 6.5 cannot say how much was left, but they still prove a floor: read as if each
@@ -237,8 +245,12 @@ half weight. Rating every set 1 RPE too high ends up with loads about 3% lighter
   only manages volume (sets); load is handled here.
 - Deload, easy and test weeks don't calibrate. The test week sets the 1RM directly from your
   heaviest single with an RPE (the best of several noisy readings runs high), within 5% down and 12%
-  up and never below a weight you made. A single with no RPE can raise the max but not lower it, and
-  a single that did not go up caps it just under that weight.
+  up. A single with no RPE can raise the max but not lower it, and a single that did not go up caps
+  it just under that weight. The new max is never below a single you made, even above +12%: a test
+  single you ticked with at least one rep, at any RPE (10 included) or none, is a floor, and the max
+  is then exactly that weight, on the 2.5 lb grid or not (rounding never takes it under). Everything
+  above the made weight still follows the caps: a single at 370 rated RPE 7 on a 340 max reads as
+  more than 380 but gives 380 (+12%); a single of 400 made on the same max gives 400.
 - A session you log after the fact is read like any other. One you edit or delete, if it belongs to
   the current block, puts the maxes back to where the block started and re-reads every session of
   the block in date order, so the correction lands exactly as if it had been logged that way. A past
@@ -275,18 +287,18 @@ reopening shows the right remaining time, or how long ago it ended. Every set en
 type, and a session in progress reopens at the set you are on.
 
 What an iPhone allows a web app: it runs while it is on screen and for a few seconds after you
-switch away, then iOS freezes it until you come back. So with Readyset open (the screen stays on
+switch away, then iOS freezes it until you come back. So with ReadySet open (the screen stays on
 during a session) every rest ends with a chime and a flash; once you switch to another app or lock
-the phone, no web app can alert you on time, Readyset included. The timer bar shows the clock time
+the phone, no web app can alert you on time, ReadySet included. The timer bar shows the clock time
 each rest ends, and when you come back it shows how long ago it ended (Rest done +1:10). A
-notification can be switched on in Settings, but it only reaches you while Readyset is open or in
+notification can be switched on in Settings, but it only reaches you while ReadySet is open or in
 those first seconds after switching away.
 
 ### Typos
 
 A number that is probably a slip of the thumb (36 for 360, a weight under the empty bar, 18 reps for
 8, a test single 15% over your max) is asked about before it can move the next sets or the maxes:
-use the planned number, keep yours, or fix it. A weight you keep carries to the later sets without
+use the planned number (today's corrected one, when the sets were re-aimed), keep yours, or fix it. A weight you keep carries to the later sets without
 asking again. Calibration also leaves out a set lifted far from
 its planned weight (under 60% or over 140% of it) unless you kept that number at the check, and
 says so. A fatigue stop that was triggered by a number you then correct undoes itself.
@@ -301,7 +313,9 @@ you report at the next check-in, this feeds the weekly review.
 For each competition lift the app scores the week:
 
 - Missed reps or RPE 1.5+ above plan: −2. RPE 0.75+ above plan: −1. Below plan: +1. Bonus reps
-  are taken back out before comparing, since they raise the RPE by design. In week 1 of a block an
+  are taken back out before comparing, since they raise the RPE by design; a set stopped short is
+  compared as if the missing reps had been done (its RPE plus the reps short, at most 10), so 5 of 8
+  at RPE 7 against a plan of RPE 8 reads as RPE 10, never as easier than planned. In week 1 of a block an
   RPE above plan scores nothing: calibration has already answered it, and one week cannot show
   accumulated fatigue. Missed reps and a bad session rating still count.
 - Main sets on target: +1. Session rated easy: +1. Very hard: −1. Crushed: −2.
@@ -358,13 +372,15 @@ Every barbell load is a percentage of a Training Max, 90% of your 1RM by default
 always doable on a mediocre day. With calibration on (the default) the 1RM moves after every
 session as described above, and the end of a block changes nothing further. With calibration off,
 the old block-end rules apply: a higher estimate from logged sets raises the 1RM up to 5% per block,
-a clean block earns +5 lb (squat, deadlift) or +2.5 lb (bench), a lift flagged twice drops 2.5%.
+a clean block (every planned rep done, so a set stopped short is not clean either) earns +5 lb
+(squat, deadlift) or +2.5 lb (bench), a lift flagged twice drops 2.5%.
 Either way the Peak block's test single sets the 1RM directly.
 
 ### Accessories
 
 Self-loaded work (belt squat, dumbbells, machines) uses double progression: when every set reaches
-the top of the rep range, the weight goes up next time. Accessory sets sit at 2-4 per exercise and
+the top of the rep range, the weight goes up next time (one dumbbell step, or 5 lb); a set that falls
+short of the bottom of the range brings it down by the same step. Accessory sets sit at 2-4 per exercise and
 only climb when no lift is flagged. The book caps isolation work at about 30% of a hypertrophy
 program and wants little or none in strength phases (pp.338-339); here it runs about 26-31% with the
 optional slots dropped. Biceps, lateral raises and abs are marked optional so they are the first

@@ -1,4 +1,4 @@
-# Readyset
+# ReadySet
 
 Adaptive four-day powerlifting program for one lifter. Vanilla HTML/CSS/JS, no dependencies.
 Program logic is explained in [PROGRAM_GUIDE.md](PROGRAM_GUIDE.md).
@@ -9,8 +9,8 @@ Program logic is explained in [PROGRAM_GUIDE.md](PROGRAM_GUIDE.md).
 
 Open that link in Safari, then Share → *Add to Home Screen*. It installs as a standalone app with
 the barbell icon, works with no connection, and keeps your data in the phone's storage, which is
-the only copy. *Save backup file* in Settings whenever you like (the newest file is all you need)
-and keep it somewhere safe, such as Files or iCloud Drive.
+the only copy. *Save backup file* in Settings whenever you like and keep the files somewhere safe,
+such as Files or iCloud Drive.
 
 **Backup copy:** the same app is also published as a private claude.ai artifact
 (https://claude.ai/artifact/3nBmAmwFdemozpSyvjyNCB). It stores data in your Claude account instead
@@ -23,10 +23,15 @@ The site is served by GitHub Pages from the `docs/` folder on `main`. To ship a 
 
 ```bash
 python build.py
+node tests/engine_fuzz.js && node tests/app_units.js && node tests/sw_budget.js && node tests/static_checks.js
+git status          # only intended files: never a backup file (readyset-backup-*.json) or scratch files
 git add -A
 git commit -m "describe the change"
 git push
 ```
+
+`build.py` checks the page (script hashes in the CSP, no attributed script tags, LF only, size
+budget) before it writes anything, so a failed build leaves the last good files in place.
 
 Pages rebuilds in about a minute. The installed app checks `version.txt` every time it comes to
 the front and reloads itself when a new build is there (immediately when idle, after a tap on the
@@ -47,7 +52,10 @@ src/styles.css    design tokens and layout
 src/body.html     page shell
 build.py          assembles readyset.html (artifact) and docs/ (standalone PWA + icons)
 readyset.html     artifact page (no html/head/body wrapper; the publisher adds one)
-docs/index.html   standalone app
+docs/index.html   standalone app; docs/sw.js (service worker), docs/manifest.webmanifest,
+                  docs/version.txt (the build id phones check) and docs/icon-*.png are built too
+tests/            engine_fuzz.js, app_units.js, sw_budget.js, static_checks.js (see Tests)
+dev/sim/          the training simulators; dev/reviews/ the review reports the rules came from
 ```
 
 Rebuild after editing anything in `src/`:
@@ -56,7 +64,7 @@ Rebuild after editing anything in `src/`:
 python build.py
 ```
 
-Preview locally (the `.claude/launch.json` entry serves `docs/` on port 8765):
+Preview locally (a local, untracked `.claude/launch.json` entry can serve `docs/` on port 8765):
 
 ```bash
 python -m http.server 8765 --directory docs
@@ -64,7 +72,8 @@ python -m http.server 8765 --directory docs
 
 ## Data and backups
 
-Everything is one JSON state object plus one document per session, stored in the browser.
+On the phone everything is one JSON state object in the browser's storage (one key, sessions
+inside it). The claude.ai copy keeps the state and one document per session in the Claude account.
 
 **On an iPhone, the home-screen app has its own storage, separate from Safari. Deleting the icon
 deletes the data.** Never delete or re-add the icon without a backup. Two backups exist:
@@ -77,8 +86,9 @@ Backups are the owner's decision; nothing nags. One optional Settings toggle off
 card on Today after each completed session (dismissible). Settings shows the last backup and how many
 sessions are newer than it. Each file is a complete,
 dated snapshot (`readyset-backup-YYYY-MM-DD-HHMM.json`; iOS cannot overwrite a file from the share
-sheet), so only the newest is needed and older ones can be deleted. Files are written compactly
-(about 10 KB per session) and the share sheet receives the file alone, so no stray text file is saved. *Start over*
+sheet), so the newest holds everything; keep the last few anyway, in case a newer one was taken
+after a mistake (an older backup restored, a bad edit). Files are written compactly
+(about 2.5 KB per session) and the share sheet receives the file alone, so no stray text file is saved. *Start over*
 erases everything and cannot be undone.
 
 ## Tests
@@ -87,6 +97,7 @@ erases everything and cannot be undone.
 node tests/engine_fuzz.js
 node tests/app_units.js
 node tests/sw_budget.js
+node tests/static_checks.js
 ```
 
 Fuzzes the engine and the state sanitizer: random settings, maxes and program positions through
@@ -105,6 +116,12 @@ the layoff rule's tiers, and the claude.ai copy's merge against a stubbed accoun
 that never landed stays deleted; Undo and a restore bring a session back). `sw_budget.js` runs the built `docs/sw.js` (so build first)
 with stubbed caches and network: a return never waits on the network, offline, updates, fonts, the
 captive-portal guard, and one rest banner per deadline (a cancel, a restarted worker, the 5 s limit).
+`static_checks.js` (also after a build) compiles every script, source and built (nothing else runs
+`app.js` outside a browser, so a syntax error there would otherwise ship a blank app), and guards the layout rules behind the rest bar and RPE sheet
+(nothing placed with `position: fixed`; the rest bar sits on the dock above the tab bar; overlays
+inside `#app`; a page left panned is put back), the display name ReadySet in the sources and the
+built files, and the identifiers installed phones depend on (storage keys, cache names, the build
+meta tag, the manifest's install fields).
 
 The training rules were tuned with the simulators in `dev/sim/`: `sim2.js` fits the calibration
 against a hidden true max; `sim3.js` is a fitness-fatigue model of four lifter types (normal,
@@ -123,7 +140,7 @@ high-volume program that buried the owner, is the yardstick) for scripts that ca
 
 ## Security
 
-- No server, no accounts, no analytics, no third-party scripts. Network use: Google Fonts for type
+- No server, no sign-up (the claude.ai copy uses your Claude account), no analytics, no third-party scripts. Network use: Google Fonts for type
   (cached by the service worker for offline use), nothing else.
 - Every state object from outside the running page (storage, a pasted or chosen backup)
   is rebuilt through `src/sanitize.js`: whitelisted fields, typed and clamped values, enumerations

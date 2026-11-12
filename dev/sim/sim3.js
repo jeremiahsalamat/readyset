@@ -1,4 +1,4 @@
-// Fitness-fatigue simulator of the Readyset engine: dev/sim/sim3.js as a function, with the app's real
+// Fitness-fatigue simulator of the ReadySet engine: dev/sim/sim3.js as a function, with the app's real
 // wiring available (appLike) and optional model corrections. With {rng:'orig'} and nothing else it
 // reproduces the old sim3 exactly, including its bugs (test-week primaries never simulated, one date,
 // no fatigue stop, soreness read early, no tmPctChosen, no est after a test).
@@ -183,8 +183,8 @@ function run(opts) {
             if (c) { const tgt = Math.max(45, E.roundTo(c.w, 5)); work.forEach(y => { if (!y.done) y.actualW = tgt; }); }
           }
         } else if ((x.kind === 'work' || x.kind === 'single') && !pos.isDeload && !pos.rest && !pos.isTest) {
-          // as recalcExercise runs it: opener counts, misses flagged, Peak ceiling, the fatigue stop cuts the rest
-          evidence.push({ w, reps, rpe, first: x === work[0], missed: reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null, planned: x.reps });
+          // as recalcExercise runs it: opener counts, misses flagged (the engine's own rule when it has one), Peak ceiling, the fatigue stop cuts the rest
+          evidence.push({ w, reps, rpe, first: x === work[0], missed: E.missedSet ? E.missedSet(x) : reps < x.reps, target: x.kind === 'single' ? x.rpeTarget : null, planned: x.reps });
           const C = E.TUNE.correction;
           const up = pos.block.test ? C.ceilPeak : (mode === 'light' && C.ceilLight != null) ? C.ceilLight : C.ceil;
           const c = E.liftCorrection(evidence, e.plannedW, work[0].reps, e.rpeTarget, { down: C.floor, up, inc: st.settings.increment });

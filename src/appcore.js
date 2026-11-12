@@ -1,4 +1,4 @@
-/* Readyset interface core: the storage packer and a few decisions of the interface, kept apart from
+/* ReadySet interface core: the storage packer and a few decisions of the interface, kept apart from
    app.js as plain functions of their inputs (no page, no globals) so tests/app_units.js can run them
    in node. app.js calls these; build.py inlines this file between the sanitizer and app.js. */
 (function (root) {
@@ -107,6 +107,7 @@
         let ref = x.w != null ? x.w : (e.target || e.plannedW || null), lo = 0.6, hi = 1.4;
         if (x.open && e.lift && state.lifts[e.lift]) { ref = state.lifts[e.lift].oneRM * ((E.EX[e.ex] || {}).mult || 1); lo = 0.75; hi = 1.15; }
         else if (!e.lift) { lo = 0.5; hi = 2; }
+        else if (x.kind === 'test' && ref > 0 && state.lifts[e.lift] && state.lifts[e.lift].oneRM > 0) hi = Math.min(hi, state.lifts[e.lift].oneRM * ((E.EX[e.ex] || {}).mult || 1) * 1.15 / ref); // a test line you make is a floor for the new max (mesoReview), so over 115% of the max is asked about, as on the open single
         if (ref > 0 && (w < ref * lo || w > ref * hi)) { msg = `${w} lb against a planned ${Math.round(ref * 2) / 2} lb.`; use = x.open ? null : Math.round(ref * 4) / 4; }
       }
       if (msg) return { field: 'w', v: w, msg, use };

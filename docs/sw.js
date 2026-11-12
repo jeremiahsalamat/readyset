@@ -1,4 +1,4 @@
-const BUILD = '0b8a6315bc72';
+const BUILD = 'bd32b79adda5';
 const CACHE = 'readyset-' + BUILD;
 const PAGE = './index.html', ASSETS = ['./manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'], FONT_CACHE = 'readyset-fonts'; // fonts outlive a build: every update used to wipe them
@@ -16,7 +16,7 @@ self.addEventListener('install', e => { e.waitUntil((async () => {
   await self.skipWaiting();
 })()); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== REST_CACHE && k !== FONT_CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()).then(restLoad).then(r => { if (r && !r.fired) restArm(r); })); });
-// Rest-timer alert. iOS freezes this worker with the page soon after Readyset leaves the screen,
+// Rest-timer alert. iOS freezes this worker with the page soon after ReadySet leaves the screen,
 // so a banner can only go out in the first seconds after you switch away; on screen, the page chimes
 // instead. The worker is the only one that posts a banner, once per deadline: a page awake in the
 // background only tells it the rest is due. The deadline is kept on disk, so a restarted worker (or

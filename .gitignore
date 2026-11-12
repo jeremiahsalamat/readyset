@@ -1,2 +1,4 @@
 .claude/
 __pycache__/
+# Personal training data must never be published (this repo is public)
+readyset-backup-*.json

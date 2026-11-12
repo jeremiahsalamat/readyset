@@ -219,10 +219,28 @@ process.on('exit', (code) => { if (!finished && code === 0) { console.log('FAIL 
   expect(l.length === C.DELETED_CAP && l[l.length - 1] === 's399' && !l.includes('a'), 'the list keeps the newest 300', l.length);
   expect(C.noteLive(['a', 'b', 'c'], ['b']).join() === 'a,c' && C.noteLive(['a', 'b'], 'a').join() === 'b' && C.noteLive(undefined, 'a').length === 0, 'a live session comes off the list');
   // The sanitizer: kept (the newest 300, valid ids only) when there are any; absent otherwise, so the phone app stores what it always did.
-  const sd = E.sanitizeState({ deletedIds: ['s_1', 's_1', 'bad id!', 5, 's_2'] });
+  const sd = E.sanitizeState({ deletedIds: ['s_1', 's_1', 'bad id!', 5, 's_2'] }, { trusted: true });
+  expect(!('deletedIds' in E.sanitizeState({ deletedIds: ['s_1'] })) && !('deletedIds' in E.sanitizeState({ deletedIds: ['s_1'] }, { trusted: false })), 'a backup or pasted state cannot bring a list of sessions to delete');
   expect(JSON.stringify(sd.deletedIds) === '["s_1","s_2"]', 'the sanitizer keeps valid ids once', sd.deletedIds);
   expect(!('deletedIds' in E.sanitizeState({})) && !('deletedIds' in E.sanitizeState({ deletedIds: [] })), 'no list, no key');
-  expect(E.sanitizeState({ deletedIds: Array.from({ length: 900 }, (_, i) => 's' + i) }).deletedIds.length === 300, 'capped on load too');
+  expect(E.sanitizeState({ deletedIds: Array.from({ length: 900 }, (_, i) => 's' + i) }, { trusted: true }).deletedIds.length === 300, 'capped on load too');
+  { // An open edit of a logged session keeps the names it was logged under, like the stored session (a reload mid-edit used to rename a sumo pull)
+    const sumo = E.exerciseName(E.sanitizeState({ settings: { deadliftStyle: 'sumo' }, setupDone: true }), 'comp_deadlift'), conv = E.exerciseName(E.sanitizeState({ settings: { deadliftStyle: 'conventional' }, setupDone: true }), 'comp_deadlift');
+    const sess = (phase) => ({ id: 's_9', date: '2026-01-02', ts: 1, phase, exercises: [{ ex: 'comp_deadlift', slotKey: 'deadlift_primary', name: sumo, sets: [{ kind: 'work', w: 300, reps: 5, done: true }] }] });
+    const st = E.sanitizeState({ setupDone: true, lifts: { squat: { oneRM: 365 }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, settings: { deadliftStyle: 'conventional' }, sessions: [sess(undefined)], current: Object.assign(sess('edit'), { editOf: 's_9' }) }, { trusted: true });
+    expect(sumo !== conv && st.sessions[0].exercises[0].name === sumo && st.current && st.current.exercises[0].name === sumo, 'an open edit keeps the logged exercise names', [sumo, conv, st.current && st.current.exercises[0].name]);
+  }
+  { // Audit 13: a backup or pasted state can never carry an Undo; the typo check's main-lift band is 60%-140% of the plan.
+    const snap = JSON.stringify({ program: {}, lifts: {} });
+    expect(E.sanitizeState({ setupDone: true, undo: { label: 'x', snap, removeSessionId: 's_1' } }).undo === null && !!E.sanitizeState({ setupDone: true, undo: { label: 'x', snap } }, { trusted: true }).undo, 'only the device storage keeps an Undo');
+    const st = mk(), e = { lift: 'squat', load: 'bar', ex: 'comp_squat' }, x = { kind: 'work', w: 200, reps: 5 };
+    const odd = (w) => C.oddEntry(st, e, x, w, null);
+    expect(!odd(280) && !!odd(280.5) && !odd(120) && !!odd(119.5), 'main-lift weights are checked outside 60%-140% of the plan', [odd(280), odd(280.5), odd(120), odd(119.5)].map(o => !!o));
+    // A planned test line you make is a floor for the new max (decision 4), so it gets the open single's 115%-of-max bound too.
+    const rm = st.lifts.squat.oneRM, line = { kind: 'test', w: 340, reps: 1, rpeTarget: 8.5 }, tOdd = (w, y) => C.oddEntry(st, e, y || line, w, null);
+    const hi = rm * 1.15, at = tOdd(Math.floor(hi)), over = tOdd(Math.ceil(hi + 0.25));
+    expect(!at && !!over && over.use === 340 && !tOdd(204) && !!tOdd(203.5) && !tOdd(Math.ceil(hi + 0.25), Object.assign({}, line, { okW: Math.ceil(hi + 0.25) })), 'a planned test line over 115% of the max is asked about (the plan is offered); the 60% bound and a kept weight are unchanged', [rm, !!at, over, !!tOdd(204), !!tOdd(203.5)]);
+  }
   const phone = mk(); expect(C.pack(E.sanitizeState(JSON.parse(C.pack(phone)), { trusted: true })) === C.pack(phone) && !C.pack(phone).includes('deletedIds'), 'the phone app stores no list');
 
   // 1. Deleted here, the delete never reached the account: it does not come back, and the delete is sent again.

@@ -1,4 +1,4 @@
-"""Assemble Readyset from src/ into:
+"""Assemble ReadySet from src/ into:
   readyset.html      - page body for publishing as a claude.ai Artifact (no html/head/body wrapper)
   docs/index.html    - standalone installable web app (any static host, or open locally)
   docs/manifest.webmanifest, docs/sw.js, docs/icon-*.png
@@ -19,7 +19,7 @@ css, body, engine, sanitize, appcore, app = read('styles.css'), read('body.html'
 FONTS = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">'
 
 head_common = (
-    '<title>Readyset</title>\n'
+    '<title>ReadySet</title>\n'
     '<meta name="claude:viewport-fit-sides" content="cover">\n'
     + FONTS + '\n<style>\n' + css + '\n</style>\n'
 )
@@ -32,13 +32,12 @@ scripts = ''.join('<script>' + x + '</script>\n' for x in inline_scripts)
 icon_tags = (
     '<link rel="apple-touch-icon" href="icon-180.png">\n'
     '<link rel="icon" type="image/png" href="icon-180.png">\n'
-    '<meta name="apple-mobile-web-app-title" content="Readyset">\n'
+    '<meta name="apple-mobile-web-app-title" content="ReadySet">\n'
     '<meta name="apple-mobile-web-app-capable" content="yes">\n'
     '<meta name="apple-mobile-web-app-status-bar-style" content="black">\n'
     '<script>(function(){try{var h=document.head;["link[rel=apple-touch-icon]","link[rel=icon]","meta[name=apple-mobile-web-app-title]","meta[name=apple-mobile-web-app-capable]","meta[name=apple-mobile-web-app-status-bar-style]"].forEach(function(s){var e=document.querySelector("body "+s);if(e&&h)h.appendChild(e);});}catch(e){}})();</script>\n'
 )
-with open(os.path.join(ROOT, 'readyset.html'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(head_common + icon_tags + body + scripts)
+artifact = head_common + icon_tags + body + scripts  # written at the end, once every check has passed
 
 # 2) Standalone PWA.
 sw_reg_js = """
@@ -66,7 +65,7 @@ index = (
     # the app as screen minus status bar but draw it from the top edge, leaving that much unusable
     # space under the tab bar. Either way the layout only ever uses the height iOS reports.
     '<meta name="apple-mobile-web-app-status-bar-style" content="black">\n'
-    '<meta name="apple-mobile-web-app-title" content="Readyset">\n'
+    '<meta name="apple-mobile-web-app-title" content="ReadySet">\n'
     '<meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)">\n'
     '<meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)">\n'
     '<link rel="manifest" href="./manifest.webmanifest">\n'
@@ -76,7 +75,7 @@ index = (
     + head_common +
     '</head>\n<body>\n' + body + scripts + sw_reg + '</body>\n</html>\n'
 )
-manifest = ('{"name":"Readyset","short_name":"Readyset","start_url":"./index.html","scope":"./","display":"standalone",'
+manifest = ('{"name":"ReadySet","short_name":"ReadySet","start_url":"./index.html","scope":"./","display":"standalone",'
             '"background_color":"#0f1216","theme_color":"#d9530e",'
             '"icons":[{"src":"icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icon-512.png","sizes":"512x512","type":"image/png"}]}')
 
@@ -97,7 +96,7 @@ self.addEventListener('install', e => { e.waitUntil((async () => {
   await self.skipWaiting();
 })()); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== REST_CACHE && k !== FONT_CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()).then(restLoad).then(r => { if (r && !r.fired) restArm(r); })); });
-// Rest-timer alert. iOS freezes this worker with the page soon after Readyset leaves the screen,
+// Rest-timer alert. iOS freezes this worker with the page soon after ReadySet leaves the screen,
 // so a banner can only go out in the first seconds after you switch away; on screen, the page chimes
 // instead. The worker is the only one that posts a banner, once per deadline: a page awake in the
 // background only tells it the rest is due. The deadline is kept on disk, so a restarted worker (or
@@ -220,36 +219,37 @@ def png(size):
     return data
 
 icons = {s: png(s) for s in (180, 192, 512)}
-for s in icons:
-    with open(os.path.join(DIST, f'icon-{s}.png'), 'wb') as f: f.write(icons[s])
 
 # The build id covers everything a phone could be running: page, worker, manifest and icons (a new
 # id is what makes the worker fetch its assets again). An unchanged build keeps its id, so phones
 # only reload for real changes.
 build_id = hashlib.sha256((index + SW_TEMPLATE + manifest).encode('utf-8') + b''.join(icons[s] for s in sorted(icons))).hexdigest()[:12]
 index = index.replace('__BUILD__', build_id)
-with open(os.path.join(DIST, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(index)
-with open(os.path.join(DIST, 'manifest.webmanifest'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(manifest)
-with open(os.path.join(DIST, 'version.txt'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write(build_id + '\n')
-with open(os.path.join(DIST, 'sw.js'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write("const BUILD = '" + build_id + "';\n" + SW_TEMPLATE)
 
-
-
-# Self-check: every inline script in the written file must hash to a value in its CSP, byte for byte.
+# Self-checks, before anything is written: a build that fails one leaves the last good files in
+# place (a page whose scripts the CSP blocks is a blank app on the phone).
+# Every inline script must hash to a value in its CSP, byte for byte.
 import re as _re
-_html = open(os.path.join(DIST, 'index.html'), 'rb').read()
+_html = index.encode('utf-8')
 _csp = _re.search(rb'Content-Security-Policy" content="([^"]*)"', _html).group(1).decode()
 assert len(_re.findall(rb'<script[\s>]', _html)) == len(_re.findall(rb'<script>', _html)), 'a script tag with attributes: the CSP allows only hashed inline scripts'
 for _m in _re.finditer(rb'<script>(.*?)</script>', _html, _re.S):
     _h = "'sha256-" + base64.b64encode(hashlib.sha256(_m.group(1)).digest()).decode() + "'"
     assert _h in _csp, 'CSP hash mismatch for an inline script (line endings?)'
-assert b'\r' not in _html, 'CRLF found in docs/index.html'
+assert b'\r' not in _html and '\r' not in artifact, 'CR found in an output'
 # A size budget: this file is downloaded once per update and parsed on every reopen.
 import gzip as _gzip
 assert len(_html) < 450 * 1024 and len(_gzip.compress(_html)) < 135 * 1024, 'docs/index.html is over its size budget'
+
+def write(path, text):
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+for s in icons:
+    with open(os.path.join(DIST, f'icon-{s}.png'), 'wb') as f: f.write(icons[s])
+write(os.path.join(ROOT, 'readyset.html'), artifact)
+write(os.path.join(DIST, 'manifest.webmanifest'), manifest)
+write(os.path.join(DIST, 'sw.js'), "const BUILD = '" + build_id + "';\n" + SW_TEMPLATE)
+write(os.path.join(DIST, 'index.html'), index)
+write(os.path.join(DIST, 'version.txt'), build_id + '\n')  # last: phones look here for a new build
 
 print('built readyset.html (%d KB) and docs/index.html (%d KB)' % (os.path.getsize(os.path.join(ROOT, 'readyset.html')) // 1024, os.path.getsize(os.path.join(DIST, 'index.html')) // 1024))

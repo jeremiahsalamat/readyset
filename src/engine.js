@@ -1,4 +1,4 @@
-/* Readyset engine — pure training logic, no DOM.
+/* ReadySet engine — pure training logic, no DOM.
    Loads are fractions of the Training Max (TM). TM defaults to 90% of the lifter's 1RM, so a
    "100% TM" set is a ~90% 1RM set. %1RM figures in comments assume that default.
    Sources: Israetel, Hoffmann & Smith, Scientific Principles of Strength Training (2020); page
@@ -34,6 +34,14 @@
   // ---------- Loading ----------
   function roundTo(x, inc) { return Math.round(x / inc) * inc; }
   function floorTo(x, inc) { return Math.floor(x / inc + 1e-9) * inc; }
+  // A calibrated max on the 2.5 lb grid that never passes the per-session caps or the block floor:
+  // rounding to the nearest step used to add up to 1.25 lb past them (365 -> 375 is +2.7%, not 2.5%).
+  // A rise of one step is always allowed, so a light max can still move; a drop is never forced.
+  function capRound(next, cur, hi, lo) {
+    const r = roundTo(next, 2.5);
+    if (next > cur) return Math.min(r, Math.max(floorTo(cur, 2.5) + 2.5, floorTo(hi, 2.5)));
+    return Math.min(cur, Math.max(r, Math.ceil(lo / 2.5 - 1e-9) * 2.5)); // a drop never rounds past the floor (and so may not move at all)
+  }
   // The barbell step: one pair of the smallest plate. Totals are the bar plus whole steps, so a
   // 45 lb bar with no 2.5s gets 45, 55, 65... (never a total that leaves 2.5 per side).
   function loadStep(plates) { const ps = (plates || []).filter(p => typeof p === 'number' && p > 0); return ps.length ? 2 * Math.min(...ps) : 5; }
@@ -298,7 +306,7 @@
     const m = Math.max(g.legs || 1, g.push || 1, g.hinge || 1);
     return { 1: 1, 2: 2.5, 3: 4, 4: 5 }[m] || 1;
   }
-  // Modes. 'full' = the plan. 'trim' (yellow) keeps the loads (most so-so days still allow an
+  // Modes. 'full' = the plan. 'trim' (yellow) takes 2.5% off the loads (TUNE.trim; most so-so days still allow an
   // overload, p.96) but drops bonus reps and any earned set additions. 'light' (red) is the
   // book's light session for the block: volume and intensity as fractions of the overload day
   // (pp.148-149). Light beats a day off for both fatigue and fitness (p.179).
@@ -519,6 +527,19 @@
     return steps;
   }
 
+  // ---------- What counts as missed reps ----------
+  // One rule everywhere (in-session correction, calibration, the weekly review, the History detail):
+  // a set short of its planned reps is a miss when it was rated RPE 9 or more, or not rated at all
+  // (then it is read as RPE 10). Rated 8.5 or below, it stopped short with reps in the tank: it is
+  // read by its reps and RPE like any other set, not as a failure. A set that did not go up (0 reps)
+  // is always a miss. Reps over the plan (bonus reps) are never short.
+  function missedSet(x) {
+    if (!x) return false;
+    const reps = x.actualReps != null ? x.actualReps : x.reps;
+    if (!(reps < x.reps)) return false;
+    return reps <= 0 || !(Number.isFinite(x.rpe) && x.rpe < 9);
+  }
+
   // ---------- In-session correction (what a coach does between sets) ----------
   // evidence: the done working sets so far [{w, reps, rpe, first}]. A missed set is RPE 10 at the
   // reps achieved; bonus reps count as reps. Each set implies a 1RM via the rep-max table; the
@@ -585,9 +606,9 @@
       const name = e.name || EX[e.ex].name;
       work.forEach((x) => {
         let reps = x.actualReps != null ? x.actualReps : x.reps;
-        let rpe = x.rpe, missed = false; if (rpe == null && reps < x.reps) { rpe = 10; missed = true; }
+        let rpe = x.rpe, asTen = false; if (rpe == null && reps < x.reps) { rpe = 10; asTen = true; }
         if (opts && opts.floorRpe && Number.isFinite(rpe) && rpe >= minRpe && rpe < opts.floorRpe) rpe = opts.floorRpe; // read an easy set as harder than it was: a cautious lower bound
-        if (reps === 0) { reps = 1; rpe = 10; missed = true; } // a set that did not go up: the weight is at least a max
+        if (reps === 0) { reps = 1; rpe = 10; asTen = true; } // a set that did not go up: the weight is at least a max
         const w = x.actualW != null ? x.actualW : x.w;
         const tooMany = reps > MAX_EVIDENCE_REPS || (x.reps > 0 && reps > x.reps + 8);
         if (!Number.isFinite(rpe) || rpe < minRpe || rpe > 10 || !(reps > 0) || tooMany || !(w > 0)) {
@@ -604,7 +625,7 @@
         const wt = (comp ? 1 : 0.5) * (x === firstWork ? 0.5 : 1) * (rpe < 6 ? 0.35 : rpe < 7 ? 0.5 : 1);
         num += wt * implied; den += wt; n++;
         if (rpe >= 7.5 || (x.rpeTarget != null && x.rpeTarget >= 7)) confHigh += wt;
-        if (detail) detail.push({ name, kind: x.kind, w, reps, rpe, missed, implied, capped: Math.abs(implied - raw) > 0.5, wt, comp, first: x === firstWork });
+        if (detail) detail.push({ name, kind: x.kind, w, reps, rpe, missed: missedSet(x), asTen, implied, capped: Math.abs(implied - raw) > 0.5, wt, comp, first: x === firstWork });
       });
     }
     return den ? { est: num / den, conf: den, confHigh, n, sets: detail || undefined } : null;
@@ -639,7 +660,7 @@
         const over = lb.est > cur * K.upFastAt;
         L.lbHits = over ? (L.lbKey === sess.date ? (L.lbHits || 1) : (L.lbHits || 0) + 1) : 0; L.lbKey = sess.date;
         if (over && L.lbHits >= 2 && !crushed && L.upKey !== weekKey) {
-          const next = Math.max(minMax(state), roundTo(Math.min(lb.est, cur * K.upMax), 2.5));
+          const next = Math.max(minMax(state), capRound(Math.min(lb.est, cur * K.upMax), cur, cur * K.upMax, cur));
           if (next > cur) { applyTM(state, lift, next); L.upKey = weekKey; L.lbHits = 0; log.push(`${names[lift]} 1RM ${cur} -> ${next} (easy sets, but they show at least ${Math.round(lb.est)}).`); continue; }
         }
         // A max set far too low leaves every prescribed set so easy that no RPE can prove it: after
@@ -659,19 +680,19 @@
       L.est = Math.min(cur * 1.15, Math.max(cur * 0.7, L.est)); L.estDate = sess.date; L.rated = (L.rated || 0) + 1;
       let next = cur, how = '';
       // Only sets that count toward the estimate can count as a miss (OHP or RDL misses do not gate bench or deadlift).
-      const missed = (sess.exercises || []).some(e => e.lift === lift && EX[e.ex] && EX[e.ex].tm && EX[e.ex].mult >= 0.8 && (e.sets || []).some(x => (x.kind === 'work' || x.kind === 'single') && x.done && x.actualReps != null && x.actualReps < x.reps));
+      const missed = (sess.exercises || []).some(e => e.lift === lift && EX[e.ex] && EX[e.ex].tm && EX[e.ex].mult >= 0.8 && (e.sets || []).some(x => (x.kind === 'work' || x.kind === 'single') && x.done && missedSet(x))); // a set stopped short at RPE 8.5 or below is not a miss (missedSet)
       const start = L.floorRM || L.blockStartRM || cur; // floorRM is set only at block starts, layoffs and maxes set by hand (a deload taken early does not reset it)
       const floor = Math.min(cur, start * (missed ? K.blockFloorMissed : K.blockFloor)); // calibration alone cannot take more than 10% in a block, and the floor never lifts a max
       const sureDown = r.confHigh >= K.downConfHigh || raw < cur * K.downSure || missed;
       if (raw < cur * K.downAt && sureDown && (r.conf >= 1 || L.est < cur * K.downAt)) {
         next = Math.max(r.conf >= 1 ? raw : L.est, cur * K.downMax, floor);
         how = `today's sets read about ${Math.round(raw)}; heavier sets re-check it`;
-      } else if (!crushed && !missed && L.upKey !== weekKey && ((L.est > cur * K.upAt && r.conf >= 1) || (est > cur * K.upFastAt && r.conf >= 1.5 && r.confHigh > 0))) {
+      } else if (!crushed && !missed && L.upKey !== weekKey && ((L.est > cur * K.upAt && r.conf >= 1 && r.n >= 2) || (est > cur * K.upFastAt && r.conf >= 1.5 && r.confHigh > 0))) {
         // At most one rise per lift per week, and the fast path needs a set near failure.
         next = Math.min(Math.max(L.est, est > cur * K.upFastAt ? est : 0), cur * K.upMax);
         how = `your sets estimate about ${Math.round(Math.max(L.est, est))}`;
       }
-      next = how ? Math.max(minMax(state), roundTo(next, 2.5)) : cur; // a max typed off the 2.5 grid is not 'changed' by rounding alone
+      next = how ? Math.max(minMax(state), capRound(next, cur, cur * K.upMax, Math.max(cur * K.downMax, floor))) : cur; // a max typed off the 2.5 grid is not 'changed' by rounding alone
       if (next !== cur) {
         applyTM(state, lift, next); log.push(`${names[lift]} 1RM ${cur} -> ${next} (${how}).`);
         if (next < cur) {
@@ -709,10 +730,12 @@
         if (!e.lift || e.role === 'accessory' || !EX[e.ex] || EX[e.ex].mult < 0.8) continue; // RDL, OHP and the like do not speak for the lift
         const work = e.sets.filter(x => x.kind === 'work' && x.done);
         if (!work.length) continue;
-        const missed = work.filter(x => (x.actualReps != null ? x.actualReps : x.reps) < x.reps).length;
-        // Bonus reps raise the RPE by design: compare after taking the extra reps back out.
+        const missed = work.filter(missedSet).length;
+        // Bonus reps raise the RPE by design: compare after taking the extra reps back out. A set
+        // stopped short (not a miss) is compared as if the reps it left undone had been done: its RPE
+        // plus the reps short, at most 10, so stopping short never reads as easier than planned.
         const deltas = work.filter(x => Number.isFinite(x.rpe) && x.rpeTarget != null && !((x.actualReps != null ? x.actualReps : x.reps) > x.reps + 8) && !(x.manualW && x.actualW != null && x.w > 0 && x.actualW < x.w * 0.97))
-          .map(x => x.rpe - Math.min(Math.max(0, (x.actualReps != null ? x.actualReps : x.reps) - x.reps), Math.max(x.plus || 0, 2)) - x.rpeTarget);
+          .map(x => { const got = x.actualReps != null ? x.actualReps : x.reps; return x.rpe + (missedSet(x) ? 0 : Math.max(0, Math.min(10 - x.rpe, x.reps - got))) - Math.min(Math.max(0, got - x.reps), Math.max(x.plus || 0, 2)) - x.rpeTarget; });
         const rpeDelta = deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : 0;
         const g = EX[e.ex].group === 'push' ? 'push' : EX[e.ex].group === 'legs' ? 'legs' : 'hinge';
         per[e.lift].push({ role: e.role, missed, rpeDelta, rated: deltas.length, difficulty: s.post ? s.post.difficulty : 2, soreness: s.soreness ? s.soreness[g] : null, light: s.mode === 'light' });
@@ -949,6 +972,10 @@
       else if (clean && !flagged && !isTestBlock) { next = cur + (lift === 'bench' ? 2.5 : 5); how = 'clean block, small bump'; }
       else if (flagged) { next = cur * 0.975; how = 'flagged twice, easing off'; }
       next = how ? Math.max(minMax(state), roundTo(next, 2.5)) : cur;
+      // A test single you made (ticked, at least one rep, at any RPE or none) is a floor for the new max,
+      // even past the 12% cap, and rounding never takes the max under it: it is then exactly that weight,
+      // on the 2.5 lb grid or not. The caps still govern everything above it.
+      if (isTestBlock && how && next < topMade) next = topMade;
       if (next !== cur) { upd[lift] = next; log.push(`${names[lift]} 1RM ${cur} -> ${next} (${how}).`); }
       else log.push(`${names[lift]} 1RM held at ${cur}.`);
     }
@@ -1227,6 +1254,6 @@
   }
 
   root.Engine = { RM, pctForRTF, rtfForPct, e1rm, expectedRIR, plannedRPE, roundTo, floorTo, loadStep, barRound, loadRound, correctedLoad, openerWarm, plateLoad, EX, SWAPS, BLOCKS, MACRO, REST, TEST, CAPS, ACC_CAP, DAYS, MODES,
-    readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, liftCorrection, sessionEstimate, calibrate, fatigueAllowance, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
+    readinessScore, sorenessFromGroups, buildSession, warmups, exerciseName, swapOptions, missedSet, liftCorrection, sessionEstimate, calibrate, fatigueAllowance, weeklyReview, weeklySets, mesoReview, applyTM, advanceDay, startDeloadNow, startActiveRest,
     positionLabel, position, totalWeeks, accessoryProgress, cardioKcal, defaultState, estimateMinutes, weeklySetsWith, clampProgram, MAX_EVIDENCE_REPS, TUNE, applyTune, CAPS_BY_BLOCK, capFor, layoffAdjust, layoffCut, stallCheck };
 })(typeof window !== 'undefined' ? window : globalThis);

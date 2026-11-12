@@ -1,4 +1,4 @@
-// Fuzz and property tests for the Readyset engine and sanitizer.
+// Fuzz and property tests for the ReadySet engine and sanitizer.
 // Run: node tests/engine_fuzz.js   (from the project folder)
 const path = require('path');
 require(path.join(__dirname, '..', 'src', 'engine.js'));
@@ -391,13 +391,13 @@ for (const includePeak of [true, false]) {
 {
   const mk = (rm) => E.sanitizeState({ lifts: { squat: { oneRM: rm || 340 }, bench: { oneRM: 285 }, deadlift: { oneRM: 370 } }, setupDone: true, settings: { includePeak: true } });
   const squatDay = (w, rpes, week, tgt) => ({ exercises: [{ ex: 'comp_squat', lift: 'squat', role: 'primary', slotKey: 'squat_primary', sets: rpes.map(r => ({ kind: 'work', done: true, w, reps: 8, rpe: r, rpeTarget: tgt })) }], skippedSlots: [], post: { difficulty: 2 }, date: '2026-11-0' + week, week, mesoCount: 0, blockIdx: 0, ts: week, readiness: { score: 70, color: 'green' } });
-  // A week-1 drop corrects the number; it is not a fatigue signal. A week-2 drop is.
+  // A week-1 drop corrects the number; it is not a fatigue signal. A week-2 drop is. (340 drops to 325: the 5% cap, on the grid.)
   const a = mk(); E.calibrate(a, squatDay(235, [8, 8.5, 8.5], 1, 6));
-  expect(a.lifts.squat.oneRM === 322.5 && !a.program.calibDrops.squat && a.program.fatigueBase.squat === 322.5, 'week-1 drop: max follows, not counted, base moves', { rm: a.lifts.squat.oneRM, p: a.program.calibDrops });
+  expect(a.lifts.squat.oneRM === 325 && !a.program.calibDrops.squat && a.program.fatigueBase.squat === 325, 'week-1 drop: max follows, not counted, base moves', { rm: a.lifts.squat.oneRM, p: a.program.calibDrops });
   a.program.week = 2; E.calibrate(a, squatDay(230, [9, 9, 9], 2, 7));
-  expect(a.lifts.squat.oneRM < 322.5 && a.program.calibDrops.squat === 1, 'week-2 drop still counts', { rm: a.lifts.squat.oneRM, p: a.program.calibDrops });
+  expect(a.lifts.squat.oneRM < 325 && a.program.calibDrops.squat === 1, 'week-2 drop still counts', { rm: a.lifts.squat.oneRM, p: a.program.calibDrops });
   const again = E.sanitizeState(JSON.parse(JSON.stringify(a)), { trusted: true });
-  expect(again.program.fatigueBase.squat === 322.5 && again.program.calibDrops.squat === 1, 'fatigueBase survives a reload, and the one-time migration does not run again', again.program);
+  expect(again.program.fatigueBase.squat === 325 && again.program.calibDrops.squat === 1, 'fatigueBase survives a reload, and the one-time migration does not run again', again.program);
   // The one-time migration clears a saved week-1 charge, once.
   const old = { lifts: { squat: { oneRM: 322.5, blockStartRM: 340, floorRM: 340 }, bench: { oneRM: 285 }, deadlift: { oneRM: 370 } }, setupDone: true, program: { blockIdx: 0, week: 2, dayIdx: 0, mesoCount: 0, calibDrops: { squat: 1 }, setAdj: { squat: -1, bench: 0, deadlift: 0, acc: 0 }, flags: { squat: 1, bench: 0, deadlift: 0 } } };
   old.sessions = [Object.assign(squatDay(235, [8, 8.5, 8.5], 1, 6), { id: 'w1a' })];
@@ -408,7 +408,7 @@ for (const includePeak of [true, false]) {
   // Week-1 RPE over plan holds; a miss in week 1 still cuts.
   const b = mk(); const wk = [squatDay(235, [8, 8.5, 8.5], 1, 6)];
   const rb = E.weeklyReview(b, wk, wk); expect(rb.setAdj.squat === 0 && rb.flags.squat === 0, 'week 1 RPE over plan holds the sets', rb.log);
-  const wm = [squatDay(235, [8, 8.5, 8.5], 1, 6)]; wm[0].exercises[0].sets[1].actualReps = 6; const rm = E.weeklyReview(mk(), wm, wm); expect(rm.setAdj.squat === -1, 'a miss in week 1 still cuts', rm.log);
+  const wm = [squatDay(235, [8, 9, 8.5], 1, 6)]; wm[0].exercises[0].sets[1].actualReps = 6; const rm = E.weeklyReview(mk(), wm, wm); expect(rm.setAdj.squat === -1, 'a miss in week 1 still cuts', rm.log); // short and rated 9: a miss (decision 5)
   const c = mk(); c.program.week = 2; const wk2 = [squatDay(245, [9, 9, 9, 9], 2, 7)]; expect(E.weeklyReview(c, wk2, wk2).setAdj.squat === -1, 'week 2 RPE over plan still cuts', null);
   // Readiness: all OK with slightly sore legs is a normal day; check-ins alone never lower the TM.
   expect(E.readinessScore({ sleep: 3, energy: 3, motivation: 3, soreness: 2.5 }).color === 'green', 'all OK and slightly sore is green', E.readinessScore({ sleep: 3, energy: 3, motivation: 3, soreness: 2.5 }));
@@ -449,7 +449,7 @@ for (const includePeak of [true, false]) {
   const own2 = load(JSON.parse(JSON.stringify(own)));
   expect(own2.log.length === 1 && own2.program.fatigueBase.squat === 322.5 && own2.program.setAdj.squat === 0, 'migration runs once', own2.log);
   // A real miss in week 1 keeps its cut; the fatigue count still clears.
-  const miss = base(); miss.sessions[0].exercises[0].sets[1].actualReps = 5;
+  const miss = base(); miss.sessions[0].exercises[0].sets[1].actualReps = 5; miss.sessions[0].exercises[0].sets[1].rpe = null; // short and not rated: a miss (short at RPE 8.5 or below only stopped short)
   const mm = load(miss);
   expect(mm.program.setAdj.squat === -1 && mm.program.flags.squat === 1 && !mm.program.calibDrops.squat && !mm.log.length, 'migration: a missed-rep cut stays', mm.program);
   // A drop in week 2 stays counted, whichever lift had it.
@@ -652,6 +652,99 @@ const LIFTS_F7 = ['squat', 'bench', 'deadlift'];
     }
     roundTrip(clean(r), 'random edits ' + round);
   }
+}
+// ---- Calibration caps survive rounding (audit 13): the guide's "at most 2.5% up / 5% down per
+// session" and "never more than 10% off in a block" hold after the max is put on the 2.5 lb grid,
+// and a rise never rests on one set. ----
+{
+  const mkc = (rm) => E.sanitizeState({ lifts: { squat: { oneRM: rm }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true });
+  const day = (sets, i) => ({ exercises: [{ ex: 'comp_squat', lift: 'squat', slotKey: 'squat_primary', sets }], skippedSlots: [], post: { difficulty: 2 }, date: `2026-03-${String(1 + i % 28).padStart(2, '0')}`, blockIdx: 1, week: 2, mesoCount: 3 });
+  // The repro: 365 with sets reading far higher used to go to 375 (+2.7%).
+  { const st = mkc(365); st.lifts.squat.est = 395; E.calibrate(st, day([1, 2, 3, 4].map(() => ({ kind: 'work', done: true, w: 330, reps: 5, rpe: 8, rpeTarget: 8 })), 0)); expect(st.lifts.squat.oneRM === 372.5, 'a rise stops at the 2.5% cap on the grid (365 -> 372.5, not 375)', st.lifts.squat.oneRM); }
+  // One rated set is not enough for a rise (the guide: never on one set's evidence).
+  { const st = mkc(375); st.lifts.squat.est = 400; E.calibrate(st, day([null, 7, null].map(rpe => ({ kind: 'work', done: true, w: 290, reps: 8, actualReps: 8, rpe, rpeTarget: 7 })), 1)); expect(st.lifts.squat.oneRM === 375, 'one rated set alone does not raise the max', st.lifts.squat.oneRM); }
+  // Random sessions: every change stays inside its caps and on the grid.
+  for (let i = 0; i < 600; i++) {
+    const rm = 100 + Math.round(rnd() * 160) * 2.5, st = mkc(rm);
+    if (rnd() < 0.5) st.lifts.squat.est = rm * (0.85 + rnd() * 0.3);
+    st.lifts.squat.blockStartRM = rm * (1 + rnd() * 0.12); st.lifts.squat.floorRM = st.lifts.squat.blockStartRM;
+    const n = 2 + Math.floor(rnd() * 3), sets = [];
+    for (let k = 0; k < n; k++) sets.push({ kind: 'work', done: true, w: Math.round(rm * (0.55 + rnd() * 0.35) / 2.5) * 2.5, reps: 2 + Math.floor(rnd() * 7), rpe: 6.5 + Math.floor(rnd() * 8) * 0.5, rpeTarget: 7 });
+    const before = st.lifts.squat.oneRM, floor = Math.min(before, st.lifts.squat.blockStartRM * 0.9);
+    E.calibrate(st, day(sets, i));
+    const after = st.lifts.squat.oneRM;
+    if (after === before) continue;
+    expect(Math.abs(after / 2.5 - Math.round(after / 2.5)) < 1e-9, 'a calibrated max is on the 2.5 grid', after);
+    if (after > before) expect(after <= Math.max(before * 1.025, Math.floor(before / 2.5) * 2.5 + 2.5) + 1e-9, 'a rise never passes 2.5% (one 2.5 step at most for a light max)', { before, after });
+    else expect(after >= before * 0.95 - 1e-9 && after >= floor - 1e-9, 'a drop never passes 5% or the block floor', { before, after, floor });
+  }
+}
+// ---- Audit 13 follow-up, decision 5: a set short of its planned reps is a miss only when it was
+// rated RPE 9+ or not rated (or did not go up at all). Rated 8.5 or below it stopped short and is
+// read by its reps and RPE like any set. The engine's rule is the one the app and the simulator use. ----
+{
+  const MS = E.missedSet || ((x) => (x.actualReps != null ? x.actualReps : x.reps) < x.reps); // the old rule, so this block fails (not throws) on the old engine
+  for (const [x, want] of [[{ reps: 8, actualReps: 5, rpe: 7 }, false], [{ reps: 8, actualReps: 5, rpe: 8 }, false], [{ reps: 8, actualReps: 7, rpe: 8.5 }, false], [{ reps: 8, actualReps: 7, rpe: 9 }, true], [{ reps: 8, actualReps: 3, rpe: 10 }, true], [{ reps: 8, actualReps: 5, rpe: null }, true], [{ reps: 8, actualReps: 0, rpe: 7 }, true], [{ reps: 8, actualReps: 8, rpe: 10 }, false], [{ reps: 8, actualReps: 10, rpe: 9.5 }, false], [{ reps: 8, actualReps: null, rpe: null }, false], [{ reps: 1, actualReps: 0, rpe: null }, true]])
+    expect(MS(x) === want, 'what counts as missed reps', { x, want });
+  // In-session: 5 of 8 at RPE 7 (the app passes missed: E.missedSet(set)) neither stops the exercise
+  // nor counts as hard, and reads exactly like a full set of 5 at RPE 7 would.
+  const short = { w: 235, reps: 5, rpe: 7, first: false, planned: 8 }, first = { w: 235, reps: 8, rpe: 8, first: true, planned: 8 };
+  const rShort = E.liftCorrection([first, Object.assign({ missed: MS({ reps: 8, actualReps: 5, rpe: 7 }) }, short)], 235, 8, 8);
+  const rFull = E.liftCorrection([first, Object.assign({ missed: false }, short)], 235, 8, 8);
+  expect(rShort && !rShort.stop && Math.abs(rShort.w - rFull.w) < 1e-9 && Math.abs(rShort.est - rFull.est) < 1e-9, 'a short set at RPE 7 is read by its reps and RPE, with no fatigue stop', { rShort, rFull });
+  const rMiss = E.liftCorrection([first, Object.assign({ missed: MS({ reps: 8, actualReps: 5, rpe: 9.5 }) }, short, { rpe: 9.5 })], 235, 8, 8);
+  expect(rMiss && rMiss.stop, 'a short set at RPE 9.5 is still a miss and stops the exercise', rMiss);
+  // Calibration: a set stopped short at RPE 8.5 or below no longer blocks a rise or uses the 85% block floor.
+  const mkc = (rm) => E.sanitizeState({ lifts: { squat: { oneRM: rm }, bench: { oneRM: 255 }, deadlift: { oneRM: 425 } }, setupDone: true });
+  const day = (sets) => ({ exercises: [{ ex: 'comp_squat', lift: 'squat', slotKey: 'squat_primary', role: 'primary', sets }], skippedSlots: [], post: { difficulty: 2 }, date: '2026-03-04', blockIdx: 1, week: 2, mesoCount: 3 });
+  const W = (w, reps, got, rpe) => ({ kind: 'work', done: true, w, reps, actualReps: got, rpe, rpeTarget: 8 });
+  for (const [rpe, want] of [[7, 307.5], [8.5, 307.5], [9, 300], [null, 300]]) {
+    const st = mkc(300); st.lifts.squat.est = 320;
+    E.calibrate(st, day([W(255, 5, 5, 8), W(255, 5, 5, 8), W(255, 5, 5, 8), W(255, 5, 4, rpe)]));
+    expect(st.lifts.squat.oneRM === want, 'a set stopped short at RPE 8.5 or below does not block a rise; a miss still does', { rpe, got: st.lifts.squat.oneRM, want });
+  }
+  for (const [rpe, want] of [[8, 270], [9.5, 262.5], [null, 262.5]]) {
+    const st = mkc(275); st.lifts.squat.blockStartRM = 300; st.lifts.squat.floorRM = 300; st.lifts.squat.est = 250;
+    E.calibrate(st, day([W(215, 5, 5, 9.5), W(215, 5, 5, 10), W(215, 5, 4, rpe)]));
+    expect(st.lifts.squat.oneRM === want, 'the 85% block floor needs a real miss; stopped short keeps the 90% floor', { rpe, got: st.lifts.squat.oneRM, want });
+  }
+  // Weekly review: stopped short is not "missed reps", and is compared as if the reps left undone had
+  // been done (RPE + reps short, at most 10), so it never reads as easier than planned.
+  const mk = () => E.sanitizeState({ lifts: { squat: { oneRM: 340 }, bench: { oneRM: 285 }, deadlift: { oneRM: 370 } }, setupDone: true, settings: { includePeak: true } });
+  const sq = (sets) => ({ exercises: [{ ex: 'comp_squat', lift: 'squat', role: 'primary', slotKey: 'squat_primary', sets }], skippedSlots: [], post: { difficulty: 2 }, date: '2026-11-02', week: 2, mesoCount: 0, blockIdx: 0, ts: 2, readiness: { score: 70, color: 'green' } });
+  const rev = (sets) => { const c = mk(); c.program.week = 2; const wk = [sq(sets)]; return E.weeklyReview(c, wk, wk); };
+  const one = rev([W(245, 8, 8, 8), W(245, 8, 8, 8), W(245, 8, 8, 8), W(245, 8, 5, 7)]);
+  expect(one.setAdj.squat === 0 && one.flags.squat === 0 && !one.log.some(l => /missed reps/.test(l)), 'one set stopped short at RPE 7 is not missed reps in the weekly review', one.log);
+  const all = rev([1, 2, 3, 4].map(() => W(245, 8, 5, 7)));
+  expect(all.setAdj.squat === -1 && all.log.some(l => /Squat.*felt much harder than planned/.test(l)) && !all.log.some(l => /felt easier/.test(l)), 'every set stopped short at RPE 7 reads as much harder than planned, never easier', all.log);
+  const deep = rev([W(245, 8, 8, 8), W(245, 8, 8, 8), W(245, 8, 8, 8), W(245, 8, 3, 7)]); // 7 + 5 short is read as RPE 10, not 12: the average stays under +0.75
+  expect(!deep.log.some(l => /Squat.*felt (much )?harder/.test(l)), 'a stopped-short set reads as at most RPE 10 in the weekly comparison', deep.log);
+  const blank = rev([W(245, 8, 8, 8), W(245, 8, 8, 8), W(245, 8, 5, null)]);
+  expect(blank.setAdj.squat === -1 && blank.log.some(l => /missed reps on 1 set/.test(l)), 'a short set with no RPE is still missed reps', blank.log);
+  // The History detail marks the same sets as missed.
+  const det = E.sessionEstimate(day([W(255, 5, 5, 8), W(255, 5, 4, 7), W(255, 5, 4, 9), W(255, 5, 4, null)]), 'squat', 300, { detail: true, minRpe: 4 }).sets.map(x => !!x.missed);
+  expect(JSON.stringify(det) === JSON.stringify([false, false, true, true]), 'the History detail uses the same miss rule', det);
+}
+// ---- Audit 13 follow-up, decision 4: in a test week a single you made is a floor for the new max,
+// even past the +12% cap (exactly that weight, never rounded under it); every other cap stays. ----
+{
+  const mk = (calOff) => { const s = E.sanitizeState({ lifts: { squat: { oneRM: 340 }, bench: { oneRM: 285 }, deadlift: { oneRM: 370 } }, setupDone: true, settings: { includePeak: true } }); if (calOff) s.settings.autoCalibrate = false; return s; };
+  const tl = (rows) => [{ exercises: [{ ex: 'comp_squat', lift: 'squat', role: 'primary', slotKey: 'squat_primary', sets: rows.map(([w, reps, rpe]) => ({ kind: 'test', done: true, w, actualW: w, reps: 1, actualReps: reps, rpe })).concat([{ kind: 'work', done: true, w: 245, reps: 3, actualReps: 3, rpe: 7 }]) }], skippedSlots: [], mode: 'full' }];
+  const tm = (rows, calOff) => E.mesoReview(mk(calOff), tl(rows), true).oneRM.squat || 340;
+  for (const [rows, want, what] of [
+    [[[400, 1, 10]], 400, 'a made single at RPE 10 past +12% sets the max'],
+    [[[395, 1, null]], 395, 'a made single with no RPE past +12% sets the max'],
+    [[[401, 1, null]], 401, 'a made single off the 2.5 grid is not rounded under'],
+    [[[386.5, 1, 9.5]], 386.5, 'past the cap the max is the made weight exactly, not rounded up'],
+    [[[346, 1, 10]], 346, 'under the cap, rounding never takes the max under a made single'],
+    [[[390, 1, 10], [400, 0, null]], 390, 'a heavier miss does not take the max under a made single'],
+    [[[370, 1, 7]], 380, 'an easy single still cannot lift the max past +12% on its RPE alone'],
+    [[[300, 1, 10]], 322.5, 'the 5% down cap is unchanged'],
+    [[[330, 1, 9]], 345, 'an ordinary test is unchanged'],
+  ]) expect(tm(rows) === want, 'test week: ' + what, { rows, got: tm(rows), want });
+  expect(tm([[400, 1, 10]], true) === 400, 'test week with calibration off honours a made single too', tm([[400, 1, 10]], true));
+  // The fatigue rules are untouched.
+  expect(E.TUNE.deload.calibDropsLift === 2 && E.TUNE.deload.calibDropPct === 0.06 && E.TUNE.calibrate.blockFloorMissed === 0.85 && E.TUNE.calibrate.blockFloor === 0.9, 'fatigue rules and block floors unchanged', E.TUNE.deload);
 }
 console.log(`${checks} checks, ${fails} failures`);
 process.exit(fails ? 1 : 0);
