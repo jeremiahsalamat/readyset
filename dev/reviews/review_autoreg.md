@@ -1,7 +1,7 @@
 # Readyset autoregulation and fatigue-management review
 > Historical snapshot, 2026-10-27: this reviewed the app as it was then. The app has changed since; PROGRAM_GUIDE.md describes it as it is now.
 
-Reviewed: `C:\Users\Jerm\Documents\PowerliftingApp\src\engine.js` as saved at **2026-10-26 22:07:44** (785 lines,
+Reviewed: `C:\Users\<user>\Documents\PowerliftingApp\src\engine.js` as saved at **2026-10-26 22:07:44** (785 lines,
 snapshot in `scratchpad\review_autoreg\engine_snapshot.js`). The file was being edited while this review ran
 (692 -> 768 -> 785 lines; a `TUNE` table, chronic deload triggers, a `volumeDial`, inserted deloads, an
 "every set on target" bonus and a `freshWeek` guard all appeared mid-review). Everything below is against the
@@ -269,7 +269,7 @@ sharpness in the next block's week 1 (simulated RPE ~1 below target there). Opti
 - Israetel, Hoffmann & Smith 2020, pages as cited in the engine.
 
 ## Files
-- Report: `C:\Users\Jerm\AppData\Local\Temp\claude\C--Users-Jerm-Documents-Trainers-ControlResonantTrainer\9a70d320-4da5-42da-a7b5-2ba4d84d8362\scratchpad\review_autoreg.md`
+- Report: `C:\Users\<user>\AppData\Local\Temp\claude\C--Users-<user>-Documents-Trainers-ControlResonantTrainer\9a70d320-4da5-42da-a7b5-2ba4d84d8362\scratchpad\review_autoreg.md`
 - Snapshot reviewed: `...\scratchpad\review_autoreg\engine_snapshot.js` (engine.js at 22:07:44)
 - Probes and harness: `...\scratchpad\review_autoreg\probe.js`, `...\scratchpad\review_autoreg\sim4.js`
   (`node sim4.js <abs path to engine.js> <normal|fragile|sturdy|overreach> <app|wired|yellowLoad|stop|trend|autoLight|upSlow|allowRiseOnly|all> [bias] [verbose] [tunePreset]`)

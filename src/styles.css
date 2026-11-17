@@ -200,7 +200,7 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .set.done { background: var(--surface-2); }
 .set.done .n { color: var(--good); }
 .set .field { display: flex; flex-direction: column; align-items: flex-start; gap: 0; }
-.set .field input { width: 100%; max-width: 92px; border: 1px solid var(--field-line); border-radius: 6px; padding: 6px 8px; background: var(--surface); font-weight: 600; font-size: 1.05rem; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+.set .field input { width: 100%; max-width: 92px; min-height: 44px; border: 1px solid var(--field-line); border-radius: 6px; padding: 6px 8px; background: var(--surface); font-weight: 600; font-size: 1.05rem; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 .set .field input::-webkit-outer-spin-button, .set .field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .set .field { min-width: 0; }
 .set .field .u { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); max-width: 100%; white-space: normal; line-height: 1.1; overflow-wrap: break-word; }
@@ -245,7 +245,7 @@ details[open] > summary::after { transform: translateY(-30%) rotate(-135deg); }
 .timer button { background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 999px; padding: 8px 11px; min-height: 44px; font-size: .88rem; font-family: var(--body); font-weight: 600; }
 .timer.flash { animation: timer-flash .45s ease-in-out 6; }
 @keyframes timer-flash { 50% { box-shadow: 0 0 0 6px var(--good-soft), var(--shadow); } }
-td input[type=number] { font-size: 1rem; min-height: 40px; }
+td input[type=number] { font-size: 1rem; min-height: 44px; }
 .timer.over { background: var(--good); color: var(--on-good); }
 
 /* Forms */
@@ -260,7 +260,7 @@ input[type="date"]::-webkit-date-and-time-value { text-align: left; margin: 0; m
 input[type="date"]::-webkit-calendar-picker-indicator { opacity: .6; }
 label.f input[type=number] { font-variant-numeric: tabular-nums; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chips button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: .9rem; min-height: 44px; }
+.chips button { border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: .9rem; min-height: 44px; min-width: 44px; }
 .chips button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: transparent; }
 
 /* Lists and tables */

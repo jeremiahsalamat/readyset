@@ -1,4 +1,4 @@
-const BUILD = 'bd32b79adda5';
+const BUILD = 'ef4fec75ed22';
 const CACHE = 'readyset-' + BUILD;
 const PAGE = './index.html', ASSETS = ['./manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'], FONT_CACHE = 'readyset-fonts'; // fonts outlive a build: every update used to wipe them

@@ -43,12 +43,24 @@
     // overwritten) and reported, so the recovery screen can offer it.
     loadLocal() {
       let t = null; try { t = localStorage.getItem(this.key); } catch (e) { return null; }
+      this.read = t;
       if (!t) return null;
       this.size = t.length;
       try { const v = JSON.parse(t); if (v && typeof v === 'object' && !Array.isArray(v)) { this.last = t; return v; } } catch (e) { /* fall through */ } // last: what is on disk, so a first save that packs to the same bytes writes nothing
       this.unreadable = t; return null;
     },
+    // At boot (A14-H-01): the sanitizer rebuilds every object in its own key order and fills in a few
+    // empty fields the window that wrote them left out (an exercise's autoCut 0, the open session's
+    // durationMin 0), so the same data packs to other bytes. A stored copy that holds this very data
+    // (sameData) counts as this window's own bytes: a window that changed nothing writes nothing when
+    // it hides or closes, and the other window is not put behind. Anything else (a repair, a merge, an
+    // older build's format) still differs and is written as before.
+    adopt(s) {
+      const t = this.last; if (!t) return;
+      try { const j = pack(s); if (j !== t && sameData(JSON.parse(t), JSON.parse(j))) this.last = j; } catch (e) { /* keep the bytes read: the first save writes */ }
+    },
     saveLocal(s, full) { // full: pack every session afresh (on the way out), not from the cache
+      if (this.stale) return; // another window saved newer data: this one is behind and never writes its older copy over it
       let json; try { json = full ? pack(s) : packState(s); } catch (e) { this.lastError = 'This phone could not save your latest changes (the data could not be written). Keep ReadySet open and tap Save backup.'; try { renderSaveBar(); } catch (e2) { /* before the page is ready */ } return; } // never fail silently
       if (json === this.last) { if (full) this.fullAt = s.updatedAt; return; } // nothing changed since the last write (app switches, double saves)
       const ok = () => { if (this.lastError) { this.lastError = null; try { renderSaveBar(); } catch (e) { /* before the page is ready */ } } };
@@ -57,7 +69,8 @@
         // Full: try once more without the Undo copy (the one large optional item). The live state is
         // never trimmed piecemeal: if that write lands, the Undo goes as a whole, so no half of it can run.
         if (s.undo) { try { const j2 = packState(Object.assign({}, s, { undo: null })); localStorage.setItem(this.key, j2); this.last = j2; this.size = j2.length; s.undo = null; ok(); return; } catch (e2) { /* still full */ } }
-        this.lastError = 'This phone could not save your latest sets (storage full or blocked). Keep ReadySet open, finish the session, then tap Save backup. A backup includes a session once it is finished.';
+        this.lastError = s && s.current ? 'This phone could not save your latest sets (storage full or blocked). Keep ReadySet open, finish the session, then tap Save backup. A backup includes a session once it is finished.'
+          : 'This phone could not save your latest changes (storage full or blocked). Keep ReadySet open and tap Save backup.'; // no session open: there are no sets to finish
         try { renderSaveBar(); } catch (e3) { /* before the page is ready */ }
       }
     },
@@ -65,21 +78,32 @@
       let local = this.loadLocal();
       try {
         if (window.claude && typeof window.claude.use === 'function') {
+          this.waited = true; // see moved()
           const db = await Promise.race([window.claude.use('db'), new Promise(r => setTimeout(() => r(null), 5000))]);
           if (db) {
             // Read and merge (appcore.js accountOpen: sessions by id, deleted ids left out), then write.
             const m = await window.AppCore.accountOpen(db, local, 8000);
             local = m.state;
             this.db = db; // only after both reads and the merge worked: a failed read is never followed by writes over the account copy
-            if (m.pushAll && local) this.pushAll(local);
-            for (const x of m.pushSessions) this.pushSession(x);
+            const send = () => { if (m.pushAll && m.state) this.pushAll(m.state); for (const x of m.pushSessions) this.pushSession(x); };
+            if (this.moved() !== undefined) this.held = send; else send(); // another window saved meanwhile: boot first finds out whether this one is behind (then it pushes nothing)
             for (const id of m.deleteIds) this.chain = this.chain.then(() => db.doc('sessions/' + id).delete()).catch(() => {});
           }
         }
       } catch (e) { this.db = null; /* fall back to local, and write nothing to the account */ }
       return local;
     },
+    // A page that waits for the account (up to 5 s, then its reads) cannot act on a storage event that comes
+    // meanwhile: it has no data yet. So boot asks once it has: the bytes stored now if another window changed
+    // them since loadLocal read them (null: removed), else undefined. Without the account nothing waits.
+    read: null, waited: false, held: null,
+    moved() { if (!this.waited) return undefined; let t; try { t = localStorage.getItem(this.key); } catch (e) { return undefined; } return t !== this.read ? t : undefined; },
+    // stale: set by the storage handler (another window stored newer data while this one has a session
+    // open). From then on this window is behind: it writes nothing, and it reloads onto the newer copy
+    // the moment it is looked at or touched (refreshStale). It is never cleared: only the reload ends it.
+    stale: false,
     save(s) {
+      if (this.stale) return; // see saveLocal: the account copy must not get the older state either
       s.updatedAt = Date.now();
       this.saveLocal(s);
       if (!this.db) return;
@@ -87,20 +111,34 @@
       this.timer = setTimeout(() => this.pushState(s), 1200);
     },
     flush() { if (this.db && this.timer) { clearTimeout(this.timer); this.timer = null; this.pushState(state); } },
+    // Account pushes: a window that is behind sends nothing either (the tap that triggers its reload
+    // still runs its handler, and a push queued before it fell behind would carry the older copy).
     pushState(s) {
-      if (!this.db) return;
+      if (!this.db || this.stale) return;
       const copy = Object.assign({}, s); delete copy.sessions;
       copy.settings = Object.assign({}, s.settings);
       this.chain = this.chain.then(() => this.db.doc('app/state').set(copy)).catch(() => {});
     },
     pushSession(sess) {
-      if (!this.db) return;
+      if (!this.db || this.stale) return;
       this.chain = this.chain.then(() => this.db.doc('sessions/' + sess.id).set(sess)).catch(() => {});
     },
-    pushAll(s) { this.pushState(s); for (const x of s.sessions || []) this.pushSession(x); },
+    pushAll(s) { if (this.stale) return; this.pushState(s); for (const x of s.sessions || []) this.pushSession(x); },
     // The id is kept on the state too (account copy only), so a delete that never lands stays deleted.
-    deleteSession(id) { if (!this.db) return; state.deletedIds = window.AppCore.noteDeleted(state.deletedIds, id); this.chain = this.chain.then(() => this.db.doc('sessions/' + id).delete()).catch(() => {}); },
+    deleteSession(id) { if (!this.db || this.stale) return; state.deletedIds = window.AppCore.noteDeleted(state.deletedIds, id); this.chain = this.chain.then(() => this.db.doc('sessions/' + id).delete()).catch(() => {}); },
   };
+  // Two parsed copies of the data hold the same: keys in any order, and a key only one of them has
+  // counts only when it holds nothing (0, false, null or '', which the sanitizer fills in when missing).
+  const blank = (v) => v === 0 || v === false || v === null || v === '';
+  function sameData(a, b) {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+    if (Array.isArray(a)) { if (a.length !== b.length) return false; for (let i = 0; i < a.length; i++) if (!sameData(a[i], b[i])) return false; return true; }
+    const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    for (const k of Object.keys(a)) if (has(b, k) ? !sameData(a[k], b[k]) : !blank(a[k])) return false;
+    for (const k of Object.keys(b)) if (!has(a, k) && !blank(b[k])) return false;
+    return true;
+  }
   function save() { Store.save(state); }
   // A failed save is not a one-off toast: a bar stays at the top of every screen until a save works.
   function renderSaveBar() {
@@ -143,8 +181,8 @@
   function noteBackup(kind) { state.lastBackupAt = Date.now(); state.lastBackupKind = kind; state.backupOffer = false; Store.saveLocal(state); }
   function sessionsSinceBackup() { const t = state.lastBackupAt || 0; return state.sessions.filter(s => !s.skipped && (s.savedAt || s.ts || 0) > t).length; }
   // Share the backup file. A backup counts only when the share sheet reports success; a share that
-  // fails for any reason (one already open, not allowed) just says so. The download fallback is for
-  // browsers without a share sheet, where it is the only way to hand over a file.
+  // fails for any reason (one already open, not allowed) just says so. The save-dialog and download
+  // fallbacks are for browsers without a share sheet, where they are the only way to hand over a file.
   let sharing = false;
   async function shareBackup() {
     if (sharing) return;
@@ -157,9 +195,24 @@
       sharing = false;
       return;
     }
+    // No share sheet (most desktop browsers). Where there is a save dialog (Chrome, Edge), it says when
+    // the file is written: the backup counts only then, and a cancel counts nothing. A plain download
+    // gives the page no signal at all, so it counts from the moment it starts, and says only that.
+    if (typeof window.showSaveFilePicker === 'function') {
+      sharing = true;
+      let h = null;
+      try { h = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: 'ReadySet backup', accept: { 'application/json': ['.json'] } }] }); }
+      catch (e) { if (e && e.name === 'AbortError') { sharing = false; return; } h = null; } // cancelled: nothing saved. Not allowed here (a framed page): download instead
+      if (h) {
+        try { const w = await h.createWritable(); await w.write(json); await w.close(); sharing = false; noteBackup('file'); toast('Backup file saved'); render(); }
+        catch (e) { sharing = false; toast('The backup file could not be written. Try again, or copy the backup.'); }
+        return;
+      }
+      sharing = false;
+    }
     try {
       const url = URL.createObjectURL(new Blob([json], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
-      noteBackup('file'); toast('Backup file saved'); render();
+      noteBackup('file'); toast('Backup download started. Check it reached your Downloads.'); render();
     } catch (e) { copyBackup(); }
   }
   function copyBackup() { const txt = backupJSON('clipboard'); const ok = () => { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); }; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, () => fallbackCopy(txt)); else fallbackCopy(txt); }
@@ -651,7 +704,7 @@
     // resume where you left off, p.250).
     const newest = newestSessionDate(), gap = newest ? daysBetween(newest, todayISO()) : 0;
     if (window.AppCore.layoffOffer(gap, layoffHandled(newest).tier, pos)) {
-      const what = gap < 14 ? (pos.isTest ? 'one more heavy week 5% lighter, then the test' : 'repeat this week 5% lighter, earned sets cleared') : gap < 21 ? 'restart this block at week 1, maxes 2.5% lower, first week 2.5% lighter' : gap < 42 ? `restart ${E.BLOCKS[P.blockIdx].test ? 'the last Strength block' : 'this block'} at week 1, maxes 5% lower, first week 5% lighter` : 'restart at Build week 1, maxes 10% lower (raise them by hand if the weights feel light)';
+      const what = gap < 14 ? (pos.isTest ? 'one more heavy week 5% lighter, then the test' : 'repeat this week 5% lighter, earned sets cleared') : gap < 21 ? `restart the ${E.BLOCKS[P.blockIdx].name} block at week 1, maxes 2.5% lower, first week 2.5% lighter` : gap < 42 ? `restart ${E.BLOCKS[P.blockIdx].test ? 'the last Strength block' : `the ${E.BLOCKS[P.blockIdx].name} block`} at week 1, maxes 5% lower, first week 5% lighter` : 'restart at Build week 1, maxes 10% lower (raise them by hand if the weights feel light)';
       html += `<div class="card"><h3>${gap} days since your last session</h3><p>Old loads after a layoff are how people get hurt. The rule for this gap: ${what}.</p>
         <div class="btnrow"><button class="btn primary" data-action="layoff-ease">Ease back in</button><button class="btn" data-action="layoff-skip">Carry on as planned</button></div></div>`;
     }
@@ -687,13 +740,17 @@
   }
   // Logging a session after the fact: the next planned session, dated back, with no check-in or
   // timer. It then goes through exactly the same completion, calibration and review as a live one.
+  // A deload, easy or test week runs as planned whatever the check-in says (submitCheckin), so a past
+  // session in one is logged as planned too: a test logged as light would lose its result.
+  function backfillFixed() { const pos = E.positionLabel(state); return pos.isRest ? 'easy week' : pos.isDeload ? 'deload week' : pos.isTest ? 'test week' : null; }
   function renderBackfill(plan) {
     const b = ui.backfill;
     if (!b) return '';
+    const fixed = backfillFixed();
     return `<div class="card"><h3>Log a past session</h3>
       <p class="small muted">Logs <b>${esc(plan.dayName)}</b>, the next planned session, on the date you pick. It counts like any other.</p>
-      <div class="grid2"><label class="f">Date<input id="bf-date" type="date" value="${esc(b.date)}" max="${todayISO()}" min="${backfillMin()}" data-backfill="date"></label>
-      <label class="f">How it was run<select id="bf-mode" data-backfill="mode">${['full', 'trim', 'light'].map(m => `<option value="${m}" ${b.mode === m ? 'selected' : ''}>${E.MODES[m].label}</option>`).join('')}</select></label></div>
+      <div class="${fixed ? 'stack' : 'grid2'}"><label class="f">Date<input id="bf-date" type="date" value="${esc(b.date)}" max="${todayISO()}" min="${backfillMin()}" data-backfill="date"></label>
+      ${fixed ? `<p class="small muted">Logged as planned: a ${fixed} runs as written.</p>` : `<label class="f">How it was run<select id="bf-mode" data-backfill="mode">${['full', 'trim', 'light'].map(m => `<option value="${m}" ${b.mode === m ? 'selected' : ''}>${E.MODES[m].label}</option>`).join('')}</select></label>`}</div>
       <div class="btnrow"><button class="btn primary" data-action="backfill-start">Open the session</button><button class="btn" data-action="backfill-cancel">Cancel</button></div></div>`;
   }
   // The earliest date a past session can take: the plan runs in order, so not before the newest
@@ -708,7 +765,7 @@
     const b = ui.backfill; if (!b) return;
     const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date) ? b.date : null, min = backfillMin();
     if (!date || date > todayISO() || date < min) { toast(`Pick a date from ${fmtDate(min)} to today`); return; }
-    const mode = E.MODES[b.mode] ? b.mode : 'full';
+    const mode = !backfillFixed() && E.MODES[b.mode] ? b.mode : 'full';
     ui.backfill = null;
     startSession(mode, { date });
   }
@@ -810,7 +867,7 @@
     if (back) { // it is the next planned session, so it sorts after anything already logged that day (noon is not always later)
       sess.backfill = true; sess.date = back.date; sess.ts = editTs(sess.id, Infinity, back.date);
     }
-    if (P.lightRestOfWeek && mode === 'light' && !back) sess.forcedLight = true;
+    if (P.lightRestOfWeek && mode === 'light') sess.forcedLight = true; // live or logged after the fact: a day the two-red rule made light is that one bad week, not chronic fatigue
     if (c && c.result) { delete sess.readiness.mode; }
     sess.exercises.forEach(e => { e.sets.forEach(x => { x.done = false; x.actualReps = null; x.rpe = null; x.actualW = null; }); const w0 = e.sets.find(x => x.kind === 'work'); if (w0 && e.lift) e.plannedW = w0.w; });
     state.current = sess; ui.checkin = null; ui.backfill = null; ui.lastEi = null; ui.openWarm = {}; ui.editSets = {}; ui.lastDeleted = null; ui.todayScroll = 0; ui.quietUntil = performance.now() + 600;
@@ -977,7 +1034,7 @@
     // A likely typo is kept as typed but goes nowhere until you answer the check.
     if (!fromTyping && v != null) {
       const odd = oddEntry(e, x, which === 'w' ? v : null, which === 'r' ? v : null);
-      if (odd) { openCheck(ei, si, odd, 'none'); return; } // nothing is stored until you answer; closing the check leaves the old value
+      if (odd) { odd.typed = String(val); openCheck(ei, si, odd, 'none'); return; } // nothing is stored until you answer; closing the check leaves the old value
     }
     if (which === 'w') {
       const shown = x.actualW != null ? x.actualW : x.w;
@@ -1038,7 +1095,7 @@
     }
     if (x.actualW == null && e.load !== 'bw') { toast('Enter the weight first'); wEl && wEl.focus(); return false; }
     const odd = oddEntry(e, x, x.actualW, x.actualReps);
-    if (odd) { openCheck(ei, si, odd, 'tick'); return false; }
+    if (odd) { const f = odd.field === 'w' ? wEl : rEl; if (f && f.value !== '') odd.typed = f.value; openCheck(ei, si, odd, 'tick'); return false; }
     x.done = true; x.doneAt = Date.now();
     if (state.current.backfill || state.current.phase === 'edit') return true; // nothing to rest for
     if (sessionComplete(state.current)) { stopTimer(); return true; } // the last set: lifting is over
@@ -1133,7 +1190,8 @@
   // Settings changed a max mid-session: rebase every undone set of that lift on the new TM.
   // A max, TM %, bar or plate change mid-session: each main lift's sets not lifted yet are rewritten
   // (appcore.js rebaseExercise), then re-aimed.
-  function rebaseSession() {
+  // why: the toast, which names what changed (a max, the Training Max %, or the bar and plates).
+  function rebaseSession(why) {
     const s = state.current; if (!s || s.phase !== 'lift') return;
     let n = 0;
     for (let ei = 0; ei < s.exercises.length; ei++) {
@@ -1145,7 +1203,7 @@
       }
       recalcExercise(ei, true, false, true); // re-aimed (and cut sets put back if the stop no longer holds), never cut: the fatigue stop waits for the next set you log, not a Settings change
     }
-    if (n) toast('Remaining sets rebased to the new max');
+    if (n) toast(why || 'Remaining sets rebased to the new max');
   }
   function deleteSet(ei, si) {
     const s = state.current; if (!s) return;
@@ -1205,8 +1263,35 @@
     if (!state.current || !state.current.exercises[ei] || !state.current.exercises[ei].sets[si]) return;
     ui.sheet = { ei, si }; renderSheet();
   }
-  function setLabel(e, si) { const x = e.sets[si]; return x.kind === 'warm' ? 'warm-up' : x.kind === 'single' ? 'opener' : `set ${si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}`; }
+  function setLabel(e, si) { const x = e.sets[si]; return x.kind === 'warm' ? 'warm-up' : x.kind === 'single' ? 'opener' : x.open ? 'top single' : `set ${si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}`; }
+  // Focus (A14-C2-10): a sheet takes the focus when it opens and gives it back when it closes, so a
+  // keyboard or VoiceOver user is not left on the row behind the dialog. Never scrolls the page.
+  let sheetOpen = false, sheetBack = null;
   function renderSheet() {
+    const before = sheetOpen;
+    drawSheet();
+    sheetOpen = !!document.querySelector('#overlay .sheet');
+    if (sheetOpen && !before) sheetOpened(); else if (!sheetOpen && before) sheetClosed();
+  }
+  function focusQuiet(el) { if (el && el.isConnected) try { el.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+  // Where the focus goes back to: the button that opened the sheet, or, when the screen was drawn
+  // again (or Safari never focused the button), the same control on that set's row. A typo check
+  // returns to the row's tick button, not to the field: focusing a field would raise the iPhone keyboard.
+  function sheetOpened() {
+    const a = document.activeElement, sh = ui.sheet || {}, row = `[data-ei="${sh.ei}"][data-si="${sh.si}"]`;
+    sheetBack = { el: a && a.tagName === 'BUTTON' && !a.closest('#overlay') ? a : null, sel: sh.kind !== 'check' && !sh.fromTick ? `#main button[data-action="rpe"]${row}` : `#main button[data-action="done"]${row}` };
+    const sheet = document.querySelector('#overlay .sheet');
+    focusQuiet(sheet && (sheet.querySelector('.btn.primary') || sheet.querySelector('.rpegrid [aria-pressed="true"]') || sheet.querySelector('.rpegrid .target') || sheet.querySelector('.rpegrid button')));
+  }
+  function sheetClosed() {
+    const back = sheetBack; sheetBack = null; if (!back) return;
+    queueMicrotask(() => { // after the handler that closed it has drawn the screen again
+      if (sheetOpen) return; // another sheet opened meanwhile: it has the focus
+      const a = document.activeElement; if (a && a !== document.body && a.isConnected) return; // the focus went somewhere on purpose ("Fix it": the field)
+      focusQuiet(back.el && back.el.isConnected ? back.el : document.querySelector(back.sel));
+    });
+  }
+  function drawSheet() {
     const ov = $('#overlay');
     if (!ui.sheet || !state.current) { ov.innerHTML = ''; return; }
     const { ei, si } = ui.sheet, e = state.current.exercises[ei], x = e && e.sets[si];
@@ -1358,7 +1443,7 @@
     for (const e of s.exercises) {
       if (e.lift || s.skippedSlots.includes(e.slotKey)) continue;
       const prevW = state.acc[e.ex] ? state.acc[e.ex].weight : null, prevSuspect = state.acc[e.ex] ? state.acc[e.ex].suspect : null;
-      const p = reducedDay ? null : E.accessoryProgress(state, { load: e.load, repRange: e.repRange, prevW, prevSuspect, sets: e.sets.map(x => ({ done: x.done, w: x.actualW != null ? x.actualW : x.w, reps: x.reps, actualReps: x.actualReps, okW: x.okW })) });
+      const p = reducedDay ? null : E.accessoryProgress(state, { load: e.load, repRange: e.repRange, prevW, prevSuspect, cut: e.cut, sets: e.sets.map(x => ({ kind: x.kind, done: x.done, w: x.actualW != null ? x.actualW : x.w, reps: x.reps, actualReps: x.actualReps, okW: x.okW })) });
       if (p) { state.acc[e.ex] = p.suspect ? { weight: p.weight, updated: s.date, suspect: p.suspect } : { weight: p.weight, updated: s.date }; if (p.suspect) addLog(`${e.name}: ${p.suspect} looks like a typo; next time stays ${p.weight}. Real? Change it in Settings.`); }
       else { const d = e.sets.find(x => x.done && x.actualW > 0); if (d && !state.acc[e.ex]) state.acc[e.ex] = { weight: d.actualW, updated: s.date }; }
     }
@@ -1504,7 +1589,7 @@
   // the moment you tap one): with every session shown, building them all was most of the History
   // tab's time (about 19,000 elements for three years).
   function histBody(s) {
-    return `<div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || '<span class="muted">skipped</span>'}</td></tr>`).join('')}</table></div>
+    return `<div class="tablewrap" style="margin-top:8px"><table>${s.exercises.map(e => `<tr><td>${esc(e.name)}</td><td class="small num">${e.sets.filter(x => x.done && x.kind !== 'warm').map(x =>`${x.actualW != null ? x.actualW : (x.w != null ? x.w : 'bw')}×${x.actualReps != null ? x.actualReps : x.reps}${x.rpe != null ? '@' + x.rpe : ''}`).join(', ') || `<span class="muted">${(s.skippedSlots || []).includes(e.slotKey) ? 'skipped' : 'not done'}</span>`}</td></tr>`).join('')}</table></div>
           <div class="small muted" style="margin-top:6px">${s.durationMin ? s.durationMin + ' min' : ''}${s.cardio && s.cardio.min ? ` · bike ${s.cardio.min} min` : ''}${s.backfill ? ' · logged after the fact' : ''}${s.edited ? ' · edited' : ''}${s.notes ? ' · ' + esc(s.notes) : ''}</div>
           <div class="btnrow" style="margin-top:6px">${ui.confirmDel === s.id ? `<span class="small">Delete this session for good?</span><button class="btn sm danger-fill" data-action="delete-session" data-id="${s.id}" data-sure="1">Yes, delete</button><button class="btn sm" data-action="delete-cancel">Keep</button>` : `<button class="btn sm" data-action="edit-session" data-id="${s.id}">Edit</button><button class="btn sm quiet" data-action="delete-session" data-id="${s.id}" style="color:var(--bad)">Delete</button>`}</div>`;
   }
@@ -1588,7 +1673,7 @@
     const sig = (x) => JSON.stringify({ d: x.date, sk: x.skippedSlots || [], p: x.post ? x.post.difficulty : 0, e: (x.exercises || []).map(e => [e.ex, (e.sets || []).map(y => [y.kind, y.done ? 1 : 0, y.actualW, y.actualReps, y.rpe])]) });
     if (sig(original) !== sig(s)) { // nothing to explain when only the notes or cardio changed
       if (s.isDeload || s.isRest) lines.push('Deload and easy-week sessions leave the maxes alone.');
-      else if (s.isTest) lines.push('A test sets the maxes once, at its end, so this edit leaves them alone.');
+      else if (s.isTest) lines.push(inBlock(s) ? 'A test sets the maxes once, when the test week ends: the edited singles count then.' : 'A test sets the maxes once, at its end, so this edit leaves them alone.'); // before the week ends, mesoReview reads the edited singles
       else if (!inBlock(s) || (s.ts || 0) <= (P.calibBaseTs || 0)) lines.push('It predates the last max reset, so the maxes stay.');
       else lines.push(...recalibrateBlock(sessionsOfWeek().some(x => x.id === s.id) ? "This week's review will use the fix." : 'Set counts and flags from past reviews stay.'));
       lines.forEach(addLog); state.lastReport = { title: 'Session edited', lines };
@@ -1602,7 +1687,7 @@
     const out = [];
     const nextFrom = (x, y) => { // the weight a logged exercise leads to; a deliberate edit gets no typo check
       const reduced = x.isDeload || x.isRest || x.isTest || x.mode === 'light';
-      const p = reduced ? null : E.accessoryProgress(state, { load: y.load, repRange: y.repRange, prevW: null, prevSuspect: null, sets: y.sets.map(z => ({ done: z.done, w: z.actualW != null ? z.actualW : z.w, reps: z.reps, actualReps: z.actualReps, okW: z.okW })) });
+      const p = reduced ? null : E.accessoryProgress(state, { load: y.load, repRange: y.repRange, prevW: null, prevSuspect: null, cut: y.cut, sets: y.sets.map(z => ({ kind: z.kind, done: z.done, w: z.actualW != null ? z.actualW : z.w, reps: z.reps, actualReps: z.actualReps, okW: z.okW })) });
       if (p) return { weight: p.weight, updated: x.date };
       const d = y.sets.filter(z => z.done && z.actualW > 0).pop();
       return d ? { weight: d.actualW, updated: x.date } : null;
@@ -1839,7 +1924,7 @@
       ui.pendingMax = null; state.undo = null; // the Undo snapshot holds the maxes: it cannot outlive a hand-set one
       E.applyTM(state, l, v); state.lifts[l].est = null; markCalibBase(); addLog(`${LIFTNAME[l]} 1RM set to ${v} by hand.`); rebaseSession();
     }
-    else if (key === 'tmPct') { if ([0.85, 0.875, 0.9, 0.925].includes(n)) { state.undo = null; s.tmPct = n; s.tmPctChosen = n; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); addLog(`Training Max set to ${Math.round(n * 1000) / 10}% by hand.`); rebaseSession(); } }
+    else if (key === 'tmPct') { if ([0.85, 0.875, 0.9, 0.925].includes(n)) { state.undo = null; s.tmPct = n; s.tmPctChosen = n; LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); addLog(`Training Max set to ${Math.round(n * 1000) / 10}% by hand.`); rebaseSession(`Remaining sets rebased to the Training Max at ${Math.round(n * 1000) / 10}%`); } }
     else if (key === 'autoCalibrate') { s.autoCalibrate = !!val; if (val) { state.undo = null; markCalibBase(); } }
     else if (key.startsWith('acc:')) { const k = key.split(':')[1]; if (Object.prototype.hasOwnProperty.call(E.EX, k) && n >= 0 && n <= 2000) state.acc[k] = { weight: n, updated: null }; }
     else if (key === 'includePeak') s.includePeak = !!val;
@@ -1861,7 +1946,7 @@
         cur.exercises.forEach(e => { e.rest = e.role === 'primary' ? s.restPrimary + (heavy ? 60 : 0) : e.role === 'secondary' ? s.restSecondary : s.restAccessory; });
       }
       if (cur && key === 'cardioMin' && cur.phase !== 'edit') cur.cardioMin = cur.mode === 'light' ? Math.round(v * 0.5) : v;
-      if (key === 'barWeight') { LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); }
+      if (key === 'barWeight') { LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession('Remaining sets re-rounded to your bar and plates'); }
       save(); return v !== n ? 'reset' : undefined;
     }
     save();
@@ -1936,8 +2021,14 @@
         const sh = ui.sheet; ui.sheet = null; renderSheet();
         const e = sh && state.current && state.current.exercises[sh.ei], x = e && e.sets[sh.si]; if (!x || !sh.odd) break;
         const o = sh.odd;
-        if (a === 'check-fix') { render(); const inp = $(`#${o.field === 'w' ? 'w' : 'r'}-${sh.ei}-${sh.si}`); if (inp) { inp.focus(); inp.select && inp.select(); } break; }
+        if (a === 'check-fix') { render(); fixField($(`#${o.field === 'w' ? 'w' : 'r'}-${sh.ei}-${sh.si}`), o.typed != null ? o.typed : o.v); break; }
         const val = a === 'check-use' ? o.use : o.v;
+        if (a === 'check-use' && o.carried) { // the weight this set carried before the slip: put it back as it was (still carried from that set)
+          x.actualW = val; delete x.autoW; const inp = $(`#w-${sh.ei}-${sh.si}`); if (inp) inp.value = val;
+          if (sh.rpe != null) x.rpe = sh.rpe;
+          save(); if (sh.then === 'tick' && !x.done) toggleDone(sh.ei, sh.si); else render();
+          break;
+        }
         if (o.field === 'w') { if (a === 'check-keep') x.okW = val; } else if (a === 'check-keep') x.okR = val;
         // "Use" the plan's own weight on a set not yet lifted: it goes back to following the plan (and
         // the auto-correction), as if nothing had been typed.
@@ -1984,7 +2075,7 @@
       case 'report-all': ui.reportAll = state.lastReport ? state.lastReport.title + '|' + state.lastReport.lines.length : null; render(); break;
       case 'edit-save': saveEdit(); break;
       case 'edit-cancel': cancelEdit(false); break;
-      case 'backfill-open': { const y = new Date(); y.setDate(y.getDate() - 1); let dt = todayISO(y); const mn = backfillMin(); if (dt < mn) dt = mn; ui.backfill = { date: dt, mode: 'full' }; ui.checkin = null; render(); break; }
+      case 'backfill-open': { const y = new Date(); y.setDate(y.getDate() - 1); let dt = todayISO(y); const mn = backfillMin(); if (dt < mn) dt = mn; const P = state.program; ui.backfill = { date: dt, mode: P.lightRestOfWeek ? 'light' : P.pushOn ? 'trim' : 'full' }; /* the session Today previews (renderToday's planMode) */ ui.checkin = null; render(); break; }
       case 'backfill-cancel': ui.backfill = null; render(); break;
       case 'backfill-start': startBackfill(); break;
       case 'layoff-ease': { const newest = newestSessionDate(); if (!newest) break; snapshot('Eased back in after a layoff'); ui.checkin = null; const gapNow = daysBetween(newest, todayISO()), had = layoffHandled(newest).cut, lines = E.layoffAdjust(state, gapNow, had); state.program.layoffHandled = `${newest}:${layoffTier(gapNow)}:${Math.max(had, E.layoffCut(gapNow))}`; lines.forEach(addLog); if (lines.length) state.lastReport = { title: 'Back after a layoff', lines }; save(); render(); break; }
@@ -2008,7 +2099,7 @@
       case 'deload-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Deload started early'); const ok = E.startDeloadNow(state); ui.confirm = null; ui.checkin = null; if (ok) addLog('Deload started early.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
       case 'deload-later': snapshot('Deload suggestion dismissed'); state.program.pendingDeload = false; state.program.pushOn = true; addLog('Deload suggestion declined; this week runs trimmed (no bonus reps or earned sets, loads 2.5% down).'); save(); render(); break;
       case 'rest-now': { if (state.current) { toast('Finish or discard the open session first'); break; } snapshot('Easy week inserted'); const ok = E.startActiveRest(state, 1); ui.confirm = null; ui.checkin = null; if (ok) addLog('Easy week inserted.'); else { state.undo = null; toast('Already in a light week'); } save(); render(); break; }
-      case 'set-plate': { const s = state.settings, p = Number(d.p); if (s.plates.includes(p) && s.plates.length === 1) { toast('Keep at least one plate size'); break; } s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = Math.min(10, E.loadStep(s.plates)); LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession(); save(); render(); break; }
+      case 'set-plate': { const s = state.settings, p = Number(d.p); if (s.plates.includes(p) && s.plates.length === 1) { toast('Keep at least one plate size'); break; } s.plates = (s.plates.includes(p) ? s.plates.filter(x => x !== p) : s.plates.concat(p)).sort((a, b) => b - a); s.increment = Math.min(10, E.loadStep(s.plates)); LIFTS.forEach(l => E.applyTM(state, l, state.lifts[l].oneRM)); rebaseSession('Remaining sets re-rounded to your bar and plates'); save(); render(); break; }
       case 'set-day': { const s = state.settings; if (s.days.length === 1 && s.days[0] === d.d) { toast('Keep at least one training day'); break; } s.days = s.days.includes(d.d) ? s.days.filter(x => x !== d.d) : s.days.concat(d.d); save(); render(); break; } // an empty list reloads as the defaults (sanitize.js)
       case 'extra-del': { const i = Number(d.i), c = (state.extraCardio || [])[i]; if (c) { state.extraCardio.splice(i, 1); save(); toast(`Removed ${c.min} min`); render(); } break; }
       case 'extra-cardio': { const m = Math.min(600, Math.max(0, Math.round(Number($('#extra-cardio').value) || 0))); if (m > 0) { state.extraCardio = state.extraCardio || []; state.extraCardio.push({ date: todayISO(), min: m, kcal: E.cardioKcal(m, state.settings.cardioWatts) }); save(); toast(`Logged ${m} min`); render(); } break; }
@@ -2079,9 +2170,11 @@
       postSw({ type: 'rest-cancel' }); Store.pushAll(state);
       for (const id of oldIds) if (!state.sessions.some(x => x.id === id)) Store.deleteSession(id);
       save(); ui.showImport = false; ui.setupRestore = false; ui.checkin = null; ui.confirm = null; view = 'today';
-      { const n = state.sessions.filter(x => !x.skipped).length; toast(`Restored: ${n} session${n === 1 ? "" : "s"}`); } render();
-      return true;
+      { const n = state.sessions.filter(x => !x.skipped).length; toast(`Restored: ${n} session${n === 1 ? "" : "s"}`); }
     } catch (e) { toast('That does not look like a ReadySet backup'); return false; }
+    // Drawn outside the try: the backup is already in and saved, so a drawing error must not call it a bad backup.
+    try { render(); } catch (e) { toast('Restored. Close and reopen ReadySet to see it.'); }
+    return true;
   }
   function restoreFromFile(input) {
     const f = input.files && input.files[0]; input.value = '';
@@ -2097,11 +2190,27 @@
     return `<label class="btn file-pick ${extraClass || ''}">${label}<input type="file" accept=".json,application/json,text/json,text/plain" data-action="import-file" aria-label="${label}"></label>`;
   }
   function fallbackCopy(txt) { const ta = document.createElement('textarea'); ta.value = txt; ta.readOnly = true; ta.style.cssText = 'position:absolute;top:0;left:0;width:1px;height:1px;opacity:0'; document.body.appendChild(ta); ta.select(); try { ta.setSelectionRange(0, txt.length); } catch (e) { /* iOS needs the explicit range for a read-only field */ } let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; } ta.remove(); if (ok) { noteBackup('clipboard'); toast('Backup copied. Paste it into Notes.'); render(); } else toast('Copy failed. Use Save backup file instead.'); }
+  // "Fix it" on the typo check (A14-C1-12): the field keeps what you typed, so one wrong digit is one
+  // key, and nothing is stored yet. The value is checked again when you tick the set (markDone reads
+  // the field) or leave the field: a field left unchanged sends no change event, so focusout does it.
+  function fixField(inp, v) {
+    if (!inp) return;
+    inp.value = String(v); inp.dataset.recheck = '1';
+    try { inp.focus(); } catch (e) { /* ignore */ }
+  }
+  document.addEventListener('focusout', (ev) => {
+    const t = ev.target;
+    if (!t || !t.dataset || !t.dataset.recheck) return;
+    delete t.dataset.recheck;
+    if (!t.dataset.set || !state.current || (t.validity && t.validity.badInput)) return;
+    clearTimeout(typeTimer); pendingType = null;
+    setField(Number(t.dataset.ei), Number(t.dataset.si), t.dataset.set, t.value);
+  });
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.dataset.draft) { const dr = draft(); dr[t.dataset.draft] = t.type === 'checkbox' ? t.checked : t.value; return; }
     if (t.dataset.calc) { const [l, k] = t.dataset.calc.split(':'); const dr = draft(); dr.calc[l] = dr.calc[l] || {}; dr.calc[l][k] = t.value; return; }
-    if (t.dataset.set) { clearTimeout(typeTimer); pendingType = null; if (t.validity && t.validity.badInput) { toast('Use digits and one decimal point'); return; } setField(Number(t.dataset.ei), Number(t.dataset.si), t.dataset.set, t.value); return; }
+    if (t.dataset.set) { delete t.dataset.recheck; clearTimeout(typeTimer); pendingType = null; if (t.validity && t.validity.badInput) { toast('Use digits and one decimal point'); return; } setField(Number(t.dataset.ei), Number(t.dataset.si), t.dataset.set, t.value); return; }
     if (t.dataset.setting) {
       const hadPending = !!ui.pendingMax;
       const r = applySetting(t.dataset.setting, t.type === 'checkbox' ? t.checked : t.value);
@@ -2294,15 +2403,31 @@
   document.addEventListener('touchend', () => { if (booted && state && state.current) { unlockAudio(); keepAwake(); } }, { passive: true }); // iOS wants a gesture for both, and a page it reopened has had none
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
   window.addEventListener('pagehide', saveNow);
+  // Two windows. A window that is behind (Store.stale) shows older data, so nothing may be built on it:
+  // it reloads onto the newer copy when it comes back to the front, or at the first tap or key in it.
+  // Until then it saves nothing, so closing, hiding or touching it cannot undo the other window's sets.
+  function refreshStale() {
+    if (!Store.stale || !booted) return;
+    reloading = true; booted = false; // booted off: this page must not save its older copy on the way out
+    try { sessionStorage.setItem('rs-view', view); sessionStorage.setItem('rs-caught-up', '1'); } catch (x) { /* ignore */ }
+    location.reload();
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshStale(); });
+  for (const t of ['pointerdown', 'keydown']) document.addEventListener(t, (ev) => { if (ev.isTrusted) refreshStale(); }, { capture: true, passive: true });
   window.addEventListener('storage', (e) => {
-    if (e.key !== Store.key || !booted || reloading) return;
-    if (e.newValue !== Store.last) Store.last = null; // what is on disk is not ours any more: the next save writes again
+    if (e.key !== Store.key || !booted) return; // not `reloading`: a pending update download must still see another window's save, or its exit save would put the older copy back (booted is off on every reload this handler or refreshStale starts)
+    seeStored(e);
+  });
+  // Another window stored e.newValue: a storage event, or a save made while this page waited for the account.
+  function seeStored(e) {
+    if (e.newValue === Store.last) return; // the very bytes this window last read or wrote (or adopted at boot)
+    Store.last = null; // what is on disk is not ours any more: the next save writes again
     if (!e.newValue) return;
     let up = 0; try { up = (JSON.parse(e.newValue) || {}).updatedAt || 0; } catch (x) { return; }
-    if (up <= (state.updatedAt || 0)) return;
+    if (up < (state.updatedAt || 0)) return; // an older copy: this window's next save puts the newer one back. The same time with other bytes is newer too: notes and fields save as they are typed without moving the time
     if (!state.current) { reloading = true; booted = false; try { sessionStorage.setItem('rs-view', view); } catch (x) { /* ignore */ } location.reload(); } // booted off: this page must not save its older copy on the way out
-    else toast('ReadySet is open in another window. Finish here, or close that one, so neither overwrites the other.');
-  });
+    else { Store.stale = true; if (document.visibilityState === 'visible') toast('Changed in another ReadySet window. This one reloads when you use it.'); } // a session is open here: not reloaded under you, but held (see refreshStale)
+  }
 
   // ---------- Boot ----------
   async function boot() {
@@ -2316,10 +2441,12 @@
     if (Store.unreadable) { try { localStorage.setItem(Store.key + '.unreadable', Store.unreadable); } catch (e) { /* no room */ } }
     if (!loaded && Store.unreadable) { recoveryCard(new Error('The stored data could not be read.'), Store.unreadable); return; }
     try {
-      if (loaded) state = cleanState(loaded, true);
+      if (loaded) { state = cleanState(loaded, true); Store.adopt(state); }
+      const moved = Store.moved(); if (moved !== undefined) { seeStored({ newValue: moved }); if (reloading) return; } // before migrate(), which may save
       migrate();
       render();
       booted = true;
+      if (Store.held) { const send = Store.held; Store.held = null; send(); } // pushAll and pushSession send nothing while behind
       try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(p => p || navigator.storage.persist()).catch(() => {}); } catch (e) { /* not available */ }
     } catch (e) {
       // Never leave a dead page: whatever is stored can still be copied out or replaced.
@@ -2349,6 +2476,7 @@
     } catch (e) { /* nothing to restore */ }
     try { const sh = JSON.parse(sessionStorage.getItem('rs-sheet') || 'null'); sessionStorage.removeItem('rs-sheet'); if (sh && state.current) { const ex = state.current.exercises[sh.ei], x = ex && ex.sets[sh.si]; if (x && x.done && x.rpe == null) { ui.sheet = sh; renderSheet(); } } } catch (e) { /* nothing to restore */ }
     noteReturn(true);
+    try { if (sessionStorage.getItem('rs-caught-up')) { sessionStorage.removeItem('rs-caught-up'); toast('Reloaded with the changes from your other ReadySet window.'); } } catch (e) { /* ignore */ }
     setTimeout(() => checkForUpdate(true), 3000);
     if (state.current && state.current.phase === 'cardio' && state.current.cardioRun) tickCardio();
   }
@@ -2389,10 +2517,10 @@
     showChrome(false);
     $('#main').innerHTML = `<div class="card"><h2>Something in the saved data could not be read</h2>
       <p class="small muted">${esc(String(err && err.message || err))}</p>
-      <p>Your stored data is below. Copy it somewhere safe, then start over or restore from a backup.</p>
+      <p>Your stored data is below. Copy it somewhere safe, then tap Start over; the setup screen can then restore a backup.</p>
       <label class="f">Stored data<textarea id="recovery-text" rows="5" readonly>${esc(raw)}</textarea></label>
       <div class="btnrow"><button class="btn" id="recovery-copy">Copy stored data</button><button class="btn danger" id="recovery-reset">Start over</button></div></div>`;
-    $('#recovery-copy').addEventListener('click', () => { const ta = $('#recovery-text'); ta.select(); try { document.execCommand('copy'); } catch (e) { /* ignore */ } if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(raw).catch(() => {}); toast('Copied'); });
+    $('#recovery-copy').addEventListener('click', () => { const ta = $('#recovery-text'); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) { /* ignore */ } const said = (y) => toast(y ? 'Copied' : 'Could not copy. The text is selected: copy it by hand.'); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(raw).then(() => said(true), () => said(ok)); else said(ok); }); // say Copied only when a copy worked
     let sure = false;
     $('#recovery-reset').addEventListener('click', (ev) => { if (!sure) { sure = true; ev.target.textContent = 'Erase it: tap again'; return; } booted = false; try { if (raw) localStorage.setItem(Store.key + '.unreadable', raw); } catch (e) { try { localStorage.removeItem(Store.key); localStorage.setItem(Store.key + '.unreadable', raw); } catch (e2) { /* no room for a copy */ } } try { localStorage.removeItem(Store.key); } catch (e) { /* ignore */ } location.reload(); });
   }

@@ -164,7 +164,9 @@ to a single as the load rises. Jumps shrink near the top and the last step is a 
 fewer reps per step (40% × 5, 55% × 3, 70% × 2, 80% × 1, 90% × 1), and 450 lb and up one step
 more (30% × 5, 45% × 5, 60% × 3, 72% × 2, 82% × 1, 90% × 1), which gets a heavy squat or
 deadlift warm without spending the session on warm-ups; the second barbell lift of a session,
-already warm, gets two or three steps. Steps closer than 10 lb to the one before are left out. In Strength week 3 the main lift adds an **opener**: one
+already warm, gets two or three steps. On a test day the main lift leads into the test's own lines
+(55% of the Training Max × 5, then × 3, × 2, × 1) with 5 reps at about half and three quarters of
+that first line, so the reps only ever fall on the way up. Steps closer than 10 lb to the one before are left out. In Strength week 3 the main lift adds an **opener**: one
 single at about 92% of your 1RM (RPE 8, two clean reps in reserve) after the warm-ups and before
 the triples. It is the single most useful piece of information the app gets about your real max,
 it practises the thing powerlifting is actually about, and it is not a test: set the safeties and
@@ -200,8 +202,11 @@ the fatigue stop, the floor, calibration, the History detail and the weekly revi
 - It re-runs from scratch on any edit: tick, untick, an RPE changed later, a rep count or weight
   corrected. Picking an RPE on a set you have not ticked yet ticks it.
 - A weight you type into an undone set yourself is left alone.
-- Limits per exercise: never below 85% or above 102.5% of the planned weight (100% in Peak and in
-  light sessions, which exist to cut fatigue).
+- Limits per exercise: never above 102.5% of the planned weight (100% in Peak and in light
+  sessions, which exist to cut fatigue), and not below 85% of it. Needing to go under 85% stops the
+  exercise (below). After that (if you Restore the sets, say), each set lifted at the floor that is
+  still a full RPE over target, or missed, lowers the floor another 7.5%: it brakes one bad reading
+  without pinning the weight there.
 - **The fatigue stop.** The RTS-style rule most coaches use: missed reps (not a set stopped short), a set that is still two
   or more RPE over target (and at least RPE 8.5, so an easy day planned at RPE 5 is not cut short by
   an RPE 7 set) after the weight has already been corrected, or the floor being reached, ends the
@@ -234,9 +239,11 @@ half weight. Rating every set 1 RPE too high ends up with loads about 3% lighter
   near failure.
 - Sets under RPE 6.5 cannot say how much was left, but they still prove a floor: read as if each
   were RPE 6.5, two sessions in a row that clear the max by 4% raise it (2.5% at most, once a
-  week), so a max entered too low climbs back. When even that cannot prove more (a max set far too
-  low leaves every set at RPE 4-5), three such sessions in a row bring a plain note suggesting you
-  raise it in Settings.
+  week). A max entered a little low can climb back this way, but slowly: a lift's lighter sessions
+  (its variation day) usually fall short of the 4% and restart the count. After three sessions in a
+  row with every set under RPE 6.5, when the latest one's floor reading is at least the current max, a
+  plain note says the lift looks too easy; if the weights really do feel light, raise the max in
+  Settings rather than waiting for it to climb.
 - Late in a block, sets are expected to feel heavier than they are (accumulated fatigue, p.117),
   so the estimate that can raise a max is read up to 3% higher in the last accumulation week; the
   estimate that can lower it is not. Calibration alone can never take more than 10% off a max in
@@ -246,11 +253,14 @@ half weight. Rating every set 1 RPE too high ends up with loads about 3% lighter
 - Deload, easy and test weeks don't calibrate. The test week sets the 1RM directly from your
   heaviest single with an RPE (the best of several noisy readings runs high), within 5% down and 12%
   up. A single with no RPE can raise the max but not lower it, and a single that did not go up caps
-  it just under that weight. The new max is never below a single you made, even above +12%: a test
-  single you ticked with at least one rep, at any RPE (10 included) or none, is a floor, and the max
-  is then exactly that weight, on the 2.5 lb grid or not (rounding never takes it under). Everything
-  above the made weight still follows the caps: a single at 370 rated RPE 7 on a 340 max reads as
-  more than 380 but gives 380 (+12%); a single of 400 made on the same max gives 400.
+  it just under that weight (a miss is never a reason to raise it: with no rated single, a miss above
+  the max holds it). The 5% limit wins: the test never lowers a max by more than 5%, so a
+  single missed far under the max leaves the max above the missed weight. The new max is never below
+  a single you made, even above +12%: a test single you ticked with at least one rep, at any RPE (10
+  included) or none, is a floor, and the max is then exactly that weight, on the 2.5 lb grid or not
+  (rounding never takes it under). Everything above the made weight still follows the caps: a single
+  at 370 rated RPE 7 on a 340 max reads as more than 380 but gives 380 (+12%); a single of 400 made
+  on the same max gives 400.
 - A session you log after the fact is read like any other. One you edit or delete, if it belongs to
   the current block, puts the maxes back to where the block started and re-reads every session of
   the block in date order, so the correction lands exactly as if it had been logged that way. A past
@@ -274,7 +284,9 @@ Restore from the file picker on the setup screen or in Settings.
 
 Forgot to log a session, or logged it wrong? **Log a past session** on the Today tab builds the
 next planned session on the date you choose (no check-in, no timer) and then runs it through the
-same finish, calibration and weekly review as a live one. **Edit** on any session in History
+same finish, calibration and weekly review as a live one. In a deload, easy or test week it is
+logged as planned, as a live one would run; in a week switched to light by two red check-ins it
+starts as a light session and counts as part of that one bad week. **Edit** on any session in History
 reopens it in the logger: retype sets, tick or untick, change the date, the bike minutes or how it
 felt, then save. Both are undoable, and both feed the maxes and the next review like any other
 session; set counts from a weekly review that already ran are left as they were.
@@ -378,9 +390,10 @@ Either way the Peak block's test single sets the 1RM directly.
 
 ### Accessories
 
-Self-loaded work (belt squat, dumbbells, machines) uses double progression: when every set reaches
-the top of the rep range, the weight goes up next time (one dumbbell step, or 5 lb); a set that falls
-short of the bottom of the range brings it down by the same step. Accessory sets sit at 2-4 per exercise and
+Self-loaded work (belt squat, dumbbells, machines) uses double progression: when every planned set
+is done and reaches the top of the rep range, the weight goes up next time (one dumbbell step, or
+5 lb); a set left undone or cut holds the weight. A set that falls short of the bottom of the range
+brings it down by the same step. Accessory sets sit at 2-4 per exercise and
 only climb when no lift is flagged. The book caps isolation work at about 30% of a hypertrophy
 program and wants little or none in strength phases (pp.338-339); here it runs about 26-31% with the
 optional slots dropped. Biceps, lateral raises and abs are marked optional so they are the first

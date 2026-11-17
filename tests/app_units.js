@@ -70,11 +70,26 @@ const at = (y, m, d, h, min) => new Date(y, m - 1, d, h, min || 0, 0).getTime();
   expect(C.oddEntry(st, acc, { kind: 'work', w: 120, reps: 10 }, 230, null) === null && C.oddEntry(st, acc, { kind: 'work', w: 120, reps: 10 }, 250, null).field === 'w', 'accessories get a wider band (half to double)');
   const open = { kind: 'single', w: null, reps: 1, open: true }, rm = st.lifts.squat.oneRM;
   expect(C.oddEntry(st, main, open, Math.round(rm * 0.8), null) === null && C.oddEntry(st, main, open, Math.round(rm * 0.7), null).use === null, 'an open single is checked against the max, with no weight offered');
+  const openMsg = C.oddEntry(st, main, open, Math.round(rm * 1.2), null).msg;
+  expect(openMsg.includes('against your 1RM of ' + rm) && !openMsg.includes('planned'), 'the open single is said to be checked against your 1RM, not a plan', openMsg);
   const reps = C.oddEntry(st, main, work, null, 18);
   expect(reps && reps.field === 'r' && reps.use === 5, '18 reps for 5 is asked about', reps);
   expect(C.oddEntry(st, main, work, null, 13) === null, '13 for 5 is a real (if odd) set');
   expect(C.oddEntry(st, acc, { kind: 'work', w: 120, reps: 10 }, null, 21) === null && C.oddEntry(st, acc, { kind: 'work', w: 120, reps: 10 }, null, 22).field === 'r', 'a rep range checks against its top');
   expect(C.oddEntry(st, main, Object.assign({}, work, { okR: 18 }), null, 18) === null, 'reps you confirmed are not asked again');
+  // A14-C2-09: a set carrying the weight typed on an earlier set offers that weight, not the plan.
+  { const e2 = Object.assign({}, main, { plannedW: 170, sets: [{ kind: 'work', w: 170, reps: 5, done: true, actualW: 175 }, { kind: 'work', w: 170, reps: 5, actualW: 175, manualW: true, carriedFrom: 0 }] });
+    const slip = C.oddEntry(st, e2, e2.sets[1], 36, null);
+    expect(slip && slip.use === 175 && slip.carried === true, '175 carried, a slip to 36: "Use 175 lb"', slip);
+    const far = C.oddEntry(st, e2, e2.sets[1], 17.5 * 10 * 10, null);
+    expect(far && far.use === 175 && far.carried && /planned 170/.test(far.msg), 'a doubled digit (1750) on a carried 175 also offers 175; the message still names the plan', far);
+    const zero = C.oddEntry(st, e2, e2.sets[1], 0, null), under = C.oddEntry(st, e2, e2.sets[1], 40, null);
+    expect(zero.use === 175 && zero.carried && under.use === 175 && under.carried, 'the carried weight is offered for 0 lb and under the bar too', { zero, under });
+    const plain = C.oddEntry(st, e2, Object.assign({}, e2.sets[1], { carriedFrom: null }), 36, null);
+    expect(plain.use === 170 && !plain.carried, 'a set not carrying a weight still offers the plan', plain);
+    const light = Object.assign({}, e2, { sets: [{ kind: 'work', w: 170, reps: 5, done: true, actualW: 40 }, e2.sets[1]] });
+    expect(C.oddEntry(st, light, light.sets[1], 20, null).use === 170, 'a carried weight under the bar is never offered', C.oddEntry(st, light, light.sets[1], 20, null));
+    expect(C.oddEntry(st, e2, Object.assign({}, e2.sets[1], { kind: 'test' }), 36, null).carried === undefined, 'only work sets carry'); }
 }
 
 // ---------- rebaseExercise: the sets not lifted yet, after a max, TM %, bar or plate change ----------

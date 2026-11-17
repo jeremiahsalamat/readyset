@@ -140,7 +140,7 @@ function run(opts) {
     if (rs.color === 'red') M.reds++;
     const forced = !!P.lightRestOfWeek;
     let mode = P.lightRestOfWeek ? 'light' : rs.color === 'green' ? 'full' : rs.color === 'yellow' ? 'trim' : 'light';
-    if (pos.isDeload || pos.rest) mode = 'full';
+    if (pos.isDeload || pos.rest || (opts.appLike && pos.isTest)) mode = 'full'; // the app runs a test week as planned whatever the check-in says (submitCheckin)
     if (mode === 'light') M.lights++; if (mode === 'trim') M.trims = (M.trims || 0) + 1;
     const s = E.buildSession(st, mode);
     Object.assign(s, { id: 's' + i, ts: Date.UTC(2026, 0, 5) + day * 864e5, date: new Date(Date.UTC(2026, 0, 5) + day * 864e5).toISOString().slice(0, 10), readiness: rs, mesoCount: P.mesoCount, blockIdx: P.blockIdx, dayIdx: P.dayIdx, mode, skippedSlots: [] });
@@ -167,7 +167,10 @@ function run(opts) {
         if (x.open) { w = Math.round(cap(e.lift) * 0.97 / 5) * 5; }
         if (!(w > 0) || !(cap(e.lift) > 0)) throw new Error('BAD');
         let rpe = rpeFor(e.lift, mult, w, x.reps), reps = x.reps; const rpeBase = Math.min(10, rpe);
-        if (rpe > 10) { reps = Math.max(1, x.reps - Math.round(rpe - 10)); rpe = 10; }
+        // Missed reps come from the lifter's real effort, not the rating: noise that pushes a rating
+        // past 10 is a set rated 10, not a failed one (A14-C3-10). The legacy lens keeps the old rule.
+        const short = opts.appLike ? Math.round(Math.max(0, trueRpe - 10)) : Math.round(rpe - 10);
+        if (short > 0 || rpe > 10) { reps = Math.max(1, x.reps - Math.max(0, short)); rpe = 10; }
         else if (x.ind && x.plus && rpe <= 7.5) { const extra = Math.min(x.plus, Math.round(8 - rpe)); reps = x.reps + extra; rpe = Math.min(10, rpe + extra); trueRpe += extra; }
         x.actualReps = reps; x.rpe = rpe; x.actualW = w;
         if (rpe >= 9.5) M.grinds++;

@@ -23,7 +23,7 @@ The site is served by GitHub Pages from the `docs/` folder on `main`. To ship a 
 
 ```bash
 python build.py
-node tests/engine_fuzz.js && node tests/app_units.js && node tests/sw_budget.js && node tests/static_checks.js
+node tests/engine_fuzz.js && node tests/app_units.js && node tests/app_behaviour.js && node tests/sw_budget.js && node tests/static_checks.js
 git status          # only intended files: never a backup file (readyset-backup-*.json) or scratch files
 git add -A
 git commit -m "describe the change"
@@ -54,7 +54,7 @@ build.py          assembles readyset.html (artifact) and docs/ (standalone PWA +
 readyset.html     artifact page (no html/head/body wrapper; the publisher adds one)
 docs/index.html   standalone app; docs/sw.js (service worker), docs/manifest.webmanifest,
                   docs/version.txt (the build id phones check) and docs/icon-*.png are built too
-tests/            engine_fuzz.js, app_units.js, sw_budget.js, static_checks.js (see Tests)
+tests/            engine_fuzz.js, app_units.js, app_behaviour.js, sw_budget.js, static_checks.js (see Tests)
 dev/sim/          the training simulators; dev/reviews/ the review reports the rules came from
 ```
 
@@ -96,6 +96,7 @@ erases everything and cannot be undone.
 ```bash
 node tests/engine_fuzz.js
 node tests/app_units.js
+node tests/app_behaviour.js
 node tests/sw_budget.js
 node tests/static_checks.js
 ```
@@ -106,18 +107,29 @@ sane), rep-max math properties, in-session correction caps, readiness ranges, a 
 through the state machine with random early deloads and easy weeks, degenerate review inputs, and
 a hostile backup (prototype keys, markup in names, out-of-range values, unknown exercise ids), and
 regression checks for every rule in the guide (openers, bonus-rep caps, earned sets, the stop
-rule, calibration guards, the layoff and stall rules, the dial, the readiness triggers), and that the
+rule, calibration guards, the layoff and stall rules, the dial, the readiness triggers, each chronic
+and acute deload signal, the test week and the calibration-off block-end rules, accessory double
+progression), and that the
 reviews never write to a logged session; that the time budget covers only the required work; and
 that storage compaction is lossless (36 simulated weeks plus hand-made cases round-trip byte for
 byte, in the new format and the old one). `app_units.js` covers `src/appcore.js`: the per-session
 pack cache against an uncached pack, where a session logged after the fact lands among that date's
 sessions, the typo check and number cleaning, the mid-session rebase after a max or plate change,
 the layoff rule's tiers, and the claude.ai copy's merge against a stubbed account store (a delete
-that never landed stays deleted; Undo and a restore bring a session back). `sw_budget.js` runs the built `docs/sw.js` (so build first)
+that never landed stays deleted; Undo and a restore bring a session back). `app_behaviour.js` runs the
+real `src/app.js` with the engine, sanitizer and appcore in node, one vm context per window, on a small
+fake DOM (the HTML the app draws, parsed), a localStorage shared by the windows (with the storage events
+a browser sends between them) and one manual clock; it clicks the buttons the app drew and reads what it
+stored: finishing a session and the week and block reviews, a session logged after the fact in a test
+week and in a two-red week, edit, delete and Undo, two windows (a window that is behind never writes,
+no account push from it, a save during an update download, a save made while the claude.ai copy waits
+for the account, a window that changed nothing writes nothing while a repair made on load is still saved), the typo check's "Fix it" and carried "Use",
+focus into and out of the sheets, when a backup counts, and the copy set aside after an error.
+`sw_budget.js` runs the built `docs/sw.js` (so build first)
 with stubbed caches and network: a return never waits on the network, offline, updates, fonts, the
 captive-portal guard, and one rest banner per deadline (a cancel, a restarted worker, the 5 s limit).
-`static_checks.js` (also after a build) compiles every script, source and built (nothing else runs
-`app.js` outside a browser, so a syntax error there would otherwise ship a blank app), and guards the layout rules behind the rest bar and RPE sheet
+`static_checks.js` (also after a build) compiles every script, source and built (`app_behaviour.js` runs
+only the source `app.js`, so a syntax error in a built script would otherwise ship a blank app), and guards the layout rules behind the rest bar and RPE sheet
 (nothing placed with `position: fixed`; the rest bar sits on the dock above the tab bar; overlays
 inside `#app`; a page left panned is put back), the display name ReadySet in the sources and the
 built files, and the identifiers installed phones depend on (storage keys, cache names, the build
@@ -126,7 +138,8 @@ meta tag, the manifest's install fields).
 The training rules were tuned with the simulators in `dev/sim/`: `sim2.js` fits the calibration
 against a hidden true max; `sim3.js` is a fitness-fatigue model of four lifter types (normal,
 fragile, robust, noisy) that scores a rule change by true strength gained at equal or lower
-fatigue, never by the app's own numbers. Run one with
+fatigue, never by the app's own numbers; `sim4.js` is the earlier fitness-fatigue model, kept for
+reference (`node dev/sim/sim4.js src/engine.js normal app`). Run sim3 with
 
 ```bash
 node dev/sim/run3.js fragile baseline 36 7
@@ -134,7 +147,9 @@ node dev/sim/run3.js fragile baseline 36 7
 
 (profile, lens, weeks, seed). The lens is `legacy` (or `baseline`, the old sim3), `A` (the app's
 wiring), `B` (A plus realistic rating noise and structural gain) or `F` (B plus load-based
-stimulus); judge a change under both B and F, over several seeds. `sim3.run()` takes `preload` and
+stimulus); judge a change under both B and F, over several seeds. In A, B and F a set misses reps
+only when the lifter's real effort passes failure; rating noise above 10 is a set rated 10 (the
+legacy lens keeps the old rule). `sim3.run()` takes `preload` and
 `patch` hooks for variants, and `dev/sim/variants.js` holds the older named variants (`jt2like`, the
 high-volume program that buried the owner, is the yardstick) for scripts that call `applyVariant`. The three review reports the rules came from are in `dev/reviews/`.
 

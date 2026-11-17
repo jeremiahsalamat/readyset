@@ -100,6 +100,10 @@
     if (x.kind === 'warm') return null;
     if (w != null && e.load !== 'bw' && x.okW !== w) {
       const bar = state.settings.barWeight;
+      // A work set carrying the weight you typed on an earlier set: "Use" offers that weight (the one
+      // this set showed before the slip), not the plan's.
+      const from = x.kind === 'work' && x.carriedFrom != null && e.sets ? e.sets[x.carriedFrom] : null;
+      const carried = from && from.actualW > 0 && from.actualW !== w && (e.load !== 'bar' || from.actualW >= bar) ? from.actualW : null;
       let msg = null, use = null;
       if (e.load === 'bar' && w < bar) { msg = `${w} lb is lighter than the empty bar (${bar} lb).`; use = x.w != null && x.w >= bar ? x.w : bar; }
       else if (w === 0) { msg = '0 lb.'; use = x.w; }
@@ -108,9 +112,9 @@
         if (x.open && e.lift && state.lifts[e.lift]) { ref = state.lifts[e.lift].oneRM * ((E.EX[e.ex] || {}).mult || 1); lo = 0.75; hi = 1.15; }
         else if (!e.lift) { lo = 0.5; hi = 2; }
         else if (x.kind === 'test' && ref > 0 && state.lifts[e.lift] && state.lifts[e.lift].oneRM > 0) hi = Math.min(hi, state.lifts[e.lift].oneRM * ((E.EX[e.ex] || {}).mult || 1) * 1.15 / ref); // a test line you make is a floor for the new max (mesoReview), so over 115% of the max is asked about, as on the open single
-        if (ref > 0 && (w < ref * lo || w > ref * hi)) { msg = `${w} lb against a planned ${Math.round(ref * 2) / 2} lb.`; use = x.open ? null : Math.round(ref * 4) / 4; }
+        if (ref > 0 && (w < ref * lo || w > ref * hi)) { msg = `${w} lb against ${x.open ? 'your 1RM of' : 'a planned'} ${Math.round(ref * 2) / 2} lb.`; use = x.open ? null : Math.round(ref * 4) / 4; } // the top single has no plan: it is checked against the max
       }
-      if (msg) return { field: 'w', v: w, msg, use };
+      if (msg) return carried != null && use != null ? { field: 'w', v: w, msg, use: carried, carried: true } : { field: 'w', v: w, msg, use };
     }
     if (r != null && x.reps > 0 && x.okR !== r) {
       const top = e.repRange ? e.repRange[1] : x.reps;

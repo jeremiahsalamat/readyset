@@ -33,8 +33,8 @@ expect(/function resyncPage\(\) \{\s*try \{\s*if \(fieldFocused\(\)\) return;/.t
 expect((app.match(/setProperty\('--sab'/g) || []).length === 1 && app.includes("setProperty('--sab', '8px')"), 'the only size the script sets is the 8px home-bar gap (it only removes padding)');
 
 // ---------- Every script parses ----------
-// Nothing else runs app.js outside a browser: a syntax error there passes the build and the other
-// suites, and the phone shows a blank page. Compile (never run) each source and each built inline script.
+// Only app_behaviour.js runs app.js outside a browser, and only from src/: a syntax error in a built
+// script passes the build and the other suites, and the phone shows a blank page. Compile (never run) each source and each built inline script.
 const vm = require('vm');
 const parses = (code, name) => { try { new vm.Script(code, { filename: name }); return true; } catch (e) { console.log('  ' + name + ': ' + e.message); return false; } };
 for (const f of ['src/engine.js', 'src/sanitize.js', 'src/appcore.js', 'src/app.js']) expect(parses(read(f), f), f + ' parses');
@@ -58,6 +58,22 @@ expect(app.includes('missed: E.missedSet(x)') && !/missed: zero \|\| reps < x\.r
 expect(read('dev/sim/sim3.js').includes('missed: E.missedSet ? E.missedSet(x) : reps < x.reps'), 'the simulator mirrors the app (the engine rule, or the old one for an older engine)');
 { const eng = read('src/engine.js'); expect(!eng.includes('x.actualReps != null && x.actualReps < x.reps') && !eng.includes(': x.reps) < x.reps).length') && eng.includes('const missed = work.filter(missedSet).length;') && eng.includes('&& x.done && missedSet(x))'), 'the engine computes misses in one place (calibration and the weekly review use missedSet)'); }
 
+// ---------- Audit 14: a past session in a deload, easy or test week is logged as planned ----------
+// The live check-in forces "as planned" in those weeks (submitCheckin); Log a past session must agree, or a test logged as light loses its result.
+expect(app.includes("const mode = !backfillFixed() && E.MODES[b.mode] ? b.mode : 'full';") && /function backfillFixed\(\) \{ const pos = E\.positionLabel\(state\); return pos\.isRest \? [^}]*pos\.isDeload \? [^}]*pos\.isTest \? /.test(app) && app.includes("${fixed ? `<p class=\"small muted\">Logged as planned"), 'Log a past session offers no mode in a deload, easy or test week and starts it as planned');
+// A day the two-red rule made light is one bad week (weeklyReview's lightsBlock skips forcedLight), live or logged after the fact.
+expect(app.includes("if (P.lightRestOfWeek && mode === 'light') sess.forcedLight = true;") && !/forcedLight = true[^\n]*/.test(app.replace("if (P.lightRestOfWeek && mode === 'light') sess.forcedLight = true;", '')), 'a light session in a two-red week is marked forced, back-filled or live');
+// A drawing error after a good restore must not say the backup was bad (audit 13 C1-19): render() runs outside the restore's try.
+{ const ar = app.slice(app.indexOf('function applyRestore('), app.indexOf('function restoreFromFile(')); expect(/\} catch \(e\) \{ toast\('That does not look like a ReadySet backup'\); return false; \}\s*\/\/[^\n]*\n\s*try \{ render\(\); \} catch \(e\) \{ toast\('Restored\./.test(ar) && !/toast\(`Restored: [^\n]*`\); \} render\(\);/.test(ar), 'applyRestore draws outside its try, so a late error cannot call a good backup bad'); }
+// The recovery card says Copied only when a copy worked, and says how to reach a restore.
+expect(!app.includes("writeText(raw).catch(() => {}); toast('Copied');") && app.includes("writeText(raw).then(() => said(true), () => said(ok))") && app.includes('then tap Start over; the setup screen can then restore a backup.'), 'the recovery card tells the truth about copying and how to restore');
+// History says "skipped" only for a slot that was skipped; an exercise with nothing ticked is "not done".
+expect(app.includes("(s.skippedSlots || []).includes(e.slotKey) ? 'skipped' : 'not done'") && !app.includes(".join(', ') || '<span class=\"muted\">skipped</span>'"), 'History tells a skipped slot from an exercise not done');
+// The layoff card names the block a restart goes back to (in an easy or deload week "this block" was unclear).
+expect(app.includes("`restart the ${E.BLOCKS[P.blockIdx].name} block at week 1, maxes 2.5% lower, first week 2.5% lighter`") && !app.includes("'restart this block at week 1"), 'the layoff card names the block it restarts');
+// Log a past session starts in the mode Today previews (renderToday's planMode): light in a two-red week, trimmed while pushing on.
+expect(app.includes("ui.backfill = { date: dt, mode: P.lightRestOfWeek ? 'light' : P.pushOn ? 'trim' : 'full' };") && app.includes("const planMode = lightWk ? 'full' : P.lightRestOfWeek ? 'light' : P.pushOn ? 'trim' : 'full';"), 'Log a past session defaults to the mode Today previews');
+
 // ---------- The display name ----------
 const NAME_FILES = ['src/app.js', 'src/appcore.js', 'src/engine.js', 'src/sanitize.js', 'src/body.html', 'build.py', 'README.md', 'PROGRAM_GUIDE.md'];
 for (const f of NAME_FILES) expect(!read(f).includes('Readyset'), `${f}: the name is written ReadySet`);
@@ -69,6 +85,63 @@ expect(build.includes('"name":"ReadySet","short_name":"ReadySet"'), 'manifest na
 // ---------- Identifiers the installed app and its data depend on (never renamed) ----------
 for (const id of ["key: 'readyset.v1'", "Store.key + '.unreadable'", "Store.key + '.opens'", "FOLD_KEY = 'readyset.folds'", "'rs-view'", "'rs-scroll'", "'rs-sheet'", "'rs-ui'", "'rs-reloaded-for'", 'meta[name="readyset-build"]', "<meta name=\"readyset-build\"", "tag: 'readyset-rest-'", '`readyset-backup-${']) expect(app.includes(id), 'app.js keeps ' + id);
 for (const id of ["const CACHE = 'readyset-' + BUILD", "FONT_CACHE = 'readyset-fonts'", "REST_CACHE = 'readyset-rest', REST_KEY = './__rest__'", "tag: 'readyset-rest-' + r.at", '<meta name="readyset-build" content="__BUILD__">', "html.includes('<meta name=\"readyset-build\"') && html.trimEnd().endsWith('</html>')", "'readyset.html'"]) expect(build.includes(id), 'build.py keeps ' + id);
+
+// ---------- Audit 14, cycle 3 ----------
+// Tap targets of 44px (layout rule 11): the set weight and reps fields, and the Settings table inputs.
+const minH = (r) => { const m = /min-height:\s*(\d+)px/.exec(r); return m ? Number(m[1]) : 0; };
+expect(minH(rule('.set .field input')) >= 44, 'set weight and reps fields are at least 44px high');
+const tdIn = /\ntd input\[type=number\] \{([^}]*)\}/.exec(css);
+expect(minH(tdIn ? tdIn[1] : '') >= 44, 'Settings table inputs (accessory weights) are at least 44px high');
+expect(/min-width:\s*44px/.test(rule('.chips button')) && minH(rule('.chips button')) >= 44, 'plate and day chips are at least 44x44 (the "5" chip was 37px wide)');
+// The save bar speaks of sets and finishing the session only when a session is open.
+expect(app.includes("this.lastError = s && s.current ? 'This phone could not save your latest sets") && app.includes("'This phone could not save your latest changes (storage full or blocked). Keep ReadySet open and tap Save backup.'"), 'the storage-full message fits whether or not a session is open');
+// Editing a test session before its week ends feeds the block-end result, so it must not say "leaves them alone".
+expect(app.includes("lines.push(inBlock(s) ? 'A test sets the maxes once, when the test week ends: the edited singles count then.' : 'A test sets the maxes once, at its end, so this edit leaves them alone.')"), 'an edit of a test session says whether it still counts');
+// Two windows: a window that sees newer data from the other one (while it has a session open) is behind. It
+// never saves again (close, hide, a timer, a tap, a fold, a typed note: nothing), and it reloads onto the newer
+// copy when it comes back to the front or is touched, so nothing is ever built on the older copy.
+expect(/saveLocal\(s, full\) \{[^\n]*\n\s*if \(this\.stale\) return;/.test(app) && /save\(s\) \{\n\s*if \(this\.stale\) return;[^\n]*\n\s*s\.updatedAt = Date\.now\(\);/.test(app)
+  && app.includes("else { Store.stale = true; if (document.visibilityState === 'visible') toast(") && (app.match(/Store\.stale\s*=[^=]/g) || []).length === 1 && !/this\.stale\s*=[^=]/.test(app),
+  'a window that is behind never saves, and nothing but a reload ends that');
+expect(app.includes("if (e.newValue === Store.last) return;") && app.includes("if (up < (state.updatedAt || 0)) return;") && !app.includes("if (up <= (state.updatedAt || 0)) return;"),
+  'typed notes from another window (same updatedAt, other bytes) also put this window behind');
+expect(app.includes("if (!Store.stale || !booted) return;\n    reloading = true; booted = false;") && /function refreshStale\(\) \{[\s\S]{0,400}?location\.reload\(\);\n  \}/.test(app)
+  && app.includes("document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshStale(); });")
+  && app.includes("for (const t of ['pointerdown', 'keydown']) document.addEventListener(t, (ev) => { if (ev.isTrusted) refreshStale(); }, { capture: true, passive: true });"),
+  'a window that is behind reloads onto the newer copy when it is looked at or touched');
+expect(app.includes("try { sessionStorage.setItem('rs-view', view); sessionStorage.setItem('rs-caught-up', '1'); } catch (x) { /* ignore */ }\n    location.reload();")
+  && app.includes("if (sessionStorage.getItem('rs-caught-up')) { sessionStorage.removeItem('rs-caught-up'); toast('Reloaded with the changes from your other ReadySet window.'); }")
+  && app.includes("if (!state.current) { reloading = true; booted = false; try { sessionStorage.setItem('rs-view', view); } catch (x) { /* ignore */ } location.reload(); }"),
+  'the reload keeps the tab and says once why it happened; a window with no session open reloads at once');
+// A14-C5-03: a window that is behind sends nothing to the account copy either (claude.ai copy only).
+expect(/pushState\(s\) \{\n\s*if \(!this\.db \|\| this\.stale\) return;/.test(app) && /pushSession\(sess\) \{\n\s*if \(!this\.db \|\| this\.stale\) return;/.test(app)
+  && app.includes('pushAll(s) { if (this.stale) return; this.pushState(s);') && app.includes('deleteSession(id) { if (!this.db || this.stale) return;'),
+  'a window that is behind pushes no state, session or delete to the account');
+// A14-R4-04: a pending update download does not blind the storage handler (only booted, which every reload it starts turns off).
+expect(/window\.addEventListener\('storage', \(e\) => \{\n\s*if \(e\.key !== Store\.key \|\| !booted\) return;/.test(app) && !/addEventListener\('storage'[^\n]*\n[^\n]*reloading\) return;/.test(app),
+  "another window's save is seen while an update download is pending");
+// A14-C2-10: sheets take the focus when they open and give it back when they close, without scrolling the page.
+expect(/function renderSheet\(\) \{\n\s*const before = sheetOpen;\n\s*drawSheet\(\);\n\s*sheetOpen = !!document\.querySelector\('#overlay \.sheet'\);\n\s*if \(sheetOpen && !before\) sheetOpened\(\); else if \(!sheetOpen && before\) sheetClosed\(\);/.test(app)
+  && app.includes("function focusQuiet(el) { if (el && el.isConnected) try { el.focus({ preventScroll: true }); }") && /function sheetClosed\(\) \{[\s\S]{0,200}queueMicrotask\(/.test(app)
+  && (app.match(/function renderSheet\(/g) || []).length === 1 && (app.match(/function drawSheet\(/g) || []).length === 1 && !/[^.\w]drawSheet\(\);/.test(app.replace('    drawSheet();\n    sheetOpen', '')),
+  'sheets move the focus in and back, and every caller goes through renderSheet');
+// A14-C1-12: "Fix it" keeps the typed digits; the value is checked again on tick (markDone reads the field) and on leaving the field.
+expect(app.includes("if (a === 'check-fix') { render(); fixField(") && /function fixField\(inp, v\) \{\n\s*if \(!inp\) return;\n\s*inp\.value = String\(v\); inp\.dataset\.recheck = '1';/.test(app)
+  && /addEventListener\('focusout', \(ev\) => \{\n\s*const t = ev\.target;\n\s*if \(!t \|\| !t\.dataset \|\| !t\.dataset\.recheck\) return;\n\s*delete t\.dataset\.recheck;[\s\S]{0,200}setField\(Number\(t\.dataset\.ei\), Number\(t\.dataset\.si\), t\.dataset\.set, t\.value\);/.test(app)
+  && app.includes("if (t.dataset.set) { delete t.dataset.recheck; clearTimeout(typeTimer);") && app.includes("if (wEl && wEl.value !== '') { const v = cleanW(wEl.value);") && app.includes("const odd = oddEntry(e, x, x.actualW, x.actualReps);\n    if (odd) { const f = odd.field === 'w' ? wEl : rEl; if (f && f.value !== '') odd.typed = f.value; openCheck(ei, si, odd, 'tick'); return false; }")
+  && app.includes("if (odd) { odd.typed = String(val); openCheck(ei, si, odd, 'none'); return; }") && app.includes("o.typed != null ? o.typed : o.v);"),
+  '"Fix it" keeps the digits, and they are checked again on tick and on blur');
+// A14-C2-09: "Use" on a carried weight puts that weight back as it was.
+expect(app.includes("if (a === 'check-use' && o.carried) {") && app.includes("x.actualW = val; delete x.autoW; const inp = $(`#w-${sh.ei}-${sh.si}`); if (inp) inp.value = val;"), '"Use" a carried weight restores it without moving the plan');
+// A14-C1-26: the desktop fallback counts a backup only when the save dialog says the file is written, or (a plain download) once it starts, and says only that.
+expect(/await w\.close\(\); sharing = false; noteBackup\('file'\); toast\('Backup file saved'\);/.test(app) && /if \(e && e\.name === 'AbortError'\) \{ sharing = false; return; \}/.test(app)
+  && app.includes("a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);\n      noteBackup('file'); toast('Backup download started.") && (app.match(/toast\('Backup file saved'\)/g) || []).length === 1,
+  'a backup file counts once written (save dialog) or once its download starts, and the toast says which');
+// A14-C2-12: the build's own checks survive python -O (no assert guards a check).
+expect(!/^\s*assert\b/m.test(build) && (build.match(/^\s*check\(/gm) || []).length === 4 && build.includes("raise SystemExit('build check failed: ' + why)"), 'build.py checks are explicit, not assert');
+// A mid-session rebase says what changed: a bar or plate change re-rounds, it does not bring a new max.
+expect((app.match(/rebaseSession\('Remaining sets re-rounded to your bar and plates'\)/g) || []).length === 2, 'a bar or plate change says the remaining sets were re-rounded');
+expect(/rebaseSession\(`Remaining sets rebased to the Training Max at \$\{/.test(app) && /markCalibBase\(\); addLog\(`\$\{LIFTNAME\[l\]\} 1RM set to \$\{v\} by hand\.`\); rebaseSession\(\);/.test(app) && app.includes("toast(why || 'Remaining sets rebased to the new max')"), 'a Training Max % change names the Training Max; a max change keeps "the new max"');
 
 // ---------- The built files (skipped with a note if they are missing) ----------
 const has = (p) => fs.existsSync(path.join(ROOT, p));

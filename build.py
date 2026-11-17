@@ -227,19 +227,23 @@ build_id = hashlib.sha256((index + SW_TEMPLATE + manifest).encode('utf-8') + b''
 index = index.replace('__BUILD__', build_id)
 
 # Self-checks, before anything is written: a build that fails one leaves the last good files in
-# place (a page whose scripts the CSP blocks is a blank app on the phone).
+# place (a page whose scripts the CSP blocks is a blank app on the phone). Explicit checks, not
+# assert: python -O strips asserts, and the build would then write a page that fails them.
+def check(ok, why):
+    if not ok:
+        raise SystemExit('build check failed: ' + why)
 # Every inline script must hash to a value in its CSP, byte for byte.
 import re as _re
 _html = index.encode('utf-8')
 _csp = _re.search(rb'Content-Security-Policy" content="([^"]*)"', _html).group(1).decode()
-assert len(_re.findall(rb'<script[\s>]', _html)) == len(_re.findall(rb'<script>', _html)), 'a script tag with attributes: the CSP allows only hashed inline scripts'
+check(len(_re.findall(rb'<script[\s>]', _html)) == len(_re.findall(rb'<script>', _html)), 'a script tag with attributes: the CSP allows only hashed inline scripts')
 for _m in _re.finditer(rb'<script>(.*?)</script>', _html, _re.S):
     _h = "'sha256-" + base64.b64encode(hashlib.sha256(_m.group(1)).digest()).decode() + "'"
-    assert _h in _csp, 'CSP hash mismatch for an inline script (line endings?)'
-assert b'\r' not in _html and '\r' not in artifact, 'CR found in an output'
+    check(_h in _csp, 'CSP hash mismatch for an inline script (line endings?)')
+check(b'\r' not in _html and '\r' not in artifact, 'CR found in an output')
 # A size budget: this file is downloaded once per update and parsed on every reopen.
 import gzip as _gzip
-assert len(_html) < 450 * 1024 and len(_gzip.compress(_html)) < 135 * 1024, 'docs/index.html is over its size budget'
+check(len(_html) < 450 * 1024 and len(_gzip.compress(_html)) < 135 * 1024, 'docs/index.html is over its size budget')
 
 def write(path, text):
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
