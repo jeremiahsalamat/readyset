@@ -115,12 +115,17 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
 .btn.danger-fill { background: var(--bad); color: var(--on-bad); border-color: transparent; }
 /* Small buttons keep their look but get a 44 px tall touch area. */
 .btn.sm { position: relative; }
-.btn.sm::after { content: ""; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
+.btn.sm::after { content: ""; position: absolute; left: 0; right: 0; top: -5px; bottom: -5px; } /* 36 + 2 x 4: the inset counts from inside the 1 px border (A15-C3-01) */
 .btn:disabled { opacity: .45; cursor: default; }
 .btn.sm { min-height: 36px; padding: 6px 10px; font-size: .9rem; }
 .btn.icon { min-width: 44px; min-height: 36px; padding: 6px; }
 .row.nowrap { flex-wrap: nowrap; flex: none; }
+/* A checkbox label's text and its muted note are one item, so they wrap together beside the box (rule 12). */
+.row > .chk-l { flex: 1 1 0; min-width: 0; }
+label.row { min-height: 44px; } /* the whole row toggles its box: a one-line row is still a 44 px target */
 select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
+/* A select draws no ::after, so the small button's 44 px touch area cannot reach it: it is 44 px itself. */
+select.btn.sm { min-height: 44px; }
 /* File picker styled as a button: the input stays in the layout (not display:none) so iOS opens it. */
 .file-pick { position: relative; overflow: hidden; cursor: pointer; }
 .file-pick input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
@@ -128,6 +133,7 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .btn:active, .seg button:active, .chips button:active, .rpegrid button:active, .set .rpe:active, .set .ok:active, .tabbar button:active, .ex-sum:active, .warm-sum:active, .timer button:active { opacity: .7; }
 .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
 .btnrow .btn { flex: 1; }
+[data-action="setup-finish"] { white-space: nowrap; } /* "Build my program" stays on one line beside "Back" on small phones (A15-R2-07) */
 
 /* Segmented choice (1-5 scales, options) */
 .seg { display: grid; gap: 6px; grid-auto-flow: column; grid-auto-columns: 1fr; }
@@ -170,14 +176,12 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .warm-sum .n { color: var(--good); }
 /* A finished exercise folds to one line (tap to reopen), so the session gets shorter as you go. */
 .ex.collapsed { box-shadow: none; border: 1px solid var(--line); }
-.ex-sum { width: 100%; border: 0; background: var(--surface); color: inherit; text-align: left; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 14px; min-height: 52px; }
-.ex-sum .tick { width: 26px; height: 26px; border-radius: 50%; background: var(--good); color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.ex-sum { width: 100%; border: 0; background: var(--surface); color: inherit; text-align: left; display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 10px; padding: 10px 14px; min-height: 52px; }
+.ex-sum .tick { width: 26px; height: 26px; border-radius: 50%; background: var(--good); color: var(--on-good); display: inline-flex; align-items: center; justify-content: center; }
 .ex-sum .tick svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .ex-sum .sum-main { display: flex; flex-direction: column; min-width: 0; }
 .ex-sum .sum-main b { font-family: var(--display); font-size: 1.1rem; line-height: 1.15; }
 .ex-sum .sum-main .small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ex-sum { grid-template-columns: 28px minmax(0, 1fr) 28px; }
-.ex-sum .tick { color: var(--on-good); }
 .ex.collapsed.todo .tick { background: var(--surface-2); color: var(--fg); border: 2px solid var(--accent); font-family: var(--display); font-weight: 700; font-size: .95rem; }
 .ex-sum .chev, .fold-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .ex-sum .chev { display: inline-flex; color: var(--muted); }
@@ -277,7 +281,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .session-item:last-child { border-bottom: 0; }
 
 /* Block timeline */
-.timeline { display: grid; grid-template-columns: repeat(14, 1fr); gap: 3px; }
+.timeline { display: grid; gap: 3px; } /* its columns are set inline, one per week up to 12 */
 .timeline .w { height: 26px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: .65rem; font-weight: 700; color: var(--muted); }
 .timeline .w.build { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .timeline .w.strength { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
@@ -292,6 +296,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
 .pt-head { display: flex; align-items: center; gap: 8px; }
 .pt-title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .pt-head .btn.icon { min-width: 36px; flex: none; }
+.pt-head .btn.icon::after { inset: -5px; } /* "Close details": drawn at 36 px, tapped at 44 x 44 (inset counts from inside the 1 px border) */
 .pt-head .btn.icon svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2.2; fill: none; stroke-linecap: round; }
 .pt-big { display: flex; align-items: baseline; gap: 10px; }
 .pt-num { font-family: var(--display); font-size: 2rem; font-weight: 700; line-height: 1; color: var(--accent); flex: none; }
@@ -301,9 +306,12 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
 .pt-imp::before { content: "→ "; color: var(--muted); font-weight: 500; }
 .pt-why { grid-column: 1 / -1; }
 .pt-card p { margin: 0; }
-.pt-nav { align-items: center; flex-wrap: wrap; }
+.pt-nav { align-items: center; flex-wrap: wrap; margin-top: auto; } /* at the card's foot when a step keeps its height (A15-R3-02) */
 .pt-nav .btn { white-space: nowrap; }
 .pt-nav .btn[disabled] { opacity: .4; }
+/* "9 of 84" takes the room of "00 of 84" from the first step, so the row never re-wraps under the finger (A15-C4-02) */
+.pt-pos { display: inline-block; text-align: center; }
+.pt-pos::after { content: attr(data-w); display: block; height: 0; overflow: hidden; visibility: hidden; }
 .empty { text-align: center; color: var(--muted); padding: 20px 10px; }
 .callout { border-left: 3px solid var(--accent); padding: 6px 12px; background: var(--surface-2); border-radius: 0 8px 8px 0; font-size: .92rem; }
 .callout.good { border-color: var(--good); } .callout.warn { border-color: var(--warn); } .callout.bad { border-color: var(--bad); }
@@ -334,9 +342,12 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
   .hist-row { grid-template-columns: minmax(0, 1fr) 40px 86px; gap: 6px; }
   .hist-row .pill { font-size: .66rem; letter-spacing: .02em; }
   .session-tools .small { display: none; }
-  .set .del { width: 40px; height: 40px; }
+  .set .del { width: 40px; height: 40px; position: relative; }
+  .set .del::after { content: ""; position: absolute; inset: -4px; } /* drawn at 40px, tapped at 44px, like the tick */
   .tabbar button { font-size: .78rem; letter-spacing: .03em; }
   .timeline { gap: 2px; }
+  label.f select { padding-left: 8px; padding-right: 4px; } /* "Conventional" and "Light session" fit their half-width boxes (A15-R1-03) */
+  .timer { font-size: 1.15rem; } /* "Rest done +12:34" stays clear of the buttons, even before the web font loads */
 }
 /* Large phones and tablets: roomier set rows. */
 @media (min-width: 560px) { .set { grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) 80px 52px; } .set .field input { max-width: 120px; } }
@@ -419,4 +430,6 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
 .swap-row { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 9fr); align-items: center; gap: 8px; font-size: .85rem; font-weight: 600; color: var(--muted); }
 .swap-row.pinned { color: var(--accent-ink); }
 .swap-row select { width: 100%; min-height: 44px; padding: 6px 8px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--surface); color: var(--fg); font-size: 16px; font-weight: 500; }
+/* Under 400 px the names do not fit beside their slot: the slot sits above its select (A15-R1-02). */
+@media (max-width: 399px) { .swap-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
 .dial-row select { margin-top: 4px; }

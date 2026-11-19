@@ -12,8 +12,22 @@
 // update download pending (A14-R4-04), a save made while a window waits for the account, a window
 // that changed nothing writes nothing (A14-H-01), and a repair made on load is still saved), "Fix it"
 // and the carried "Use" on the typo check (A14-C1-12, A14-C2-09), focus into and out of the sheets
-// (A14-C2-10), when a backup counts (A14-C1-26), and restoring the copy set aside after an error
-// (A14-C1-20).
+// (A14-C2-10), when a backup counts (A14-C1-26), restoring the copy set aside after an error
+// (A14-C1-20), the update and save bars keeping the sets under the finger (A15-C1-01), the two-tap skip
+// (A15-C1-03), the set rows' button labels (A15-C1-05) and no two session buttons alike (A15-R1-06), and
+// the taps ignored just after a tick opens the RPE sheet (A15-R1-01) or a set is deleted (A15-C2-01), with
+// trusted clicks (trustedTap): only those reach the double-tap guard and the quiet windows; "Remove sets" held under the finger
+// (A15-C2-03), named check-in answer groups (A15-C2-05), the tick putting its fill-ins back when the typo check stops it
+// (A15-C2-06), a value the typo check would question neither saved nor used while it is only typed, tested the iPhone's
+// way: type() sends input only, with no blur and no change event, then a trustedTap (A15-R2-01), and asked about before
+// any other tap acts, never dropped without a word, while the rest bar's click and an open sheet are left alone
+// (A15-R3-01, A15-C4-01); the tab bar and the rest bar by touch (fastTap: the app's own fast tap) and the row's own RPE
+// button ask first too (A15-R4-01), each under both models of a blur made by script (page.blurChange: model N sends no
+// change, model W sends it when the field was edited; BLUR_MODEL=W runs every page under W); a sane typed value is
+// committed before another session button acts, so it carries as on a desktop (decision 15); the storage-full bar's
+// text (A14, A15); the plates under a weight field (A15-R3-04), "Earlier" and "Later" held under the finger, the
+// details keeping their height and the row its layout while you step (A15-R2-02, A15-R3-02, A15-C4-02), and the rest bar naming the next exercise after a
+// fatigue stop (A15-R2-04) and this one again when cut sets come back (A15-R3-03).
 // Run: node tests/app_behaviour.js [project root]   (from the project folder; no build needed)
 'use strict';
 const fs = require('fs'), path = require('path'), vm = require('vm');
@@ -123,8 +137,10 @@ class Element extends Node {
   getBoundingClientRect() { return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0 }; }
   getContext() { return CTX2D; }
   select() {} setSelectionRange() {}
-  focus(opts) { const d = this.ownerDocument; if (!this.isConnected) return; d.page.focusLog.push({ el: this, opts: opts || null }); const prev = d.activeElement; if (prev === this) return; d._active = null; if (prev && prev !== d.body) d.page.fire(prev, 'focusout', { relatedTarget: this }); d._active = this; }
-  blur() { const d = this.ownerDocument; if (d._active !== this) return; d._active = null; d.page.fire(this, 'focusout', {}); }
+  focus(opts) { const d = this.ownerDocument; if (!this.isConnected) return; d.page.focusLog.push({ el: this, opts: opts || null }); const prev = d.activeElement; if (prev === this) return; if (prev && prev !== d.body) prev.leaving(); d._active = null; if (prev && prev !== d.body) d.page.fire(prev, 'focusout', { relatedTarget: this }); d._active = this; this._atFocus = this.value; d.page.fire(this, 'focusin', {}); }
+  blur() { const d = this.ownerDocument; if (d._active !== this) return; this.leaving(); if (d._active !== this) return; d._active = null; d.page.fire(this, 'focusout', {}); }
+  // D28: model N (the default) sends no change when the focus leaves; model W sends it first when the value was edited.
+  leaving() { const d = this.ownerDocument; if (d.page.blurChange && this.tagName === 'INPUT' && this._atFocus !== undefined && this.value !== this._atFocus) { this._atFocus = this.value; d.page.fire(this, 'change', {}); } }
   click() { this.ownerDocument.page.fire(this, 'click', {}); }
 }
 function serialize(n) {
@@ -289,6 +305,7 @@ class Page {
     const w = this.world = tab.world, page = this, o = tab.opts;
     this.tab = tab; w.pages.push(this); this.load = ++tab.loads; this.name = tab.name + (this.load > 1 ? ' (load ' + this.load + ')' : '');
     this.alive = true; this.visible = tab.visible; this.reloadAsked = false;
+    this.blurChange = process.env.BLUR_MODEL === 'W';
     this.toasts = []; this.errors = []; this.focusLog = []; this.writes = []; this.storageEvents = 0; this.downloads = []; this.blobUrls = 0;
     this.doc = new Document(this);
     if (o.build) { const m = new Element(this.doc, 'meta'); m.setAttribute('name', 'readyset-build'); m.setAttribute('content', o.build); this.doc.head.appendChild(m); }
@@ -325,6 +342,7 @@ class Page {
   noteAdded(n) { if (n.nodeType === 1 && n.classList.contains('toast')) this.toasts.push(n.textContent); if (n.nodeType === 1 && n.tagName === 'A' && (n.download || n.hasAttribute('download'))) this.downloads.push(n.download || n.getAttribute('download')); }
   fire(target, type, props) {
     const ev = Object.assign({ type, target, isTrusted: false, bubbles: true, defaultPrevented: false, timeStamp: this.world.perf, clientX: 0, clientY: 0 }, props);
+    if (type === 'change' && target && target.tagName === 'INPUT') target._atFocus = target.value;
     let stop = false; ev.preventDefault = () => { ev.defaultPrevented = true; }; ev.stopPropagation = () => { stop = true; }; ev.stopImmediatePropagation = ev.stopPropagation;
     const chain = [];
     if (target === this.win) chain.push(this.winL);
@@ -345,11 +363,15 @@ class Page {
   get active() { return this.doc.activeElement; }
   async click(x) { await this.world.advance(this.world.step); this.el(x).click(); await this.world.settle(); }
   async tap(x) { await this.world.advance(this.world.step); const e = this.el(x); this.fire(e, 'pointerdown', { isTrusted: true }); e.click(); await this.world.settle(); } // a real tap: pointerdown first (trusted), then the click
+  // A tap the browser vouches for (isTrusted), at a place on the screen, `after` ms from now: the only kind the
+  // app's guards see (the double-tap guard and the quiet window after the screen changes under the finger).
+  async trustedTap(x, at, after) { await this.world.advance(after != null ? after : this.world.step); const e = this.el(x); this.fire(e, 'pointerdown', { isTrusted: true, clientX: at[0], clientY: at[1] }); this.fire(e, 'click', { isTrusted: true, clientX: at[0], clientY: at[1], timeStamp: this.world.perf }); await this.world.settle(); }
   async type(x, v) { await this.world.advance(this.world.step); const e = this.el(x); e.focus(); e.value = v; this.fire(e, 'input', {}); await this.world.settle(); }
   async change(x, v, keepFocus) { await this.world.advance(this.world.step); const e = this.el(x); e.focus(); e.value = v; this.fire(e, 'input', {}); this.fire(e, 'change', {}); if (!keepFocus) e.blur(); await this.world.settle(); }
   async blur() { const a = this.doc._active; if (a) a.blur(); await this.world.settle(); }
   async show(on) { this.visible = on; this.tab.visible = on; this.fire(this.doc, 'visibilitychange', {}); await this.world.settle(); }
   focusAs(x) { this.el(x).focus(); this.focusLog.pop(); }
+  async fastTap(x, at, after) { await this.world.advance(after != null ? after : this.world.step); const b = this.el(x), efp = this.doc.elementFromPoint; this.doc.elementFromPoint = () => b; this.fire(b, 'touchstart', { touches: [{ clientX: at[0], clientY: at[1] }] }); const ev = this.fire(b, 'touchend', { changedTouches: [{ clientX: at[0], clientY: at[1] }], touches: [] }); this.doc.elementFromPoint = efp; await this.world.settle(); return ev.defaultPrevented; }
   toasted(re) { return this.toasts.some(t => (re instanceof RegExp ? re.test(t) : t === re)); }
 }
 const READER = (() => { const c = { console }; vm.createContext(c); new vm.Script('this.window = this;').runInContext(c); for (const s of CODE.slice(0, 3)) s.runInContext(c); return c; })();
@@ -584,7 +606,7 @@ test('two windows: a window that is behind never writes, and reloads when used',
   expect(A.loads === 2 && A.page !== a && A.page.alive, 'the first real tap reloads it', A.loads);
   const a2 = A.page;
   expect(a2.toasted('Reloaded with the changes from your other ReadySet window.'), 'and says why', a2.toasts);
-  expect(a2.$(doneBtn(0, wi[0])) && a2.$(doneBtn(0, wi[0])).getAttribute('aria-label') === 'Undo set' && a2.$(doneBtn(0, wi[1])).getAttribute('aria-label') === 'Set done', 'the reloaded window shows B\'s set, and its own tick was not kept');
+  expect(a2.$(doneBtn(0, wi[0])) && a2.$(doneBtn(0, wi[0])).getAttribute('aria-label').startsWith('Undo set:') && a2.$(doneBtn(0, wi[1])).getAttribute('aria-label').startsWith('Set done:'), 'the reloaded window shows B\'s set, and its own tick was not kept');
   expect(w.raw() === bytes && b.storageEvents === 0 && B.loads === 1, 'the reload wrote nothing, and B was never disturbed', { same: w.raw() === bytes, bEvents: b.storageEvents });
   expect(writesOf(a) === aw, 'the old page wrote nothing on its way out');
 });
@@ -625,7 +647,7 @@ test('two windows: a window with no session reloads at once; a hidden one when i
   const n = writesOf(b);
   await b.show(true);
   expect(B.loads === 2 && B.page.toasted('Reloaded with the changes from your other ReadySet window.') && writesOf(b) === n, 'coming back to the front reloads it, writing nothing', { loads: B.loads });
-  expect(B.page.$$('#main button[data-action="done"]').some(x => x.getAttribute('aria-label') === 'Undo set'), 'and it shows the set logged in the other window');
+  expect(B.page.$$('#main button[data-action="done"]').some(x => x.getAttribute('aria-label').startsWith('Undo set:')), 'and it shows the set logged in the other window');
 });
 test('two windows: no account push from a window that is behind (C5-03)', async () => {
   const docs = new Map(), log = [];
@@ -791,7 +813,7 @@ test('two windows: a save in the other window while this one waits for the accou
     expect(c.exercises[0].sets[wi[0]].done, `[${how}] window A's tick is still stored (window B did not write its older copy over it)`, c.exercises[0].sets.map(x => x.done));
     expect(writesOf(b) === bw && !c.exercises[0].sets[wi[1]].done && w.raw() === ticked, `[${how}] window B, behind, wrote nothing at its tap`, { writes: writesOf(b) - bw, set: c.exercises[0].sets[wi[1]].done });
     expect(!log.slice(bLog).some(x => x.page === 'B'), `[${how}] and pushed nothing to the account`, log.slice(bLog).map(x => x.page + ' ' + x.path));
-    expect(B.loads === 2 && B.page.toasted('Reloaded with the changes from your other ReadySet window.') && B.page.$$('#main button[data-action="done"]').filter(x => x.getAttribute('aria-label') === 'Undo set').length === 1, `[${how}] window B reloaded at that tap onto A's tick`, { loads: B.loads });
+    expect(B.loads === 2 && B.page.toasted('Reloaded with the changes from your other ReadySet window.') && B.page.$$('#main button[data-action="done"]').filter(x => x.getAttribute('aria-label').startsWith('Undo set:')).length === 1, `[${how}] window B reloaded at that tap onto A's tick`, { loads: B.loads });
     expect(!a.toasted(/^Changed in another ReadySet window/), `[${how}] window A is not put behind`, a.toasts);
     await a.tap(doneBtn(0, wi[2])); if (a.sheet()) await a.click('#overlay [data-action="rpe-pick"][data-v="skip"]');
     expect(A.loads === 1 && cur(w).exercises[0].sets[wi[2]].done, `[${how}] so window A ticks at its next tap (no reload)`, { loads: A.loads });
@@ -915,7 +937,7 @@ test('sheets take the focus and give it back (C2-10)', async () => {
   await p.click(doneBtn(0, s1));
   expect(p.sheet() && p.$('#overlay').contains(p.active), 'ticking opens "How hard was it?" with the focus inside');
   await p.click(`#overlay [data-action="rpe-pick"][data-v="${bp.sets[s1].rpeTarget}"]`);
-  expect(!p.sheet() && p.active.matches(doneBtn(0, s1)) && p.active.getAttribute('aria-label') === 'Undo set', 'after the rating the focus is on that row\'s tick (the screen was redrawn)', p.active && p.active.getAttribute('aria-label'));
+  expect(!p.sheet() && p.active.matches(doneBtn(0, s1)) && p.active.getAttribute('aria-label').startsWith('Undo set:'), 'after the rating the focus is on that row\'s tick (the screen was redrawn)', p.active && p.active.getAttribute('aria-label'));
   await p.change(`#w-0-${s2}`, '36', true);
   expect(p.sheet() && p.active.matches('#overlay [data-action="check-use"]'), 'the typo check opens with the focus on its answer');
   await p.click('#overlay [data-action="check-use"]');
@@ -993,6 +1015,639 @@ test('restoring the copy set aside after an error (C1-20)', async () => {
   let offered = false;
   for (const v of ['today', 'program', 'history', 'settings']) { await q.click(`#tabbar [data-view="${v}"]`); if (q.$('[data-action="recover-aside"]')) offered = true; }
   expect(!offered && !!q.$('[data-action="aside-copy"]'), 'with a program and sessions, no screen offers "Bring back" (only Copy and Delete), so the confirm path cannot get it');
+});
+
+// ---------- 10. Audit 15 ----------
+// A15-C1-01: a bar that appears above the scrolling area on its own (the update bar, the save bar) pushed
+// every set down by its height (77 px at 320 wide), so a tap aimed as it appeared hit the row above.
+// This fake DOM has no layout: the scroller reports its top as the height of the bars above it.
+test('a bar appearing above the sets keeps them under the finger (A15-C1-01)', async () => {
+  const fetch = (u) => (/version\.txt/.test(u) ? Promise.resolve({ ok: true, text: () => Promise.resolve('bbbbbb222222\n') }) : Promise.reject(new TypeError('offline')));
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A', { build: 'aaaaaa111111', protocol: 'http:', fetch }).open();
+  await start(p, 'green');
+  const sc = p.$('#scroller'), H = 77;
+  sc.getBoundingClientRect = () => { const top = (p.$('#update-bar') ? H : 0) + (p.$('#save-bar') ? H : 0); return { top, bottom: top + 500, left: 0, right: 320, width: 320, height: 500, x: 0, y: top }; };
+  sc.scrollTop = 300;
+  await w.advance(3100); // the update check 3 s after opening
+  expect(!!p.$('#update-bar') && sc.scrollTop === 300 + H, 'the update bar appears mid-session and the sets keep their place on screen', sc.scrollTop);
+  const ls = p.win.localStorage, setItem = ls.setItem;
+  ls.setItem = () => { throw new Error('QuotaExceededError'); };
+  const wi = workIdx(cur(w).exercises[0]);
+  await logSet(p, 0, wi[0]);
+  expect(!!p.$('#save-bar') && sc.scrollTop === 300 + 2 * H, 'the save bar appears after a failed save and the sets keep their place', sc.scrollTop);
+  ls.setItem = setItem;
+  await logSet(p, 0, wi[1]);
+  expect(!p.$('#save-bar') && sc.scrollTop === 300 + H, 'when a save works again the bar goes and the sets keep their place', sc.scrollTop);
+});
+// The storage-full bar: with no session open it does not speak of sets (A14); it is short (it took seven lines on a
+// 320 px phone; now three), and still says what failed and what to do (A15).
+test('the storage-full bar is short and speaks of sets only with a session open (A14, A15)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(), ls = p.win.localStorage, setItem = ls.setItem;
+  const bar = () => { const b = p.$('#save-bar'); return b ? b.querySelector('span').textContent : null; };
+  ls.setItem = () => { throw new Error('QuotaExceededError'); };
+  await skipDay(p); // a change with no session open
+  const idle = bar();
+  expect(!!idle && !/\bsets?\b|finish/i.test(idle) && /Keep ReadySet open/.test(idle) && /tap Save backup\.$/.test(idle) && idle.length <= 95, 'no session open: the bar does not speak of sets, and says to keep ReadySet open and tap Save backup', idle);
+  ls.setItem = setItem; await p.click('[data-action="undo"]');
+  expect(!bar(), 'a save that works takes the bar away', bar());
+  await start(p, 'green'); ls.setItem = () => { throw new Error('QuotaExceededError'); };
+  await logSet(p, 0, workIdx(cur(w).exercises[0])[0], { rpe: 8 });
+  const live = bar();
+  expect(!!live && /\bsets\b/i.test(live) && /finish/i.test(live) && /Keep ReadySet open/.test(live) && /tap Save backup\.$/.test(live) && live.length <= 95, 'a session open: the bar says the sets are not saved, to keep ReadySet open, finish, then tap Save backup', live);
+  ls.setItem = setItem;
+});
+// A15-C1-03: each tap that arms "Skip this session" gets its own 3 s. The timer of an earlier arming used to
+// run on, so skipping two sessions in a row could need a third tap.
+test('skip: every arming gets its own 3 seconds (A15-C1-03)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open();
+  const skipped = () => w.stored().sessions.filter(s => s.skipped).length;
+  await p.click('[data-action="skip-session"]'); // armed (its timer ends 3 s from here)
+  await p.click('[data-action="skip-session"]'); // skipped
+  expect(skipped() === 1, 'two taps skip the first session', skipped());
+  await w.advance(2400);
+  await p.click('[data-action="skip-session"]'); // armed again, 2.45 s after the first arming
+  await w.advance(600); // past the first arming's 3 s, inside this one's
+  await p.click('[data-action="skip-session"]');
+  expect(skipped() === 2, 'the second tap within 3 s of arming skips the next session too', skipped());
+  await p.click('[data-action="skip-session"]'); await w.advance(3100); await p.click('[data-action="skip-session"]');
+  expect(skipped() === 2 && p.toasts.filter(t => t === 'Tap again to skip this session').length === 4, 'a tap more than 3 s after arming only arms again', { n: skipped(), toasts: p.toasts });
+});
+// A15-C1-05: the buttons on each set row say which exercise and set they act on (screen readers read
+// the label alone; there are 15 to 20 "Set done" buttons on a session).
+test('set row buttons name their exercise and set (A15-C1-05)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green');
+  const sq = cur(w).exercises[0], wi = workIdx(sq), name = sq.name;
+  const lab = (sel) => (p.$(sel) || { getAttribute: () => '' }).getAttribute('aria-label');
+  expect(lab(doneBtn(0, wi[0])) === `Set done: ${name}, set 1`, 'the tick names the exercise and set', lab(doneBtn(0, wi[0])));
+  expect(lab(`#main button[data-action="rpe"][data-ei="0"][data-si="${wi[1]}"]`) === `RPE not set: ${name}, set 2`, 'so does the RPE button', lab(`#main button[data-action="rpe"][data-ei="0"][data-si="${wi[1]}"]`));
+  expect(lab('#main button[data-action="edit-sets"][data-ei="0"]') === `Remove sets: ${name}`, 'and Remove sets', lab('#main button[data-action="edit-sets"][data-ei="0"]'));
+  const labs = p.$$('#main button[data-action="done"]').map(b => b.getAttribute('aria-label'));
+  expect(new Set(labs).size === labs.length, 'no two ticks on the screen read the same', labs.length);
+  await logSet(p, 0, wi[0], { rpe: 8 });
+  expect(lab(doneBtn(0, wi[0])) === `Undo set: ${name}, set 1` && lab(`#main button[data-action="rpe"][data-ei="0"][data-si="${wi[0]}"]`) === `RPE 8: ${name}, set 1`, 'after logging: Undo set and the rating, with the same context', [lab(doneBtn(0, wi[0]))]);
+});
+// A15-R1-06: no two buttons on the session screen read the same, whatever state the exercises are in: cut sets
+// and their Restore, skipped exercises and their Undo, Remove-sets mode with its × and the swipe Delete, Undo delete.
+test('no two session buttons read the same, in any state (A15-R1-06)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green');
+  // In Remove-sets mode the × and the row's swipe Delete are the same action on the same set; the swipe one is out of the tab order.
+  const dupes = (skipSwipe) => { const seen = {}, out = []; for (const b of p.$$('#main button')) { if (skipSwipe && b.classList.contains('swipe-del')) continue; const n = (b.getAttribute('aria-label') || b.textContent).replace(/\s+/g, ' ').trim(); if (seen[n]) out.push(n); seen[n] = 1; } return out; };
+  const states = [];
+  const look = (what, skipSwipe) => { const d = dupes(skipSwipe); states.push(what); expect(!d.length, `${what}: every button has its own name`, d); };
+  look('a fresh session');
+  // Two lifts each missing a set: each offers "Cut the remaining sets", then each has its "Restore n cut sets".
+  const lifts = cur(w).exercises.map((e, i) => (e.lift && e.pctTM != null && workIdx(e).length >= 3 ? i : -1)).filter(i => i >= 0).slice(0, 2);
+  for (const ei of lifts) { const ex = cur(w).exercises[ei], si = workIdx(ex)[0]; await logSet(p, ei, si, { r: Math.max(1, ex.sets[si].reps - 2), rpe: 10 }); }
+  expect(lifts.length === 2 && lifts.every(ei => p.$(`#main button[data-action="cut-sets"][data-ei="${ei}"],#main button[data-action="restore-sets"][data-ei="${ei}"]`)), 'two lifts offer to cut their remaining sets, or the fatigue stop already cut them', lifts);
+  look('two lifts after a missed set');
+  for (const ei of lifts) { const b = p.$(`#main button[data-action="cut-sets"][data-ei="${ei}"]`); if (b) await p.click(b); }
+  expect(lifts.every(ei => p.$(`#main button[data-action="restore-sets"][data-ei="${ei}"]`)), 'both have a Restore button');
+  look('two lifts with cut sets');
+  // Every optional exercise skipped: each has its own "Undo skip".
+  const opt = cur(w).exercises.map((e, i) => (e.optional ? i : -1)).filter(i => i >= 0);
+  for (const ei of opt) await p.click(`#main button[data-action="toggle-skip"][data-ei="${ei}"]`);
+  expect(opt.length >= 1 && p.$$('#main button[data-action="toggle-skip"]').filter(b => b.textContent.trim() === 'Undo skip').length === opt.length, 'each skipped exercise has its Undo skip', opt.length);
+  // (Each day has one optional exercise today, so two Undo skips cannot meet yet: the name is checked directly.)
+  expect(opt.every(ei => (p.$(`#main button[data-action="toggle-skip"][data-ei="${ei}"]`) || { getAttribute: () => '' }).getAttribute('aria-label') === `Undo skip: ${cur(w).exercises[ei].name}`), 'Undo skip names its exercise');
+  look('optional exercises skipped');
+  // Remove-sets mode on two exercises, then a set deleted (its Undo delete).
+  const two = cur(w).exercises.map((e, i) => i).filter(i => !opt.includes(i)).slice(-2);
+  for (const ei of two) await p.click(`#main button[data-action="edit-sets"][data-ei="${ei}"]`);
+  look('two exercises in Remove-sets mode', true);
+  const ex = cur(w).exercises[two[1]], last = ex.sets.length - 1;
+  await p.click(`#main button.del[data-action="del-set"][data-ei="${two[1]}"][data-si="${last}"]`);
+  expect(!!p.$('#main button[data-action="undo-del"]'), 'a deleted set offers Undo delete');
+  look('a set deleted', true);
+  expect(p.$$('#main button.swipe-del').every(b => /^Delete this set: .+, (set \d+|warm-up \d+|opener|top single)$/.test(b.getAttribute('aria-label'))), 'the swipe Delete names its exercise and set');
+});
+// A15-R1-01: ticking a main-lift set opens "How hard was it?" under the finger in the same tap. A second tap
+// already on its way (the next row's tick, 71 px lower) landed on an RPE button and rated the set. For 350 ms
+// after a tick opens the sheet, trusted taps are ignored; the sheet opened from the RPE button has no such wait.
+test('a tick that opens the RPE sheet ignores the next tap for 350 ms (A15-R1-01)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green');
+  const wi = workIdx(cur(w).exercises[0]), rated = () => cur(w).exercises[0].sets[wi[0]].rpe;
+  await w.advance(1000); // past the quiet window after Start
+  await p.trustedTap(doneBtn(0, wi[0]), [340, 500]);
+  expect(!!(p.sheet() && p.sheet().querySelector('.rpegrid')) && cur(w).exercises[0].sets[wi[0]].done && rated() == null, 'a trusted tick logs the set and opens the RPE sheet');
+  await p.trustedTap('#overlay [data-action="rpe-pick"][data-v="8.5"]', [300, 571], 150);
+  expect(rated() == null && !!p.sheet(), '150 ms later a tap on an RPE button rates nothing and the sheet stays open', { rpe: rated(), sheet: !!p.sheet() });
+  await p.trustedTap('#overlay button[data-action="sheet-close"]', [350, 420], 100);
+  expect(!!p.sheet(), 'Skip inside the window does not close it either');
+  await p.trustedTap('#overlay [data-action="rpe-pick"][data-v="8"]', [200, 600], 150);
+  expect(rated() === 8 && !p.sheet(), 'a pick 400 ms after the tick rates the set and closes the sheet', { rpe: rated() });
+  // The sheet opened from the RPE button: the tap is on a button already there, so the pick is not held back.
+  await w.advance(1000);
+  await p.trustedTap(`#main button[data-action="rpe"][data-ei="0"][data-si="${wi[0]}"]`, [280, 500]);
+  await p.trustedTap('#overlay [data-action="rpe-pick"][data-v="7"]', [100, 640], 80);
+  expect(rated() === 7 && !p.sheet(), 'from the RPE button, a pick 80 ms later is taken', { rpe: rated() });
+});
+// A15-C2-03: "Remove sets" adds a note above the sets (and the footer reflows), which moved the button 21-48 px
+// down, so tapping again at the same place to say "Done" missed it. The button now holds itself still. This DOM has
+// no layout: the button reports top 500 as "Remove sets" and 548 as "Done"; the scroll must take up the 48 px.
+test('Remove sets and Done stay under the finger (A15-C2-03)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green');
+  const rect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function () { const t = this.dataset && this.dataset.action === 'edit-sets' ? (this.textContent.trim() === 'Done' ? 548 : 500) : 0; return { top: t, bottom: t + 36, left: 0, right: 0, width: 0, height: 36, x: 0, y: t }; };
+  try {
+    const sc = p.$('#scroller'); sc.scrollTop = 300;
+    await p.click('#main [data-action="edit-sets"][data-ei="0"]');
+    expect(!!p.$('#main button.del') && sc.scrollTop === 348, 'Remove sets: the scroll takes up the 48 px, so "Done" is where the finger is', sc.scrollTop);
+    await p.click('#main [data-action="edit-sets"][data-ei="0"]');
+    expect(!p.$('#main button.del') && sc.scrollTop === 300, 'Done: and back again', sc.scrollTop);
+  } finally { Element.prototype.getBoundingClientRect = rect; }
+});
+// A15-C2-05: the check-in's answer rows ("Fresh … Very sore", "1 Awful … 5 Great") repeat the same button names for
+// every question; each row is now a group named by its question, so a screen reader says which question it answers.
+test('check-in answer rows are named groups (A15-C2-05)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await p.click('[data-action="checkin"]');
+  const segs = p.$$('#main .seg').filter(s => s.querySelector('[data-action="ci"]'));
+  const names = segs.map(s => s.getAttribute('role') === 'group' ? s.getAttribute('aria-label') : null);
+  expect(segs.length >= 4 && names.every(n => n) && new Set(names).size === names.length, 'every answer row is a group with its own name', names);
+  expect(names.includes('Sleep last night') && names.some(n => /^Soreness: |^How sore/.test(n)), 'the names are the questions', names);
+});
+// A15-C2-06: a weight 10x off entered through the field (the desktop path: leaving the field sends change), then the
+// tick: the typo check opens. The tick had already written its own fill-ins into the set (the slip, kept to 2000, and
+// the planned reps), so a save while the check was open stored them. The tick now puts them back. The phone's typing
+// path (no change event) is A15-R2-01's test below.
+test('the tick puts its fill-ins back when the typo check stops it (A15-C2-06)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green');
+  const si = workIdx(cur(w).exercises[0])[0];
+  await p.change(`#w-0-${si}`, '3050', true); await p.click(doneBtn(0, si));
+  expect(!!(p.sheet() && p.sheet().querySelector('[data-action="check-keep"]')), 'the typo check is open');
+  p.fire(p.win, 'pagehide', { bubbles: false }); await w.settle();
+  const x = w.stored().current.exercises[0].sets[si];
+  expect(x.actualW == null && x.actualReps == null && !x.done, 'nothing of the slip is stored when the page hides', { w: x.actualW, r: x.actualReps });
+  await p.click('#overlay [data-action="check-keep"]');
+  const y = cur(w).exercises[0].sets[si];
+  expect(y.done && y.actualW === 2000 && y.okW === 2000, '"Keep" still logs the typed weight (kept to 2000)', { w: y.actualW, done: y.done });
+});
+// A15-R2-01: set inputs are saved 350 ms after the last key (audit 14), but a value the typo check would question was
+// saved too, without the check. On a ticked set it was used at once: 2550 typed for 255 stored 2000 lb and moved the
+// later sets up. On the iPhone a tap on a button does not leave the field, so no change event follows and no check was
+// ever shown: the session was saved with 2000 lb. Such a value now waits in the field, unsaved and unused, until a tick
+// or leaving the field asks. These taps are typed with type() (input only) and tapped with trustedTap, as on the phone.
+const setsOf = (ex) => JSON.stringify(ex.sets.map(x => [x.actualW, x.actualReps, !!x.done, x.rpe, !!x.manualW]));
+test('a slip typed into an unticked set waits in the field (A15-R2-01)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const A = w.tab('A'); let p = await A.open(); await start(p, 'green'); await w.advance(1000);
+  const si = workIdx(cur(w).exercises[0])[0], s0 = setsOf(cur(w).exercises[0]);
+  await p.type(`#w-0-${si}`, '3050'); await w.advance(500);
+  expect(setsOf(cur(w).exercises[0]) === s0 && p.$(`#w-0-${si}`).value === '3050', 'unticked: 500 ms after typing a slip nothing is stored and the field keeps the digits', setsOf(cur(w).exercises[0]));
+  await p.trustedTap(doneBtn(0, si), [340, 500], 100);
+  expect(!!(p.sheet() && p.sheet().querySelector('[data-action="check-keep"]')) && setsOf(cur(w).exercises[0]) === s0, 'the tick opens the typo check and stores nothing');
+  p.fire(p.win, 'pagehide', { bubbles: false }); if (p.visible) await p.show(false); await w.settle();
+  expect(setsOf(cur(w).exercises[0]) === s0, 'a hide with the check open stores nothing of the slip', setsOf(cur(w).exercises[0]));
+  if (!p.visible) await p.show(true);
+  await p.trustedTap('#overlay [data-action="check-keep"]', [200, 600], 500);
+  const y = cur(w).exercises[0].sets[si];
+  expect(y.done && y.actualW === 2000, '"Keep" logs the typed weight (kept to 2000)', { w: y.actualW, done: y.done });
+  // "Use" logs the plan; a reload with the check open stores nothing, and ticking asks again.
+  const w2 = new World(); seed(w2, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const B = w2.tab('B'); let q = await B.open(); await start(q, 'green'); await w2.advance(1000);
+  const t0 = setsOf(cur(w2).exercises[0]);
+  await q.type(`#w-0-${si}`, '3050'); await w2.advance(500);
+  await q.trustedTap(doneBtn(0, si), [340, 500], 100);
+  B.reload(); await w2.settle(); q = B.page;
+  expect(setsOf(cur(w2).exercises[0]) === t0 && q.$(`#w-0-${si}`).value !== '3050' && !q.sheet(), 'a reload with the check open: nothing of the slip is stored, the field shows the old value', { sets: setsOf(cur(w2).exercises[0]), field: q.$(`#w-0-${si}`).value });
+  await w2.advance(1000);
+  await q.type(`#w-0-${si}`, '3050'); await q.trustedTap(doneBtn(0, si), [340, 500], 100);
+  await q.trustedTap('#overlay [data-action="check-use"]', [200, 600], 500);
+  const z = cur(w2).exercises[0].sets[si];
+  expect(z.done && z.actualW === z.w && !z.manualW, '"Use" logs the planned weight', { w: z.actualW, plan: z.w, done: z.done });
+});
+test('a slip typed into a ticked set moves nothing (A15-R2-01)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000);
+  const wi = workIdx(cur(w).exercises[0]), si = wi[0], ex = () => cur(w).exercises[0];
+  await logSet(p, 0, si, { rpe: 8 }); await w.advance(1000);
+  const s0 = setsOf(ex()), t0 = ex().target, n0 = ex().adjNote, lifts0 = JSON.stringify(w.stored().lifts);
+  await p.type(`#w-0-${si}`, '2550'); await w.advance(500);
+  expect(setsOf(ex()) === s0 && ex().target === t0 && ex().adjNote === n0 && JSON.stringify(w.stored().lifts) === lifts0 && !p.sheet(), 'ticked: 500 ms after typing a slip, the set, the later sets, the target, the note and the maxes are unchanged', { sets: setsOf(ex()), target: ex().target, was: t0 });
+  const f = p.el(`#w-0-${si}`); p.fire(f, 'change', {}); f.blur(); await w.settle();
+  expect(!!(p.sheet() && /Check this weight/.test(p.sheet().textContent)) && setsOf(ex()) === s0, 'leaving the field opens the typo check; still nothing moves');
+  await w.advance(600); await p.click('#overlay .sheet-bg');
+  expect(!p.sheet() && setsOf(ex()) === s0 && ex().target === t0 && p.$(`#w-0-${si}`).value === '255', 'closing it without an answer leaves the old value, and the field shows it', { sets: setsOf(ex()), field: p.$(`#w-0-${si}`).value });
+  // Digits on the way to a sane value ("2", "26") do not re-aim the later sets; the sane value does, as before.
+  await p.type(`#w-0-${si}`, '2'); await w.advance(400);
+  await p.type(`#w-0-${si}`, '26'); await w.advance(400);
+  expect(setsOf(ex()) === s0 && ex().target === t0, 'the first digits of a new weight in a ticked set move nothing', setsOf(ex()));
+  await p.type(`#w-0-${si}`, '265'); await w.advance(400);
+  expect(ex().sets[si].actualW === 265, 'the sane value is saved 350 ms after the last key, as before', ex().sets[si].actualW);
+});
+// A15-R3-01: after A15-R2-01 such a value waited only in the field, and on the phone path the next tap on any other
+// button redrew the screen and dropped it without a word ("Session updated" even answered "Save changes"). The check
+// now opens for it before that tap acts, and takes the tap: you answer, then tap again. A sane value is untouched.
+const checkFor = (p) => { const s = p.sheet(); return s && /Check this (weight|rep count)/.test(s.textContent) ? s.textContent.replace(/\s+/g, ' ') : null; };
+test('the phone path: a slip in a ticked set asks before the next tick acts (A15-R2-01, A15-R3-01)', async () => {
+  const run = async (slip) => {
+    const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+    const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000);
+    const wi = workIdx(cur(w).exercises[0]);
+    await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000);
+    const s0 = setsOf(cur(w).exercises[0]); let asked = null, held = null;
+    if (slip) {
+      await p.type(`#w-0-${wi[0]}`, '2550'); // the field keeps the focus: a tap on a button does not leave it on the iPhone
+      await p.trustedTap(doneBtn(0, wi[1]), [340, 571], 600);
+      asked = checkFor(p); held = setsOf(cur(w).exercises[0]) === s0 && !cur(w).exercises[0].sets[wi[1]].done;
+      await w.advance(600); await p.click('#overlay .sheet-bg'); // closed without an answer
+      held = held && setsOf(cur(w).exercises[0]) === s0 && p.$(`#w-0-${wi[0]}`).value === '255';
+    }
+    await p.trustedTap(doneBtn(0, wi[1]), [340, 571], 600);
+    const rated = !!(p.sheet() && p.sheet().querySelector('.rpegrid'));
+    if (rated) await p.trustedTap('#overlay [data-action="rpe-pick"][data-v="8"]', [200, 600], 500);
+    const live = setsOf(cur(w).exercises[0]);
+    for (const i of wi.slice(2)) { await w.advance(1000); await logSet(p, 0, i, { rpe: 8 }); }
+    await w.advance(1000); await finish(p, 2);
+    const done = w.stored().sessions[w.stored().sessions.length - 1];
+    return { asked, held, rated, live, saved: done.exercises[0].sets.filter(x => x.kind === 'work').map(x => x.actualW), lifts: JSON.stringify(w.stored().lifts) };
+  };
+  const a = await run(true), b = await run(false);
+  expect(!!a.asked && /set 1: 2000 lb/.test(a.asked), 'the next tick opens the typo check for the slip instead of acting', a.asked);
+  expect(a.held, 'nothing is stored and the next set is not ticked; closed without an answer, the old value stays and the field shows it');
+  expect(a.rated && a.live === b.live, 'the next tick after that logs and rates as usual, and the later sets keep the weights they would have had', { slip: a.live, none: b.live });
+  expect(a.saved[0] === 255 && JSON.stringify(a.saved) === JSON.stringify(b.saved) && a.lifts === b.lifts, 'the saved session holds the logged 255, and the maxes are as without the slip', { slip: a.saved, none: b.saved });
+});
+test('a slip typed while editing a logged session asks before Save changes (A15-R2-01, A15-R3-01)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000);
+  const wi = workIdx(cur(w).exercises[0]);
+  for (const i of wi) { await w.advance(1000); await logSet(p, 0, i, { rpe: 8 }); }
+  await w.advance(1000); await finish(p, 2);
+  const id = w.stored().sessions[w.stored().sessions.length - 1].id, before = w.stored().sessions.find(x => x.id === id).exercises[0].sets.map(x => x.actualW);
+  await p.click('#tabbar button[data-view="history"]'); await openRow(p, id);
+  await p.click(`[data-action="edit-session"][data-id="${id}"]`);
+  const f = `#w-0-${workIdx(cur(w).exercises[0])[0]}`, n0 = p.toasts.length;
+  await p.type(f, '135'); await w.advance(600);
+  await p.trustedTap('[data-action="edit-save"]', [200, 700], 100);
+  let after = w.stored().sessions.find(x => x.id === id).exercises[0].sets.map(x => x.actualW);
+  expect(!!checkFor(p) && !!w.stored().current && JSON.stringify(after) === JSON.stringify(before) && !p.toasts.slice(n0).some(t => /Session updated/.test(t)), 'Save changes opens the check first: the edit stays open, nothing is saved, no "Session updated"', { sheet: checkFor(p), editing: !!w.stored().current, toasts: p.toasts.slice(n0) });
+  if (p.$('#overlay [data-action="check-keep"]')) { await p.trustedTap('#overlay [data-action="check-keep"]', [200, 600], 500); await p.trustedTap('[data-action="edit-save"]', [200, 700], 500); }
+  after = w.stored().sessions.find(x => x.id === id).exercises[0].sets.filter(x => x.kind === 'work').map(x => x.actualW);
+  expect(!w.stored().current && after[0] === 135 && p.toasted('Session updated'), 'after "Keep", a second Save changes saves the session with 135', { after, editing: !!w.stored().current });
+});
+test('a deliberate odd weight waiting in a field is asked about, not dropped (A15-R3-01)', async () => {
+  const fresh = async () => { const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 }); const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000); return { w, p, wi: workIdx(cur(w).exercises[0]) }; };
+  // 135 on a 255 lb day, typed into the ticked, rated set 1; then set 2's tick with the keyboard still up.
+  { const { w, p, wi } = await fresh(); const ex = () => cur(w).exercises[0];
+    await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000); const s0 = setsOf(ex());
+    await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+    await p.trustedTap(doneBtn(0, wi[1]), [340, 571], 600);
+    expect(/set 1: 135/.test(checkFor(p) || '') && setsOf(ex()) === s0 && !ex().sets[wi[1]].done, 'the check opens for set 1; nothing is stored; set 2 is not ticked', { sheet: checkFor(p), sets: setsOf(ex()) });
+    if (p.$('#overlay [data-action="check-keep"]')) await p.trustedTap('#overlay [data-action="check-keep"]', [200, 600], 500);
+    expect(!p.sheet() && ex().sets[wi[0]].actualW === 135 && ex().sets[wi[0]].done && !ex().sets[wi[1]].done, '"Keep" records 135 in the ticked set', setsOf(ex()));
+    await p.trustedTap(doneBtn(0, wi[1]), [340, 571], 600);
+    expect(ex().sets[wi[1]].done, 'the next tick then works', setsOf(ex())); }
+  // A questioned value in a LATER, unticked set, then the current set's tick: the check is for the later set.
+  { const { w, p, wi } = await fresh(); const ex = () => cur(w).exercises[0], s0 = setsOf(ex());
+    await p.type(`#w-0-${wi[2]}`, '135'); await w.advance(600);
+    await p.trustedTap(doneBtn(0, wi[0]), [340, 500], 600);
+    expect(/set 3: 135/.test(checkFor(p) || '') && setsOf(ex()) === s0, 'the check is for the later set, and set 1 is not ticked', { sheet: checkFor(p), sets: setsOf(ex()) }); }
+  // A tab, by touch as on the phone (the fast tap, D27), under both blur models (D28): the check opens and the view stays.
+  for (const model of ['N', 'W']) { const { w, p, wi } = await fresh(); p.blurChange = model === 'W';
+    await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000);
+    await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+    const taken = await p.fastTap('#tabbar button[data-view="program"]', [150, 840], 600);
+    expect(taken && !!checkFor(p) && p.$('#tabbar button[aria-current="page"]').dataset.view === 'today' && cur(w).exercises[0].sets[wi[0]].actualW !== 135, `a tab touch opens the check and the session stays on screen (model ${model}, A15-R4-01)`, { sheet: checkFor(p), view: p.$('#tabbar button[aria-current="page"]').dataset.view }); }
+  // That row's own tick on a set already ticked (Undo set) asks too, as a desktop click does by leaving the field.
+  { const { w, p, wi } = await fresh(); const ex = () => cur(w).exercises[0];
+    await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000); const s0 = setsOf(ex());
+    await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+    await p.trustedTap(doneBtn(0, wi[0]), [340, 500], 600);
+    expect(/set 1: 135/.test(checkFor(p) || '') && setsOf(ex()) === s0, 'Undo set on the same row asks first; the set stays ticked (A15-C4-01)', { sheet: checkFor(p), sets: setsOf(ex()) }); }
+  // That row's own tick on an unticked set reads the field itself: the check comes from the tick, and "Keep" ticks it.
+  { const { w, p, wi } = await fresh(); const ex = () => cur(w).exercises[0];
+    await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+    await p.trustedTap(doneBtn(0, wi[0]), [340, 500], 600);
+    await p.trustedTap('#overlay [data-action="check-keep"]', [200, 600], 500);
+    expect(ex().sets[wi[0]].done && ex().sets[wi[0]].actualW === 135, 'the row\'s own tick: "Keep" logs the set at 135', setsOf(ex())); }
+});
+// A15-R3-04: while a questioned value waits in a weight field, the plates under it described the stored weight.
+test('the plates under a weight field never describe another weight (A15-R3-04)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000);
+  const si = workIdx(cur(w).exercises[0])[0], f = `#w-0-${si}`, plates = () => p.$(f).nextElementSibling.textContent;
+  await logSet(p, 0, si, { rpe: 8 }); await w.advance(2000);
+  const r0 = plates();
+  await p.type(f, '250'); await w.advance(400); const sane = plates();
+  await p.type(f, '255'); await w.advance(400);
+  await p.type(f, '135'); await w.advance(400); const odd = plates();
+  await p.trustedTap(doneBtn(0, workIdx(cur(w).exercises[0])[1]), [340, 571], 600); // the check asks (A15-R3-01)
+  await w.advance(600); await p.click('#overlay .sheet-bg');
+  expect(sane !== r0 && sane !== 'lb', 'a sane typed weight shows its own plates, as before', { r0, sane });
+  expect(odd === 'lb', 'a questioned value waiting in the field shows plain "lb", not the stored weight\'s plates', { r0, odd });
+  expect(!p.sheet() && p.$(f).value === '255' && plates() === r0, 'closing the check puts the stored weight and its plates back', { value: p.$(f).value, plates: plates() });
+});
+test('a sane typed value, the rest bar and an open sheet are left alone (A15-R3-01)', async () => {
+  const fresh = async () => { const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 }); const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000); return { w, p, wi: workIdx(cur(w).exercises[0]) }; };
+  // A sane 250 typed into set 1, then set 2's tick (before and after the 350 ms save), under both blur models (D28): the
+  // field is left first, so 250 carries as on a desktop and set 2 is logged at 250 (decision 15; it was logged at its plan).
+  for (const model of ['N', 'W']) for (const ms of [100, 600]) { const { w, p, wi } = await fresh(); p.blurChange = model === 'W'; const ex = () => cur(w).exercises[0];
+    await p.type(`#w-0-${wi[0]}`, '250'); await p.trustedTap(doneBtn(0, wi[1]), [340, 571], ms);
+    expect(!checkFor(p) && ex().sets[wi[0]].actualW === 250 && !ex().sets[wi[0]].done && ex().sets[wi[1]].done && ex().sets[wi[1]].actualW === 250 && wi.slice(2).every(i => ex().sets[i].actualW === 250 && !ex().sets[i].done), `sane 250, set 2 ticked ${ms} ms later (model ${model}): no check; 250 carries, set 2 is logged at 250 (decision 15)`, setsOf(ex())); }
+  // "+30s" and "Done" on the rest bar: no check, the field keeps its digits.
+  { const { w, p, wi } = await fresh(); const ex = () => cur(w).exercises[0];
+    await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000); const s0 = setsOf(ex()), end0 = w.stored().timer && w.stored().timer.end;
+    await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+    await p.trustedTap('#timer [data-action="timer-add"]', [300, 780], 600);
+    expect(!p.sheet() && p.$(`#w-0-${wi[0]}`).value === '135' && p.active === p.$(`#w-0-${wi[0]}`) && setsOf(ex()) === s0 && w.stored().timer.end === end0 + 30000, '+30s adds time and leaves the field and its digits alone', { sheet: !!p.sheet(), field: p.$(`#w-0-${wi[0]}`).value });
+    await p.trustedTap('#timer [data-action="timer-stop"]', [360, 780], 600);
+    expect(!p.sheet() && p.$(`#w-0-${wi[0]}`).value === '135' && !w.stored().timer, 'Done ends the rest and leaves the field alone', { sheet: !!p.sheet(), field: p.$(`#w-0-${wi[0]}`).value }); }
+  // With a sheet open, its buttons are the answer: a questioned value focused behind it does not take the tap.
+  { const { w, p, wi } = await fresh(); const ex = () => cur(w).exercises[0];
+    await p.type(`#w-0-${wi[0]}`, '135'); await p.trustedTap(doneBtn(0, wi[0]), [340, 500], 600); // the check, from the row's own tick
+    p.focusAs(`#w-0-${wi[0]}`); // the field focused again behind the open check (its value still 135)
+    await p.trustedTap('#overlay [data-action="check-keep"]', [200, 600], 500);
+    expect(ex().sets[wi[0]].done && ex().sets[wi[0]].actualW === 135, '"Keep" answers the open check as usual', setsOf(ex())); }
+  // After "Fix it" the digits wait in the field: another row's tick asks again.
+  { const w = new World(); seed(w, { blockIdx: 2, week: 3, dayIdx: 0, macroPos: 4 });
+    const p = await w.tab('A').open(); await start(p, 'green');
+    const sets = cur(w).exercises[0].sets, top = sets.findIndex(x => x.open), other = sets.findIndex((x, i) => i !== top && !x.done), f = `#w-0-${top}`;
+    await p.change(f, '3650'); await p.click('#overlay [data-action="check-fix"]');
+    await p.trustedTap(doneBtn(0, other), [340, 400], 600);
+    expect(!!(p.sheet() && p.sheet().querySelector('[data-action="check-fix"]')) && !cur(w).exercises[0].sets[other].done && cur(w).exercises[0].sets[top].actualW == null, 'after "Fix it", another row\'s tick brings the check back and does not tick that row', { sheet: !!p.sheet(), other: cur(w).exercises[0].sets[other].done }); }
+});
+// A15-R4-01 (decision 26): the tab bar and the rest bar act on the touch itself (the fast tap, D27), and the row's own
+// RPE button left the field and relied on the browser sending change on the way out (D28). Where it does not (model N),
+// a questioned value was dropped without a word; where it does (model W), a tab touch showed the check over the other
+// tab. All three now ask first, as every other button does: the check opens, the tap goes no further, nothing is
+// stored until the answer, and "Keep" records it.
+test('a tab touch, a "+30s" touch and the row\'s own RPE button ask first, under both blur models (A15-R4-01)', async () => {
+  const fresh = async (model) => { const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 }); const p = await w.tab('A').open(); p.blurChange = model === 'W'; await start(p, 'green'); await w.advance(1000); const wi = workIdx(cur(w).exercises[0]); await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000); return { w, p, wi, ex: () => cur(w).exercises[0] }; };
+  const view = (p) => p.$('#tabbar button[aria-current="page"]').dataset.view;
+  const keep = async (p) => { if (p.$('#overlay [data-action="check-keep"]')) await p.trustedTap('#overlay [data-action="check-keep"]', [200, 600], 500); };
+  for (const model of ['N', 'W']) {
+    { const { w, p, wi, ex } = await fresh(model); const s0 = setsOf(ex());
+      await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+      const taken = await p.fastTap('#tabbar button[data-view="program"]', [150, 840], 600);
+      expect(taken && /set 1: 135/.test(checkFor(p) || '') && view(p) === 'today' && setsOf(ex()) === s0, `tab touch, model ${model}: the check opens, the view stays on Today, nothing is stored`, { sheet: checkFor(p), view: view(p), sets: setsOf(ex()) });
+      await keep(p);
+      expect(!p.sheet() && ex().sets[wi[0]].actualW === 135 && ex().sets[wi[0]].done && view(p) === 'today' && !p.errors.length, `tab touch, model ${model}: "Keep" records 135 in the ticked set, still on Today`, { sets: setsOf(ex()), view: view(p) }); }
+    { const { w, p, wi, ex } = await fresh(model); const s0 = setsOf(ex()), end0 = w.stored().timer && w.stored().timer.end;
+      await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+      const taken = await p.fastTap('#timer [data-action="timer-add"]', [300, 780], 600);
+      expect(taken && end0 > 0 && /set 1: 135/.test(checkFor(p) || '') && setsOf(ex()) === s0 && w.stored().timer.end === end0, `"+30s" touch, model ${model}: the check opens, nothing is stored, no time is added`, { sheet: checkFor(p), sets: setsOf(ex()), end: w.stored().timer && w.stored().timer.end - end0 });
+      await keep(p);
+      expect(!p.sheet() && ex().sets[wi[0]].actualW === 135 && ex().sets[wi[0]].done && w.stored().timer.end === end0, `"+30s" touch, model ${model}: "Keep" records 135; the rest is as it was`, setsOf(ex())); }
+    { const { w, p, wi, ex } = await fresh(model); const s0 = setsOf(ex());
+      await p.type(`#w-0-${wi[0]}`, '135'); await w.advance(600);
+      await p.trustedTap(`#main button[data-action="rpe"][data-ei="0"][data-si="${wi[0]}"]`, [280, 500], 600);
+      expect(/set 1: 135/.test(checkFor(p) || '') && !(p.sheet() && p.sheet().querySelector('.rpegrid')) && setsOf(ex()) === s0, `the row's own RPE button, model ${model}: the check opens (not the RPE sheet), nothing is stored`, { sheet: checkFor(p), sets: setsOf(ex()) });
+      await keep(p);
+      expect(!p.sheet() && ex().sets[wi[0]].actualW === 135 && ex().sets[wi[0]].done && ex().sets[wi[0]].rpe === 8, `the row's own RPE button, model ${model}: "Keep" records 135 and the set keeps its RPE 8`, setsOf(ex())); }
+    // Ordinary touches are unchanged: nothing waiting, a tab touch switches the tab and a "+30s" touch adds 30 s.
+    { const { w, p } = await fresh(model); const end0 = w.stored().timer.end;
+      const t1 = await p.fastTap('#timer [data-action="timer-add"]', [300, 780], 600);
+      expect(t1 && !p.sheet() && w.stored().timer.end === end0 + 30000, `"+30s" touch with nothing waiting, model ${model}: 30 s added`, w.stored().timer.end - end0);
+      const t2 = await p.fastTap('#tabbar button[data-view="program"]', [150, 840], 600);
+      expect(t2 && view(p) === 'program' && !p.sheet(), `tab touch with nothing waiting, model ${model}: Program opens`, view(p)); }
+  }
+});
+// Decision 15: on the iPhone a tap on a button does not leave a focused set field (D12), so a sane typed weight was
+// saved as you typed but never committed, and did not carry to the later sets. A session button now leaves the field
+// first, as a desktop click does. Each case is run the iPhone's way (type(): input only, the field keeps the focus)
+// under both blur models (D28), and compared with the desktop's way (the value committed by change and the field
+// left before the same tap): the stored sets, the note, the toasts and the sheet must match.
+test('decision 15: a session button leaves a focused set field first, as on a desktop, under both blur models', async () => {
+  const fresh = async (model, ticked) => { const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 }); const p = await w.tab('A').open(); p.blurChange = model === 'W'; await start(p, 'green'); await w.advance(1000); const wi = workIdx(cur(w).exercises[0]); if (ticked) { await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000); } return { w, p, wi, ex: () => cur(w).exercises[0] }; };
+  // The snapshot holds every exercise's sets, the weights the screen shows in exercise 0, and whether a set field
+  // still has the focus (a desktop click has left it; so must the phone, A15-AR-02).
+  const snap = (p, w, n0) => { const ex = cur(w).exercises[0]; return JSON.stringify({ sets: cur(w).exercises.map(setsOf), shown: ex.sets.map((x, i) => p.$(`#w-0-${i}`) ? p.$(`#w-0-${i}`).value : null), note: ex.adjNote || '', toasts: p.toasts.slice(n0), sheet: !p.sheet() ? null : p.sheet().querySelector('.rpegrid') ? 'rpe' : checkFor(p) ? 'check' : 'other', inField: !!(p.active && p.active.dataset && p.active.dataset.set), errors: p.errors.length }); };
+  // left: no set field has the focus after the tap; outs: the focusout events the typed field sent. A desktop click's
+  // blur sends one before the tap acts; a redraw that only removes the field sends none.
+  const run = async (how, ticked, val, tap, ms, o = {}) => { const { w, p, wi, ex } = await fresh(how === 'desktop' ? 'N' : how, ticked); const n0 = p.toasts.length, f = o.field ? o.field(wi) : `#w-0-${wi[0]}`;
+    let outs = 0; p.$(f).addEventListener('focusout', () => { outs++; });
+    if (how === 'desktop') await p.change(f, val); else await p.type(f, val);
+    await p.trustedTap(tap(wi), [340, 571], ms); const left = !(p.active && p.active.dataset && p.active.dataset.set); if (o.wait) await w.advance(o.wait);
+    return { s: snap(p, w, n0), ex: ex(), wi, p, left, outs }; };
+  const cases = [
+    ['item 22: a sane 250 typed into set 1, then set 2\'s tick 100 ms later', false, '250', (wi) => doneBtn(0, wi[1]), 100],
+    ['item 22: a sane 250 typed into set 1, then set 2\'s tick 600 ms later', false, '250', (wi) => doneBtn(0, wi[1]), 600],
+    ['item 23: ticked set 1 changed to a sane 265, then "Remove sets" on the next exercise', true, '265', () => '#main [data-action="edit-sets"][data-ei="1"]', 600],
+    ['ticked set 1 changed to a sane 265, then set 2\'s tick', true, '265', (wi) => doneBtn(0, wi[1]), 600],
+    // A15-AR-02: a reps change carries and re-aims too; a tick in another exercise at the same set index is another row.
+    ['a sane rep count (3) typed into ticked set 1, then set 2\'s tick 100 ms later', true, '3', (wi) => doneBtn(0, wi[1]), 100, { field: (wi) => `#r-0-${wi[0]}` }],
+    ['a sane 250 typed into set 1, then the tick at the same set index in the next exercise', false, '250', (wi) => doneBtn(1, wi[0]), 100],
+    // A15-AR-01: "Undo set" reads neither the field nor the typing save, so the field is left first, as on a desktop.
+    // Compared a second after the tap, when the typing save would have run.
+    ['ticked set 1 changed to a sane 265, then its own tick ("Undo set") 100 ms later', true, '265', (wi) => doneBtn(0, wi[0]), 100, { wait: 1000 }],
+    ['ticked set 1 changed to a sane 265, then its own tick ("Undo set") 600 ms later', true, '265', (wi) => doneBtn(0, wi[0]), 600, { wait: 1000 }],
+  ];
+  for (const [name, ticked, val, tap, ms, o] of cases) {
+    const d = await run('desktop', ticked, val, tap, ms, o);
+    for (const model of ['N', 'W']) { const r = await run(model, ticked, val, tap, ms, o); expect(r.s === d.s && r.left && r.outs === 1 && d.outs === 1, `${name}, model ${model}: the same as on a desktop, and the field is left first`, { phone: r.s, desktop: d.s, left: r.left, outs: [r.outs, d.outs] }); }
+  }
+  // The cases above really reach what they name: the other exercise has a tick at that index, and the rep count re-aims.
+  { const { p, wi } = await fresh('N', false); expect(!!p.$(doneBtn(1, wi[0])), 'the next exercise has a tick at the same set index as set 1', wi[0]); }
+  { const r = await run('N', true, '3', (wi) => doneBtn(0, wi[1]), 100, { field: (wi) => `#r-0-${wi[0]}` });
+    expect(r.ex.sets[r.wi[0]].actualReps === 3 && /next sets down/.test(r.ex.adjNote || '') && r.ex.sets[r.wi[1]].done, 'a rep count typed on the phone is committed before the next tick: set 1 holds 3 reps and the next sets are re-aimed', { sets: setsOf(r.ex), note: r.ex.adjNote }); }
+  // "Undo set" after a sane 265 (on-phone item 46, A15-AR-01): the screen and the stored set agree, on the phone as on a desktop.
+  for (const model of ['N', 'W']) { const r = await run(model, true, '265', (wi) => doneBtn(0, wi[0]), 100, { wait: 1000 }); const x = r.ex.sets[r.wi[0]];
+    expect(!x.done && r.p.$(`#w-0-${r.wi[0]}`).value === String(x.actualW != null ? x.actualW : x.w), `"Undo set" 100 ms after a sane 265, model ${model}: set 1 is unticked and its field shows what is stored`, { shown: r.p.$(`#w-0-${r.wi[0]}`).value, actualW: x.actualW, plan: x.w }); }
+  // The row's own RPE button with a sane 265 typed into its ticked set: the RPE sheet opens (no check), the set keeps
+  // RPE 8 and holds 265, and the whole snapshot (stored sets, the weights shown, note, toasts, sheet) is the desktop's
+  // under both models: the button leaves the field first, like every other button (A15-AR-03).
+  for (const ms of [100, 600]) { const own = (wi) => `#main button[data-action="rpe"][data-ei="0"][data-si="${wi[0]}"]`, d = await run('desktop', true, '265', own, ms, { wait: 1000 });
+    for (const model of ['N', 'W']) { const r = await run(model, true, '265', own, ms, { wait: 1000 }); const x = r.ex.sets[r.wi[0]];
+      expect(r.s === d.s && /"sheet":"rpe"/.test(r.s) && x.actualW === 265 && x.done && x.rpe === 8 && r.left, `the row's own RPE button ${ms} ms after a sane 265, model ${model}: the RPE sheet opens, the set keeps RPE 8 and holds 265, as on a desktop`, { phone: r.s, desktop: d.s }); } }
+  // A15-AR-03 (on-phone item 47): the row's own RPE button, compared with the desktop under both models.
+  // a: ticked set 1 (RPE 8), a sane 265 typed, its RPE button 100 ms later: the screen and the data at the tap.
+  // b: 250 committed into set 1 first (the later sets carry it), then the same: a second later the later sets carry 265.
+  // c: a stored 135 never confirmed, retyped "135.0" (heldSlip lets it by), then its RPE button: the check asks first.
+  { const sheetOf = (p) => !p.sheet() ? null : p.sheet().querySelector('.rpegrid') ? 'rpe' : checkFor(p) ? 'check' : 'other';
+    const own = (wi) => `#main button[data-action="rpe"][data-ei="0"][data-si="${wi[0]}"]`;
+    const snapR = (p, w) => { const ex = cur(w).exercises[0]; return JSON.stringify({ sets: setsOf(ex), shown: ex.sets.map((x, i) => p.$(`#w-0-${i}`) ? p.$(`#w-0-${i}`).value : null), note: ex.adjNote || '', sheet: sheetOf(p), check: (checkFor(p) || '').slice(0, 70) }); };
+    const variant = async (how, kind) => { const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 }); const t = w.tab('A');
+      let p = await t.open(); p.blurChange = how === 'W'; await start(p, 'green'); await w.advance(1000);
+      const wi = workIdx(cur(w).exercises[0]), f = `#w-0-${wi[0]}`;
+      if (kind === 'b') { await p.change(f, '250'); await w.advance(1000); }
+      await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000);
+      let val = '265';
+      if (kind === 'c') { p.unload(); const st = w.stored(), x = st.current.exercises[0].sets[wi[0]]; x.actualW = 135; delete x.okW; w.local.set(KEY, JSON.stringify(st)); p = await t.open(); p.blurChange = how === 'W'; await w.advance(1000); val = '135.0'; }
+      if (how === 'desktop') await p.change(f, val); else await p.type(f, val);
+      await p.trustedTap(own(wi), [280, 500], kind === 'c' ? 600 : 100); if (kind === 'b') await w.advance(1000);
+      return { s: snapR(p, w), ex: cur(w).exercises[0], wi }; };
+    const reach = { a: (d) => /"sheet":"rpe"/.test(d.s) && d.wi.slice(1).every(i => d.ex.sets[i].actualW === 250),
+      b: (d) => /"sheet":"rpe"/.test(d.s) && d.wi.every(i => d.ex.sets[i].actualW === 265),
+      c: (d) => /"sheet":"check"/.test(d.s) && /set 1: 135/.test(d.s) };
+    for (const kind of ['a', 'b', 'c']) { const d = await variant('desktop', kind);
+      expect(reach[kind](d), `AR-03 ${kind}: the desktop path reaches what the case names`, d.s);
+      for (const model of ['N', 'W']) { const r = await variant(model, kind); expect(r.s === d.s, `AR-03 ${kind}, the row's own RPE button, model ${model}: the same as on a desktop`, { phone: r.s, desktop: d.s }); } } }
+  // The carry itself, spelled out (on-phone item 22): 250 reaches the later sets, and set 2 is logged at 250.
+  { const r = await run('N', false, '250', (wi) => doneBtn(0, wi[1]), 600);
+    expect(r.wi.slice(1).every(i => r.ex.sets[i].actualW === 250) && r.ex.sets[r.wi[1]].done && !r.ex.sets[r.wi[0]].done, 'set 1 holds 250, set 2 is logged at 250 and set 3 carries it', setsOf(r.ex)); }
+  // That row's own tick reads the field itself and is left as it was: set 1 is logged at 250, the later sets keep their plan.
+  for (const model of ['N', 'W']) { const r = await run(model, false, '250', (wi) => doneBtn(0, wi[0]), 600);
+    expect(r.ex.sets[r.wi[0]].done && r.ex.sets[r.wi[0]].actualW === 250 && r.wi.slice(1).every(i => r.ex.sets[i].actualW == null && !r.ex.sets[i].done), `the row's own tick, model ${model}: set 1 is logged at 250, the later sets keep their plan (as before)`, setsOf(r.ex)); }
+  // A field that is only focused, never typed in, is not committed (a desktop sends no change for it either).
+  for (const model of ['N', 'W']) { const { p, wi, ex } = await fresh(model, false); const plan = ex().sets[wi[1]].w;
+    p.focusAs(`#w-0-${wi[0]}`); await p.trustedTap(doneBtn(0, wi[1]), [340, 571], 600);
+    expect(ex().sets[wi[0]].actualW == null && !ex().sets[wi[0]].done && ex().sets[wi[1]].done && ex().sets[wi[1]].actualW === plan, `a field only focused, then set 2's tick, model ${model}: set 1 is left as it was`, setsOf(ex())); }
+  // A typo check that leaving the field opens takes the tap: a stored weight the check questions (never confirmed),
+  // retyped as "135.0", then set 2's tick. heldSlip lets it by (the same number as stored); the commit asks.
+  for (const model of ['N', 'W']) { const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+    const t = w.tab('A'); let p = await t.open(); await start(p, 'green'); await w.advance(1000);
+    const wi = workIdx(cur(w).exercises[0]); await logSet(p, 0, wi[0], { rpe: 8 }); await w.advance(2000);
+    p.unload(); const st = w.stored(), x = st.current.exercises[0].sets[wi[0]]; x.actualW = 135; delete x.okW; w.local.set(KEY, JSON.stringify(st));
+    p = await t.open(); p.blurChange = model === 'W'; await w.advance(1000);
+    await p.type(`#w-0-${wi[0]}`, '135.0'); await w.advance(600);
+    await p.trustedTap(doneBtn(0, wi[1]), [340, 571], 600);
+    const e = cur(w).exercises[0];
+    expect(/set 1: 135/.test(checkFor(p) || '') && !e.sets[wi[1]].done, `a check opened by leaving the field takes the tap, model ${model}: set 2 is not ticked`, { sheet: checkFor(p), sets: setsOf(e) }); }
+  // Editing a logged session: a sane value typed, then "Save changes" with the field focused saves that value.
+  for (const model of ['N', 'W']) { const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+    const p = await w.tab('A').open(); p.blurChange = model === 'W'; await start(p, 'green'); await w.advance(1000);
+    const wi = workIdx(cur(w).exercises[0]);
+    for (const i of wi) { await w.advance(1000); await logSet(p, 0, i, { rpe: 8 }); }
+    await w.advance(1000); await finish(p, 2);
+    const id = w.stored().sessions[w.stored().sessions.length - 1].id;
+    await p.click('#tabbar button[data-view="history"]'); await openRow(p, id); await p.click(`[data-action="edit-session"][data-id="${id}"]`);
+    await w.advance(1000); await p.type(`#w-0-${workIdx(cur(w).exercises[0])[1]}`, '250');
+    await p.trustedTap('[data-action="edit-save"]', [200, 700], 100);
+    const saved = w.stored().sessions.find(x => x.id === id).exercises[0].sets.filter(x => x.kind === 'work').map(x => x.actualW);
+    expect(!w.stored().current && saved[1] === 250 && p.toasted('Session updated') && !p.errors.length, `editing a logged session, model ${model}: 250 typed into set 2, then "Save changes" 100 ms later saves 250`, { saved, editing: !!w.stored().current }); }
+  // "Fix it" digits corrected to a sane value, then another row's tick: committed once, the same under both models.
+  const fixed = [];
+  for (const model of ['N', 'W']) { const w = new World(); seed(w, { blockIdx: 2, week: 3, dayIdx: 0, macroPos: 4 });
+    const p = await w.tab('A').open(); p.blurChange = model === 'W'; await start(p, 'green');
+    const sets = cur(w).exercises[0].sets, top = sets.findIndex(x => x.open), other = sets.findIndex((x, i) => i !== top && !x.done), f = `#w-0-${top}`, plan = sets[top].w;
+    await p.change(f, '3650'); await p.click('#overlay [data-action="check-fix"]');
+    const n0 = p.toasts.length; await p.type(f, String(plan)); await w.advance(600);
+    await p.trustedTap(doneBtn(0, other), [340, 400], 600);
+    const ex = cur(w).exercises[0];
+    expect(!checkFor(p) && ex.sets[top].actualW === plan && ex.sets[other].done && !p.errors.length, `after "Fix it", the planned ${plan} typed, then another row's tick, model ${model}: no check; ${plan} is stored and the tick acts`, { sets: setsOf(ex), sheet: checkFor(p) });
+    fixed.push(JSON.stringify({ sets: setsOf(ex), toasts: p.toasts.slice(n0) })); }
+  expect(fixed[0] === fixed[1], 'after "Fix it": the same sets and toasts under both models (committed once)', fixed);
+});
+// A15-R2-02: in History, "‹ Earlier" and "Later ›" under a chart moved 46-138 px on almost every tap, because the
+// chart was held still and the session details above the buttons change length. The tapped button now holds itself
+// still. This DOM has no layout: a step button reports its top as 400 + 30 x (the session number shown beside it), so
+// one step earlier puts it 30 px higher, and the scroll must follow it.
+test('Earlier and Later stay under the finger (A15-R2-02)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open();
+  for (let n = 0; n < 5; n++) {
+    await start(p, 'green'); await w.advance(1000);
+    const exs = cur(w).exercises;
+    for (let ei = 0; ei < exs.length; ei++) if (exs[ei].lift) for (const si of workIdx(cur(w).exercises[ei])) { await w.advance(1000); if (cur(w).exercises[ei].sets[si]) await logSet(p, ei, si, { rpe: 8 }); }
+    await w.advance(1000); await finish(p, 2); await w.advance(3600e3);
+  }
+  await p.click('#tabbar button[data-view="history"]');
+  const cv = p.el('#c-squat'); p.fire(cv, 'click', { clientX: 330, clientY: 40 }); await w.settle(); // a pick on a dot
+  const nav = () => { const s = p.$('#trend-card .pt-nav .num'); return s ? s.textContent.split(' of ').map(Number) : [null, null]; }, shown = () => nav()[0];
+  const [k0, n] = nav(), dir = k0 > 2 ? -1 : 1, step = `#trend-card [data-action="chart-step"][data-dir="${dir}"]`, back = `#trend-card [data-action="chart-step"][data-dir="${-dir}"]`;
+  expect(n >= 3 && k0 >= 1, 'the chart detail is open on a squat session, with three to step through', { k0, n });
+  const pos = p.$('#trend-card .pt-nav .pt-pos');
+  expect(!!pos && pos.dataset.w === '0'.repeat(String(n).length) + ' of ' + n, 'the session number keeps the room of its widest value, so the row never re-wraps as it gains a digit (A15-C4-02)', pos && pos.dataset.w);
+  const rect = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function () {
+    const t = this.dataset && this.dataset.action === 'chart-step' ? 400 + 30 * (Number((this.parentNode.textContent.match(/(\d+) of/) || [])[1]) || 0) : this.id === 'c-squat' ? 100 : 0;
+    const h = this.classList && this.classList.contains('pt-card') ? 300 + 10 * (Number((this.textContent.match(/(\d+) of/) || [])[1]) || 0) : 36; // the details' height changes per session (A15-R3-02)
+    return { top: t, bottom: t + h, left: 0, right: 0, width: 0, height: h, x: 0, y: t };
+  };
+  try {
+    const sc = p.$('#scroller'); sc.scrollTop = 600;
+    await p.trustedTap(step, [60, 520], 500);
+    expect(shown() === k0 + dir && sc.scrollTop === 600 + 30 * dir, 'one step: the scroll follows the tapped button by its 30 px', { shown: shown(), scroll: sc.scrollTop });
+    const minH = () => (p.$('#trend-card .pt-card') || { style: {} }).style.minHeight;
+    expect(minH() === (300 + 10 * k0) + 'px', 'a step keeps the details at least as tall as they were, so at the top of History nothing moves (A15-R3-02)', { minH: minH(), was: 300 + 10 * k0 });
+    await p.trustedTap(step, [60, 520], 200);
+    expect(shown() === k0 + 2 * dir && sc.scrollTop === 600 + 60 * dir, 'a second tap 200 ms later steps again, and the button is still under the finger', { shown: shown(), scroll: sc.scrollTop });
+    await p.trustedTap(back, [200, 520], 500);
+    expect(shown() === k0 + dir && sc.scrollTop === 600 + 30 * dir, 'the other button holds itself the same way', { shown: shown(), scroll: sc.scrollTop });
+    p.fire(p.el('#c-squat'), 'click', { clientX: 300, clientY: 40 }); await w.settle(); // a pick while the details are open
+    expect(!!p.$('#trend-card .pt-nav') && !minH(), 'a pick starts the details afresh (no kept height)', minH());
+    const y0 = sc.scrollTop; await p.trustedTap('#trend-card [data-action="chart-close"]', [340, 300], 500);
+    expect(!p.$('#trend-card .pt-nav') && sc.scrollTop === y0, 'Close holds the chart, as before', sc.scrollTop);
+    p.fire(p.el('#c-squat'), 'click', { clientX: 330, clientY: 40 }); await w.settle(); // a new pick
+    expect(!!p.$('#trend-card .pt-nav') && !minH(), 'Close, then a new pick, starts the details afresh (no kept height)', minH());
+  } finally { Element.prototype.getBoundingClientRect = rect; }
+});
+// A15-R2-04: the rest bar's label was chosen when the set was ticked, before the fatigue stop could cut the rest of
+// the exercise, so it went on naming the finished exercise ("· Competition Squat", "Next: Competition Squat"). The
+// same after "Cut the remaining sets" or deleting the last open set. It now names what comes next, and Restore or
+// Undo delete puts it back. The rest itself is neither restarted nor made longer.
+test('the rest bar names the next exercise after a fatigue stop, a cut or a delete (A15-R2-04)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000);
+  const ex = (i) => cur(w).exercises[i], wi = workIdx(ex(0)), n0 = ex(0).name, n1 = ex(1).name;
+  const bar = () => { const t = p.$('#timer .t-sub'); return t ? t.textContent : ''; };
+  await logSet(p, 0, wi[0], { r: ex(0).sets[wi[0]].reps - 1, rpe: 10 });
+  const end = w.stored().timer && w.stored().timer.end;
+  expect(ex(0).autoStopped && ex(0).sets.every(x => x.done || x.kind !== 'work'), 'a missed rep at RPE 10 fires the fatigue stop and cuts the rest of the exercise');
+  expect(w.stored().timer.label === n1 && bar().endsWith(n1) && w.stored().timer.end === end, 'the running rest names the next exercise, with the same end time', { label: w.stored().timer.label, bar: bar() });
+  await p.click('#main [data-action="restore-sets"][data-ei="0"]');
+  expect(w.stored().timer.label === n0 && bar().endsWith(n0) && w.stored().timer.end === end, 'Restore puts the label back', { label: w.stored().timer.label, bar: bar() });
+  // "Cut the remaining sets" by hand.
+  await p.click('#main [data-action="cut-sets"][data-ei="0"]');
+  expect(w.stored().timer.label === n1 && w.stored().timer.end === end, '"Cut the remaining sets": the next exercise', w.stored().timer.label);
+  // Deleting the last open set, then Undo delete.
+  const w2 = new World(); seed(w2, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const q = await w2.tab('B').open(); await start(q, 'green'); await w2.advance(1000);
+  const e2 = () => cur(w2).exercises[0], wj = workIdx(e2());
+  for (const i of wj.slice(0, -1)) { await w2.advance(1000); await logSet(q, 0, i, { rpe: 8 }); }
+  expect(w2.stored().timer.label === n0, 'resting after a set with one left: the bar names this exercise', w2.stored().timer.label);
+  await q.click('#main [data-action="edit-sets"][data-ei="0"]');
+  await q.click(`#main button.del[data-ei="0"][data-si="${wj[wj.length - 1]}"]`);
+  expect(w2.stored().timer && w2.stored().timer.label === n1, 'the last open set deleted: the next exercise', w2.stored().timer && w2.stored().timer.label);
+  await q.click('#main [data-action="undo-del"][data-ei="0"]');
+  expect(w2.stored().timer.label === n0, 'Undo delete puts it back', w2.stored().timer.label);
+  await w2.advance(1000); await logSet(q, 0, wj[wj.length - 1], { rpe: 8 });
+  expect(w2.stored().timer.label === n1, 'the last work set ticked with the warm-ups left unticked: the next exercise', w2.stored().timer.label);
+});
+// A15-R3-03: cut sets that come back because a reading was corrected in its field, or because a mid-session max change
+// rebased the session, left the rest bar naming the next exercise. They now put this exercise's name back.
+test('cut sets that come back put the rest label back: a corrected field, a max change (A15-R3-03)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green'); await w.advance(1000);
+  const ex = (i) => cur(w).exercises[i], wi = workIdx(ex(0)), n0 = ex(0).name, n1 = ex(1).name, reps = ex(0).sets[wi[0]].reps;
+  const bar = () => { const t = p.$('#timer .t-sub'); return t ? t.textContent : ''; };
+  await logSet(p, 0, wi[0], { r: reps - 1, rpe: 10 }); // a mistyped rep count: the fatigue stop cuts the rest
+  const end = w.stored().timer && w.stored().timer.end;
+  expect(ex(0).autoStopped && w.stored().timer.label === n1, 'the stop names the next exercise', w.stored().timer && w.stored().timer.label);
+  await p.change(`#r-0-${wi[0]}`, String(reps)); // the reps corrected in the field
+  expect(!ex(0).autoStopped && workIdx(ex(0)).length === wi.length && w.stored().timer.label === n0 && bar().endsWith(n0) && w.stored().timer.end === end, 'the sets come back and the bar names this exercise again, with the same end time', { label: w.stored().timer.label, bar: bar(), sets: workIdx(ex(0)).length });
+  // A stop on a later set still 2+ over target, then a lower max (365 -> 320) under which it no longer holds.
+  const w2 = new World(); seed(w2, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const q = await w2.tab('B').open(); await start(q, 'green'); await w2.advance(1000);
+  const e2 = () => cur(w2).exercises[0];
+  await logSet(q, 0, wi[0], { rpe: 10 }); await w2.advance(1000); await logSet(q, 0, wi[1], { rpe: 10 });
+  expect(e2().autoStopped && w2.stored().timer.label === n1, 'a second set still far over target stops the exercise', w2.stored().timer && w2.stored().timer.label);
+  await q.click('#tabbar button[data-view="settings"]'); await q.change('#set-1rm-squat', '320');
+  expect(w2.stored().lifts.squat.oneRM === 320 && !e2().autoStopped && workIdx(e2()).length === wi.length && w2.stored().timer.label === n0, 'the max change rebases the session, the sets come back, and the label names this exercise', { label: w2.stored().timer.label, sets: workIdx(e2()).length, max: w2.stored().lifts.squat.oneRM });
+});
+test('a sane typed weight is still saved as you type and survives a reload (A15-R2-01)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const A = w.tab('A'); let p = await A.open(); await start(p, 'green'); await w.advance(1000);
+  const si = workIdx(cur(w).exercises[0])[0];
+  await p.type(`#w-0-${si}`, '250'); await w.advance(400);
+  expect(cur(w).exercises[0].sets[si].actualW === 250, 'saved 350 ms after the last key', cur(w).exercises[0].sets[si].actualW);
+  A.reload(); await w.settle(); p = A.page;
+  expect(cur(w).exercises[0].sets[si].actualW === 250 && p.$(`#w-0-${si}`).value === '250', 'kept across a reload', p.$(`#w-0-${si}`).value);
+});
+// A15-C2-01: deleting a set in Remove-sets mode ends the mode, and the next set moves up, so its tick lands where the
+// × was. A second tap meant for another × (450-600 ms later, past the double-tap guard) logged that set, started a
+// rest and opened the RPE sheet. For 700 ms after a delete, trusted taps are ignored.
+test('a delete in Remove-sets mode ignores the next tap for 700 ms (A15-C2-01)', async () => {
+  const w = new World(); seed(w, { blockIdx: 0, week: 1, dayIdx: 0, macroPos: 0 });
+  const p = await w.tab('A').open(); await start(p, 'green');
+  await w.advance(1000);
+  const ex = () => cur(w).exercises[1], wi = workIdx(ex()), n = ex().sets.length, si = wi[wi.length - 2];
+  await p.trustedTap('#main button[data-action="edit-sets"][data-ei="1"]', [300, 200]);
+  await p.trustedTap(`#main button.del[data-ei="1"][data-si="${si}"]`, [360, 520]);
+  expect(ex().sets.length === n - 1 && !!p.$(doneBtn(1, si)), 'the set is deleted and the next one\'s tick is in its place', ex().sets.length);
+  await p.trustedTap(doneBtn(1, si), [360, 520], 450);
+  expect(!ex().sets[si].done && !p.sheet(), '450 ms later a tap on that spot logs nothing', { done: ex().sets[si].done });
+  await p.trustedTap(doneBtn(1, si), [360, 520], 400);
+  expect(ex().sets[si].done, 'a tap 850 ms after the delete logs the set as usual');
 });
 
 // ---------- Run ----------

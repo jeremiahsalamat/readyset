@@ -119,12 +119,17 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
 .btn.danger-fill { background: var(--bad); color: var(--on-bad); border-color: transparent; }
 /* Small buttons keep their look but get a 44 px tall touch area. */
 .btn.sm { position: relative; }
-.btn.sm::after { content: ""; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
+.btn.sm::after { content: ""; position: absolute; left: 0; right: 0; top: -5px; bottom: -5px; } /* 36 + 2 x 4: the inset counts from inside the 1 px border (A15-C3-01) */
 .btn:disabled { opacity: .45; cursor: default; }
 .btn.sm { min-height: 36px; padding: 6px 10px; font-size: .9rem; }
 .btn.icon { min-width: 44px; min-height: 36px; padding: 6px; }
 .row.nowrap { flex-wrap: nowrap; flex: none; }
+/* A checkbox label's text and its muted note are one item, so they wrap together beside the box (rule 12). */
+.row > .chk-l { flex: 1 1 0; min-width: 0; }
+label.row { min-height: 44px; } /* the whole row toggles its box: a one-line row is still a 44 px target */
 select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
+/* A select draws no ::after, so the small button's 44 px touch area cannot reach it: it is 44 px itself. */
+select.btn.sm { min-height: 44px; }
 /* File picker styled as a button: the input stays in the layout (not display:none) so iOS opens it. */
 .file-pick { position: relative; overflow: hidden; cursor: pointer; }
 .file-pick input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
@@ -132,6 +137,7 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .btn:active, .seg button:active, .chips button:active, .rpegrid button:active, .set .rpe:active, .set .ok:active, .tabbar button:active, .ex-sum:active, .warm-sum:active, .timer button:active { opacity: .7; }
 .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
 .btnrow .btn { flex: 1; }
+[data-action="setup-finish"] { white-space: nowrap; } /* "Build my program" stays on one line beside "Back" on small phones (A15-R2-07) */
 
 /* Segmented choice (1-5 scales, options) */
 .seg { display: grid; gap: 6px; grid-auto-flow: column; grid-auto-columns: 1fr; }
@@ -174,14 +180,12 @@ select.btn, select.btn.sm { font-size: 16px; max-width: 100%; }
 .warm-sum .n { color: var(--good); }
 /* A finished exercise folds to one line (tap to reopen), so the session gets shorter as you go. */
 .ex.collapsed { box-shadow: none; border: 1px solid var(--line); }
-.ex-sum { width: 100%; border: 0; background: var(--surface); color: inherit; text-align: left; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 14px; min-height: 52px; }
-.ex-sum .tick { width: 26px; height: 26px; border-radius: 50%; background: var(--good); color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.ex-sum { width: 100%; border: 0; background: var(--surface); color: inherit; text-align: left; display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: center; gap: 10px; padding: 10px 14px; min-height: 52px; }
+.ex-sum .tick { width: 26px; height: 26px; border-radius: 50%; background: var(--good); color: var(--on-good); display: inline-flex; align-items: center; justify-content: center; }
 .ex-sum .tick svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .ex-sum .sum-main { display: flex; flex-direction: column; min-width: 0; }
 .ex-sum .sum-main b { font-family: var(--display); font-size: 1.1rem; line-height: 1.15; }
 .ex-sum .sum-main .small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ex-sum { grid-template-columns: 28px minmax(0, 1fr) 28px; }
-.ex-sum .tick { color: var(--on-good); }
 .ex.collapsed.todo .tick { background: var(--surface-2); color: var(--fg); border: 2px solid var(--accent); font-family: var(--display); font-weight: 700; font-size: .95rem; }
 .ex-sum .chev, .fold-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .ex-sum .chev { display: inline-flex; color: var(--muted); }
@@ -281,7 +285,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .session-item:last-child { border-bottom: 0; }
 
 /* Block timeline */
-.timeline { display: grid; grid-template-columns: repeat(14, 1fr); gap: 3px; }
+.timeline { display: grid; gap: 3px; } /* its columns are set inline, one per week up to 12 */
 .timeline .w { height: 26px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: .65rem; font-weight: 700; color: var(--muted); }
 .timeline .w.build { background: var(--good-soft); color: var(--good); border-color: transparent; }
 .timeline .w.strength { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
@@ -296,6 +300,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
 .pt-head { display: flex; align-items: center; gap: 8px; }
 .pt-title { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .pt-head .btn.icon { min-width: 36px; flex: none; }
+.pt-head .btn.icon::after { inset: -5px; } /* "Close details": drawn at 36 px, tapped at 44 x 44 (inset counts from inside the 1 px border) */
 .pt-head .btn.icon svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 2.2; fill: none; stroke-linecap: round; }
 .pt-big { display: flex; align-items: baseline; gap: 10px; }
 .pt-num { font-family: var(--display); font-size: 2rem; font-weight: 700; line-height: 1; color: var(--accent); flex: none; }
@@ -305,9 +310,12 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
 .pt-imp::before { content: "→ "; color: var(--muted); font-weight: 500; }
 .pt-why { grid-column: 1 / -1; }
 .pt-card p { margin: 0; }
-.pt-nav { align-items: center; flex-wrap: wrap; }
+.pt-nav { align-items: center; flex-wrap: wrap; margin-top: auto; } /* at the card's foot when a step keeps its height (A15-R3-02) */
 .pt-nav .btn { white-space: nowrap; }
 .pt-nav .btn[disabled] { opacity: .4; }
+/* "9 of 84" takes the room of "00 of 84" from the first step, so the row never re-wraps under the finger (A15-C4-02) */
+.pt-pos { display: inline-block; text-align: center; }
+.pt-pos::after { content: attr(data-w); display: block; height: 0; overflow: hidden; visibility: hidden; }
 .empty { text-align: center; color: var(--muted); padding: 20px 10px; }
 .callout { border-left: 3px solid var(--accent); padding: 6px 12px; background: var(--surface-2); border-radius: 0 8px 8px 0; font-size: .92rem; }
 .callout.good { border-color: var(--good); } .callout.warn { border-color: var(--warn); } .callout.bad { border-color: var(--bad); }
@@ -338,9 +346,12 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
   .hist-row { grid-template-columns: minmax(0, 1fr) 40px 86px; gap: 6px; }
   .hist-row .pill { font-size: .66rem; letter-spacing: .02em; }
   .session-tools .small { display: none; }
-  .set .del { width: 40px; height: 40px; }
+  .set .del { width: 40px; height: 40px; position: relative; }
+  .set .del::after { content: ""; position: absolute; inset: -4px; } /* drawn at 40px, tapped at 44px, like the tick */
   .tabbar button { font-size: .78rem; letter-spacing: .03em; }
   .timeline { gap: 2px; }
+  label.f select { padding-left: 8px; padding-right: 4px; } /* "Conventional" and "Light session" fit their half-width boxes (A15-R1-03) */
+  .timer { font-size: 1.15rem; } /* "Rest done +12:34" stays clear of the buttons, even before the web font loads */
 }
 /* Large phones and tablets: roomier set rows. */
 @media (min-width: 560px) { .set { grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) 80px 52px; } .set .field input { max-width: 120px; } }
@@ -423,6 +434,8 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
 .swap-row { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 9fr); align-items: center; gap: 8px; font-size: .85rem; font-weight: 600; color: var(--muted); }
 .swap-row.pinned { color: var(--accent-ink); }
 .swap-row select { width: 100%; min-height: 44px; padding: 6px 8px; border: 1px solid var(--field-line); border-radius: 8px; background: var(--surface); color: var(--fg); font-size: 16px; font-weight: 500; }
+/* Under 400 px the names do not fit beside their slot: the slot sits above its select (A15-R1-02). */
+@media (max-width: 399px) { .swap-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
 .dial-row select { margin-top: 4px; }
 
 </style>
@@ -2285,7 +2298,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     },
     saveLocal(s, full) { // full: pack every session afresh (on the way out), not from the cache
       if (this.stale) return; // another window saved newer data: this one is behind and never writes its older copy over it
-      let json; try { json = full ? pack(s) : packState(s); } catch (e) { this.lastError = 'This phone could not save your latest changes (the data could not be written). Keep ReadySet open and tap Save backup.'; try { renderSaveBar(); } catch (e2) { /* before the page is ready */ } return; } // never fail silently
+      let json; try { json = full ? pack(s) : packState(s); } catch (e) { this.lastError = 'Not saved: the data could not be written. Keep ReadySet open and tap Save backup.'; try { renderSaveBar(); } catch (e2) { /* before the page is ready */ } return; } // never fail silently
       if (json === this.last) { if (full) this.fullAt = s.updatedAt; return; } // nothing changed since the last write (app switches, double saves)
       const ok = () => { if (this.lastError) { this.lastError = null; try { renderSaveBar(); } catch (e) { /* before the page is ready */ } } };
       try { localStorage.setItem(this.key, json); this.last = json; this.size = json.length; if (full) this.fullAt = s.updatedAt; ok(); }
@@ -2293,8 +2306,8 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
         // Full: try once more without the Undo copy (the one large optional item). The live state is
         // never trimmed piecemeal: if that write lands, the Undo goes as a whole, so no half of it can run.
         if (s.undo) { try { const j2 = packState(Object.assign({}, s, { undo: null })); localStorage.setItem(this.key, j2); this.last = j2; this.size = j2.length; s.undo = null; ok(); return; } catch (e2) { /* still full */ } }
-        this.lastError = s && s.current ? 'This phone could not save your latest sets (storage full or blocked). Keep ReadySet open, finish the session, then tap Save backup. A backup includes a session once it is finished.'
-          : 'This phone could not save your latest changes (storage full or blocked). Keep ReadySet open and tap Save backup.'; // no session open: there are no sets to finish
+        this.lastError = s && s.current ? 'Sets not saved: storage full or blocked. Keep ReadySet open, finish, then tap Save backup.' // a backup holds a session once it is finished
+          : 'Not saved: storage full or blocked. Keep ReadySet open and tap Save backup.'; // no session open: there are no sets to finish
         try { renderSaveBar(); } catch (e3) { /* before the page is ready */ }
       }
     },
@@ -2366,11 +2379,21 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
   function save() { Store.save(state); }
   // A failed save is not a one-off toast: a bar stays at the top of every screen until a save works.
   function renderSaveBar() {
-    const old = $('#save-bar'); if (old) old.remove();
-    if (!Store.lastError) return;
-    const bar = document.createElement('div'); bar.id = 'save-bar'; bar.className = 'update-bar save-bar'; bar.setAttribute('role', 'alert');
-    bar.innerHTML = `<span>${esc(Store.lastError)}</span><button class="btn sm" data-action="share-backup">Save backup</button>`;
-    const app = $('#app'); if (app) app.insertBefore(bar, app.firstChild);
+    keepScrollSpot(() => {
+      const old = $('#save-bar'); if (old) old.remove();
+      if (!Store.lastError) return;
+      const bar = document.createElement('div'); bar.id = 'save-bar'; bar.className = 'update-bar save-bar'; bar.setAttribute('role', 'alert');
+      bar.innerHTML = `<span>${esc(Store.lastError)}</span><button class="btn sm" data-action="share-backup">Save backup</button>`;
+      const app = $('#app'); if (app) app.insertBefore(bar, app.firstChild);
+    });
+  }
+  // A bar put above the scrolling area (or taken away) moves everything in it down (or up) by the bar's
+  // height, and it comes on its own, not from a tap: the app was opened, or a save failed. Scroll by the
+  // same amount, so the set you were about to tap stays under your finger (A15-C1-01).
+  function keepScrollSpot(change) {
+    const sc = document.getElementById('scroller'), was = sc ? sc.getBoundingClientRect().top : 0;
+    change();
+    if (sc) { const dy = sc.getBoundingClientRect().top - was; if (Math.abs(dy) >= 1) sc.scrollTop += dy; }
   }
 
   // ---------- Backups ----------
@@ -2761,7 +2784,10 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     let ei, si = null;
     if (a === 'rpe-pick' && ui.sheet) { ei = ui.sheet.ei; si = ui.sheet.si; }
     else { const ex = t.closest('.ex[data-ei]'); if (!ex) return null; ei = ex.dataset.ei; const row = t.closest('.set[data-si]'); if (row) si = row.dataset.si; }
-    const fallback = `.ex[data-ei="${ei}"]`, sel = si != null ? `${fallback} .set[data-si="${si}"]` : fallback;
+    const fallback = `.ex[data-ei="${ei}"]`;
+    // "Remove sets" and "Done" hold themselves still: the note the mode adds above the sets (and the footer's own
+    // reflow) used to move the button 21-48 px, so a second tap at the same place missed it (A15-C2-03).
+    const sel = si != null ? `${fallback} .set[data-si="${si}"]` : a === 'edit-sets' ? `${fallback} [data-action="edit-sets"]` : fallback;
     const el = document.querySelector(sel); if (!el) return null;
     const card = document.querySelector(fallback);
     return { sel, fallback, top: el.getBoundingClientRect().top, fallbackTop: card ? card.getBoundingClientRect().top : el.getBoundingClientRect().top };
@@ -2866,8 +2892,8 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
         <label class="f">Usual easy watts (optional)<input id="d-cw" type="number" inputmode="numeric" data-draft="cardioWatts" value="${esc(d.cardioWatts)}"></label>
       </div>
       <p class="small muted">Keep extra cardio easy and under about 1,500 kcal a week. The app tracks your total.</p>
-      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-easy" data-draft="easyWeek" ${d.easyWeek ? 'checked' : ''} style="width:22px;height:22px"> Start with one easy week <span class="muted small" style="font-weight:500">(if your last program beat you up)</span></label>
-      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-peak" data-draft="includePeak" ${d.includePeak ? 'checked' : ''} style="width:22px;height:22px"> Include the 3-week Peak &amp; Test block <span class="muted small" style="font-weight:500">(optional: maxes already calibrate every session)</span></label>
+      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-easy" data-draft="easyWeek" ${d.easyWeek ? 'checked' : ''} style="width:22px;height:22px"> <span class="chk-l">Start with one easy week <span class="muted small" style="font-weight:500">(if your last program beat you up)</span></span></label>
+      <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="d-peak" data-draft="includePeak" ${d.includePeak ? 'checked' : ''} style="width:22px;height:22px"> <span class="chk-l">Include the 3-week Peak &amp; Test block <span class="muted small" style="font-weight:500">(optional: maxes already calibrate every session)</span></span></label>
       <div class="btnrow"><button class="btn" data-action="setup-back">Back</button><button class="btn primary" data-action="setup-finish">Build my program</button></div></div>`;
   }
   function finishSetup() {
@@ -3028,7 +3054,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     const c = ui.checkin;
     // plain: words only. Soreness runs best-to-worst while the other scales run worst-to-best, so
     // numbers on both would point opposite ways.
-    const seg = (key, labels, plain) => `<div class="seg${plain ? ' plain' : ''}">${labels.map((t, i) => `<button data-action="ci" data-k="${key}" data-v="${i + 1}" aria-pressed="${(key.includes(':') ? c.groups[key.split(':')[1]] : c[key]) === i + 1}">${plain ? `<span>${t}</span>` : `${i + 1}<small>${t}</small>`}</button>`).join('')}</div>`;
+    const seg = (key, labels, plain, name) => `<div class="seg${plain ? ' plain' : ''}" role="group" aria-label="${esc(name)}">${labels.map((t, i) => `<button data-action="ci" data-k="${key}" data-v="${i + 1}" aria-pressed="${(key.includes(':') ? c.groups[key.split(':')[1]] : c[key]) === i + 1}">${plain ? `<span>${t}</span>` : `${i + 1}<small>${t}</small>`}</button>`).join('')}</div>`;
     const SORE = ['Fresh', 'Slightly sore', 'Sore', 'Very sore'];
     if (c.result) {
       const r = c.result, pos = E.positionLabel(state);
@@ -3057,11 +3083,11 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     return `<div class="card">
       <h2>Check in</h2><p class="small muted">Be honest, then trust the plan. ${c.askGroups ? 6 : 4} taps.</p>
       ${c.askGroups ? `<div class="q"><span class="label">How sore are you since the last session?</span>
-        ${['legs|Legs', 'push|Chest, shoulders, arms', 'hinge|Lower back, hips, hamstrings'].map(x => { const [k, t] = x.split('|'); return `<span class="tiny">${t}</span>${seg('g:' + k, SORE, true)}`; }).join('')}</div>` :
-        `<div class="q"><span class="label">How sore are you overall?</span>${seg('g:legs', SORE, true)}</div>`}
-      <div class="q"><span class="label">Sleep last night</span>${seg('sleep', ['Awful', 'Poor', 'OK', 'Good', 'Great'])}</div>
-      <div class="q"><span class="label">Energy and mood</span>${seg('energy', ['Drained', 'Low', 'OK', 'Good', 'Great'])}</div>
-      <div class="q"><span class="label">Motivation to train</span>${seg('motivation', ['None', 'Low', 'OK', 'Good', 'Fired up'])}</div>
+        ${['legs|Legs', 'push|Chest, shoulders, arms', 'hinge|Lower back, hips, hamstrings'].map(x => { const [k, t] = x.split('|'); return `<span class="tiny">${t}</span>${seg('g:' + k, SORE, true, 'Soreness: ' + t)}`; }).join('')}</div>` :
+        `<div class="q"><span class="label">How sore are you overall?</span>${seg('g:legs', SORE, true, 'How sore are you overall?')}</div>`}
+      <div class="q"><span class="label">Sleep last night</span>${seg('sleep', ['Awful', 'Poor', 'OK', 'Good', 'Great'], false, 'Sleep last night')}</div>
+      <div class="q"><span class="label">Energy and mood</span>${seg('energy', ['Drained', 'Low', 'OK', 'Good', 'Great'], false, 'Energy and mood')}</div>
+      <div class="q"><span class="label">Motivation to train</span>${seg('motivation', ['None', 'Low', 'OK', 'Good', 'Fired up'], false, 'Motivation to train')}</div>
       <div class="btnrow"><button class="btn" data-action="ci-cancel">Cancel</button><button class="btn primary" data-action="ci-submit">See today's plan</button></div>
     </div>`;
   }
@@ -3188,15 +3214,15 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       html += `<section class="ex" data-ei="${ei}">
         <div class="ex-head"><div><div class="name">${esc(e.name)}</div>
           <div class="meta">${e.role === 'primary' ? 'Main lift' : e.role === 'secondary' ? 'Second lift' : 'Accessory'}${e.optional ? ' · optional' : ''}${e.pctTM != null ? ` · ${pctLabel(e)}` : ''}${e.rpeTarget != null && !s.isTest ? ` · aim RPE ${e.rpeTarget}${e.rpeTarget < 6 ? ', easy' : ''}` : ''}${e.repRange ? ` · ${e.repRange[0]}–${e.repRange[1]} reps; all at ${e.repRange[1]} adds weight` : ''}</div></div>
-          <div class="ex-tools">${skipped ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}">Undo skip</button>` : ''}${skipped ? '' : `<button class="fold-btn" data-action="ex-fold" data-ei="${ei}" data-v="closed" aria-expanded="true" aria-label="Fold ${esc(e.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>`}</div></div>
+          <div class="ex-tools">${skipped ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}" aria-label="Undo skip: ${esc(e.name)}">Undo skip</button>` : ''}${skipped ? '' : `<button class="fold-btn" data-action="ex-fold" data-ei="${ei}" data-v="closed" aria-expanded="true" aria-label="Fold ${esc(e.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>`}</div></div>
         ${e.cue ? `<div class="ex-note">${esc(e.cue)}</div>` : ''}${e.note ? `<div class="ex-note">${esc(e.note)}</div>` : ''}
         ${e.adjNote && !editing ? `<div class="ex-note adj">${esc(e.adjNote)}</div>` : ''}
-        ${!skipped && !editing && (e.hitFloor && e.sets.some(x => x.kind === 'work' && !x.done)) ? `<div class="ex-note"><button class="btn sm" data-action="cut-sets" data-ei="${ei}">Cut the remaining sets</button></div>` : ''}
-        ${!skipped && e.cut ? `<div class="ex-note"><button class="btn sm quiet" data-action="restore-sets" data-ei="${ei}">Restore ${e.cut} cut set${e.cut > 1 ? 's' : ''}</button></div>` : ''}
+        ${!skipped && !editing && (e.hitFloor && e.sets.some(x => x.kind === 'work' && !x.done)) ? `<div class="ex-note"><button class="btn sm" data-action="cut-sets" data-ei="${ei}" aria-label="Cut the remaining sets: ${esc(e.name)}">Cut the remaining sets</button></div>` : ''}
+        ${!skipped && e.cut ? `<div class="ex-note"><button class="btn sm quiet" data-action="restore-sets" data-ei="${ei}" aria-label="Restore ${e.cut} cut set${e.cut > 1 ? 's' : ''}: ${esc(e.name)}">Restore ${e.cut} cut set${e.cut > 1 ? 's' : ''}</button></div>` : ''}
         ${skipped ? '' : renderSets(e, ei, ei === cur && !editing ? e.sets.findIndex(x => !x.done) : -1)}
         ${skipped ? '' : `<div class="ex-foot">
           ${e.load === 'bar' && nextW ? `<span class="plates">Next work set <b>${nextW}</b> = ${esc(plateText(nextW))}</span>` : e.load === 'bar' && first && first.w ? `<span class="plates">All work sets done</span>` : e.needsWeight ? `<span class="small muted">${esc(e.startHint || 'Enter a working weight')}</span>` : '<span></span>'}
-          <span class="foot-tools">${ui.lastDeleted && ui.lastDeleted.sid === s.id && ui.lastDeleted.ei === ei ? `<button class="btn sm primary" data-action="undo-del" data-ei="${ei}">Undo delete</button>` : ''}${e.optional && !(ui.editSets && ui.editSets[ei]) ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}">Skip</button>` : ''}<button class="btn sm ${ui.editSets && ui.editSets[ei] ? 'primary' : ''}" data-action="edit-sets" data-ei="${ei}">${ui.editSets && ui.editSets[ei] ? 'Done' : 'Remove sets'}</button>${swaps.length && !(ui.editSets && ui.editSets[ei]) ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap exercise"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}</span>
+          <span class="foot-tools">${ui.lastDeleted && ui.lastDeleted.sid === s.id && ui.lastDeleted.ei === ei ? `<button class="btn sm primary" data-action="undo-del" data-ei="${ei}" aria-label="Undo delete: ${esc(e.name)}">Undo delete</button>` : ''}${e.optional && !(ui.editSets && ui.editSets[ei]) ? `<button class="btn sm quiet" data-action="toggle-skip" data-ei="${ei}" aria-label="Skip ${esc(e.name)}">Skip</button>` : ''}<button class="btn sm ${ui.editSets && ui.editSets[ei] ? 'primary' : ''}" data-action="edit-sets" data-ei="${ei}" aria-label="${ui.editSets && ui.editSets[ei] ? 'Done removing sets' : 'Remove sets'}: ${esc(e.name)}">${ui.editSets && ui.editSets[ei] ? 'Done' : 'Remove sets'}</button>${swaps.length && !(ui.editSets && ui.editSets[ei]) ? `<select class="btn sm" data-action="swap" data-ei="${ei}" aria-label="Swap ${esc(e.name)}"><option value="">Swap…</option>${swaps.map(x => `<option value="${x}">${esc(E.exerciseName(state, x))}</option>`).join('')}</select>` : ''}</span>
         </div>`}
         ${!skipped && e.load === 'bar' && first && first.w && !s.isTest && e.role !== 'accessory' && !e.sets.some(x => x.kind === 'warm') ? `<details class="warm"><summary class="tiny">Warm-up ramp</summary>${E.warmups(first.w, state.settings.barWeight, state.settings.increment, e.role, state.settings.plates).map(w => `<span class="num">${w.w} × ${w.reps}</span>`).join('')}</details>` : ''}
       </section>`;
@@ -3231,12 +3257,12 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       const kind = x.kind === 'warm' ? 'warm-up' : x.kind === 'single' ? 'opener' : x.kind === 'test' ? (x.open ? 'top single' : 'single') : x.ind ? `top set` : '';
       const prevTyped = e.repRange ? e.sets.slice(0, si).reverse().find(y => y.done && y.actualReps != null && !y.autoReps && y.kind === x.kind) : null;
       const said = setLabel(e, si), repsPh = prevTyped ? String(prevTyped.actualReps) : `${x.reps}${x.plus ? '+' : ''}`;
-      return `<div class="set${x.done ? ' done' : ''}${x.kind === 'warm' ? ' is-warm' : ''}${si === nextSi ? ' next' : ''}" data-si="${si}"><button class="swipe-del" data-action="del-set" data-ei="${ei}" data-si="${si}" tabindex="-1" aria-label="Delete this set">Delete</button>
+      return `<div class="set${x.done ? ' done' : ''}${x.kind === 'warm' ? ' is-warm' : ''}${si === nextSi ? ' next' : ''}" data-si="${si}"><button class="swipe-del" data-action="del-set" data-ei="${ei}" data-si="${si}" tabindex="-1" aria-label="Delete this set: ${esc(e.name)}, ${said}">Delete</button>
         <span class="n">${x.kind === 'warm' ? 'W' : x.kind === 'single' ? 'O' : si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}</span>
         <div class="field"><input id="w-${ei}-${si}" type="number" inputmode="decimal" step="${e.load === 'db' ? state.settings.dbIncrement : e.load === 'bw' ? 1 : 2.5}" data-set="w" data-ei="${ei}" data-si="${si}" aria-label="${esc(e.name)}, ${said} weight" value="${w == null ? '' : w}" placeholder="${e.load === 'bw' ? 'bw' : '—'}"><span class="u">${e.load === 'bar' && w != null ? esc(platesShort(w)) : e.load === 'bw' ? 'added lb' : e.load === 'db' ? 'lb each' : 'lb'}</span></div>
         <div class="field"><input id="r-${ei}-${si}" type="number" inputmode="numeric" data-set="r" data-ei="${ei}" data-si="${si}" aria-label="${esc(e.name)}, ${said} reps" value="${reps}" placeholder="${repsPh}"><span class="u">${kind ? `<span class="kind">${kind}</span>` : `reps`}</span></div>
-        ${x.kind === 'warm' ? '<span></span>' : `<button class="rpe ${x.rpe == null ? 'empty' : ''}" data-action="rpe" data-ei="${ei}" data-si="${si}" aria-label="${x.rpe == null ? 'RPE not set' : `RPE ${x.rpe}`}">${x.rpe == null ? (x.rpeTarget != null ? `~${x.rpeTarget}` : 'RPE') : x.rpe}</button>`}
-        ${editingSets ? `<button class="del" data-action="del-set" data-ei="${ei}" data-si="${si}" aria-label="Delete this set"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : `<button class="ok" data-action="done" data-ei="${ei}" data-si="${si}" aria-label="${x.done ? 'Undo set' : 'Set done'}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></button>`}
+        ${x.kind === 'warm' ? '<span></span>' : `<button class="rpe ${x.rpe == null ? 'empty' : ''}" data-action="rpe" data-ei="${ei}" data-si="${si}" aria-label="${x.rpe == null ? 'RPE not set' : `RPE ${x.rpe}`}: ${esc(e.name)}, ${said}">${x.rpe == null ? (x.rpeTarget != null ? `~${x.rpeTarget}` : 'RPE') : x.rpe}</button>`}
+        ${editingSets ? `<button class="del" data-action="del-set" data-ei="${ei}" data-si="${si}" aria-label="Delete this set: ${esc(e.name)}, ${said}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : `<button class="ok" data-action="done" data-ei="${ei}" data-si="${si}" aria-label="${x.done ? 'Undo set' : 'Set done'}: ${esc(e.name)}, ${said}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg></button>`}
       </div>`;
     }).join('')}</div>`;
   }
@@ -3256,8 +3282,9 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     const before = e.sets.length;
     const v = val === '' || val == null ? null : (which === 'w' ? cleanW(val) : cleanReps(val));
     // A likely typo is kept as typed but goes nowhere until you answer the check.
-    if (!fromTyping && v != null) {
+    if (v != null) {
       const odd = oddEntry(e, x, which === 'w' ? v : null, which === 'r' ? v : null);
+      if (odd && fromTyping) { if (which === 'w') plateNote(ei, si, e, null); return; } // still typing: it waits in the field, unsaved and unused, until the tick, leaving the field or any other tap asks (A15-R2-01, A15-R3-01); the plates under it no longer describe the stored weight (A15-R3-04)
       if (odd) { odd.typed = String(val); openCheck(ei, si, odd, 'none'); return; } // nothing is stored until you answer; closing the check leaves the old value
     }
     if (which === 'w') {
@@ -3276,12 +3303,14 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     } else { x.actualReps = v; delete x.autoReps; }
     // A field edit re-aims the remaining sets but never cuts them: the fatigue stop waits for a
     // tick or an RPE, so the tap that follows a blur always lands where you aimed it.
-    if (!fromTyping || x.done) recalcExercise(ei, true, fromTyping, true);
+    if (!fromTyping || x.done) { recalcExercise(ei, true, fromTyping, true); relabelRest(); } // sets that come back name this exercise again (A15-R3-03)
     save();
     if (e.sets.length !== before) { render(); return; } // sets came back (a corrected reading undid a cut)
     if (!fromTyping) patchExercise(ei);
-    if (which === 'w') { const u = $(`#w-${ei}-${si}`); if (u && u.nextElementSibling && e.load === 'bar') u.nextElementSibling.textContent = v != null ? platesShort(v) : 'lb'; }
+    if (which === 'w') plateNote(ei, si, e, v);
   }
+  // The plates under a weight field: those of the weight in it, or plain "lb".
+  function plateNote(ei, si, e, v) { const u = $(`#w-${ei}-${si}`); if (u && u.nextElementSibling && e.load === 'bar') u.nextElementSibling.textContent = v != null ? platesShort(v) : 'lb'; }
   // Refresh one exercise's inputs, plate readouts, note and footer in place (no rebuild), so the
   // tap that follows a blur is never swallowed.
   function patchExercise(ei) {
@@ -3304,11 +3333,28 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     return !!s && s.phase === 'lift' && s.exercises.every(e => s.skippedSlots.includes(e.slotKey) || e.sets.every(x => x.done || x.kind === 'warm'));
   }
   // After any change to the sets: when nothing is left to lift, there is nothing to rest for.
-  function afterSetChange() { if (sessionComplete(state.current)) { stopTimer(); if (ui.confirm === 'finish') ui.confirm = null; } }
+  function afterSetChange() { if (sessionComplete(state.current)) { stopTimer(); if (ui.confirm === 'finish') ui.confirm = null; } else relabelRest(); }
+  // What the rest bar names: this exercise while it has a set left, else the next one you are doing. Warm-ups left
+  // unticked do not count as left, as for sessionComplete (nobody warms up after the work sets).
+  function restLabel(sc, ei) {
+    const left = y => !y.done && y.kind !== 'warm', e = sc.exercises[ei]; if (e.sets.some(left)) return e.name;
+    const open = j => !sc.skippedSlots.includes(sc.exercises[j].slotKey) && sc.exercises[j].sets.some(left);
+    const order = sc.exercises.map((n, k) => k).filter(k => k !== ei), k = order.find(j => j > ei && open(j)), k2 = k != null ? k : order.find(open);
+    return k2 != null ? sc.exercises[k2].name : e.name;
+  }
+  // A fatigue stop, "Cut the remaining sets", a deleted set or Restore changed what is left of the exercise the rest
+  // came from: the running rest names what comes next (the bar and the notification). Its length is unchanged (A15-R2-04).
+  function relabelRest() {
+    const sc = state.current, t = state.timer; if (!sc || !t || !ui.timer) return;
+    const ei = sc.exercises.findIndex(e => e.sets.some(x => x.timerSrc)); if (ei < 0) return;
+    const label = restLabel(sc, ei); if (label === t.label) return;
+    t.label = label; armSw(); tickTimer();
+  }
   function markDone(ei, si) {
     const e = state.current.exercises[ei], x = e.sets[si];
     const wEl = $(`#w-${ei}-${si}`), rEl = $(`#r-${ei}-${si}`);
     if ((wEl && wEl.validity && wEl.validity.badInput) || (rEl && rEl.validity && rEl.validity.badInput)) { toast('Use digits and one decimal point'); return false; }
+    const was = { actualW: x.actualW, autoW: x.autoW, actualReps: x.actualReps, autoReps: x.autoReps }; // put back if the typo check stops the tick
     if (wEl && wEl.value !== '') { const v = cleanW(wEl.value); if (v !== x.actualW) delete x.autoW; x.actualW = v; }
     else if (x.actualW == null && x.w != null) { x.actualW = x.w; x.autoW = true; }
     if (rEl && rEl.value !== '') { const v = cleanReps(rEl.value); if (v !== x.actualReps) delete x.autoReps; x.actualReps = v; }
@@ -3319,12 +3365,15 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     }
     if (x.actualW == null && e.load !== 'bw') { toast('Enter the weight first'); wEl && wEl.focus(); return false; }
     const odd = oddEntry(e, x, x.actualW, x.actualReps);
-    if (odd) { const f = odd.field === 'w' ? wEl : rEl; if (f && f.value !== '') odd.typed = f.value; openCheck(ei, si, odd, 'tick'); return false; }
+    if (odd) { // nothing is stored until you answer (as when the field is left): the tick's own fill-ins are put back (A15-C2-06), and the typing path never stored the slip (A15-R2-01), so a save on the way out cannot write it
+      const f = odd.field === 'w' ? wEl : rEl; if (f && f.value !== '') odd.typed = f.value;
+      for (const k in was) { if (was[k] === undefined) delete x[k]; else x[k] = was[k]; }
+      openCheck(ei, si, odd, 'tick'); return false;
+    }
     x.done = true; x.doneAt = Date.now();
     if (state.current.backfill || state.current.phase === 'edit') return true; // nothing to rest for
     if (sessionComplete(state.current)) { stopTimer(); return true; } // the last set: lifting is over
-    const sc = state.current; let label = e.name;
-    if (!e.sets.some(y => !y.done)) { const order = sc.exercises.map((n, k) => k).filter(k => k !== ei); const k = order.find(j => j > ei && !sc.skippedSlots.includes(sc.exercises[j].slotKey) && sc.exercises[j].sets.some(y => !y.done)); const k2 = k != null ? k : order.find(j => !sc.skippedSlots.includes(sc.exercises[j].slotKey) && sc.exercises[j].sets.some(y => !y.done)); if (k2 != null) label = sc.exercises[k2].name; }
+    const label = restLabel(state.current, ei);
     if (x.kind === 'warm') { const lastWarm = !e.sets.slice(si + 1).some(y => y.kind === 'warm'); startTimer(lastWarm ? Math.min(120, e.rest) : 60, label, x); }
     else startTimer(e.rest, label, x);
     return true;
@@ -3348,7 +3397,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     save(); render();
     // A main-lift set is logged (and its rest started) at once; then you are asked how hard it was.
     const si2 = e.sets.indexOf(x); // a fatigue stop may have moved it
-    if (x.done && si2 >= 0 && x.kind !== 'warm' && e.lift && (e.pctTM != null || x.kind === 'test') && x.rpe == null) { ui.sheet = { ei, si: si2, fromTick: true, resting: !!(ui.timer && !ui.timer.fired) }; renderSheet(); }
+    if (x.done && si2 >= 0 && x.kind !== 'warm' && e.lift && (e.pctTM != null || x.kind === 'test') && x.rpe == null) { ui.sheet = { ei, si: si2, fromTick: true, resting: !!(ui.timer && !ui.timer.fired) }; ui.quietUntil = performance.now() + 350; renderSheet(); } // the sheet opens under the finger: a second tap already on its way must not rate the set (A15-R1-01)
   }
   // In-session autoregulation. Every done working set with an RPE (or a miss) is evidence of
   // today's strength; the rep-max table turns that into the weight that would land the planned
@@ -3408,7 +3457,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
         return removed;
       }
     }
-    if (changed && !quiet && target !== before) toast(`${e.name}: remaining sets ${target > before ? 'up' : 'down'} to ${target}`);
+    if (changed && !quiet && target !== before) toast(`${e.name}: remaining sets ${target > before ? 'up' : 'down'} to ${target} lb`);
     return changed;
   }
   // Settings changed a max mid-session: rebase every undone set of that lift on the new TM.
@@ -3427,6 +3476,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       }
       recalcExercise(ei, true, false, true); // re-aimed (and cut sets put back if the stop no longer holds), never cut: the fatigue stop waits for the next set you log, not a Settings change
     }
+    relabelRest(); // cut sets that came back name their exercise again (A15-R3-03)
     if (n) toast(why || 'Remaining sets rebased to the new max');
   }
   function deleteSet(ei, si) {
@@ -3440,6 +3490,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     e.sets.forEach(y => { if (y.carriedFrom != null) { if (y.carriedFrom === si) { released.push({ y, w: y.actualW, m: !!y.manualW, done: y.done }); delete y.carriedFrom; if (!y.done) { y.manualW = false; y.actualW = null; } } else if (y.carriedFrom > si) y.carriedFrom--; } });
     if (x.timerSrc) { stopTimer(); delete x.timerSrc; }
     if (ui.editSets) delete ui.editSets[ei]; // one deletion, then the ticks come back
+    ui.quietUntil = performance.now() + 700; // the next set's tick now sits where the × was: a second tap on its way must not log it (A15-C2-01)
     ui.lastDeleted = { sid: s.id, ei, si, set: x, released }; ui.lastEi = ei; s.lastEi = ei;
     if (ui.sheet && ui.sheet.ei === ei) { ui.sheet = null; renderSheet(); }
     toast(`${x.kind === 'warm' ? 'Warm-up' : 'Set'} removed. Undo is under ${e.name}.`);
@@ -3456,7 +3507,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     for (const r of u.released || []) if (e.sets.includes(r.y) && !r.y.done) { r.y.actualW = r.w; r.y.manualW = r.m; r.y.carriedFrom = at; }
     ui.lastDeleted = null; ui.lastEi = ei; s.lastEi = ei;
     if (u.set.kind !== 'warm') recalcExercise(ei, true);
-    save(); render(); toast('Set restored');
+    relabelRest(); save(); render(); toast('Set restored');
   }
   function cutSets(ei) {
     const s = state.current, e = s.exercises[ei];
@@ -3477,17 +3528,18 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
   function restoreSets(ei) {
     const s = state.current, e = s.exercises[ei];
     if (!(e.cut > 0)) return;
-    putBackCut(e); e.autoCut = 0; recalcExercise(ei, true); save(); render();
+    putBackCut(e); e.autoCut = 0; recalcExercise(ei, true); relabelRest(); save(); render();
   }
   function openRpe(ei, si) {
     // iOS keeps a field focused (and its keyboard over the sheet) when a button is tapped: leave it
-    // first, as a desktop click does. Its value is committed by that, and may ask a typo check first.
+    // first, as a desktop click does. A set field has been left and committed by then (heldSlip, leaveField, A15-AR-03),
+    // and a typo check that opened takes the tap.
     if (fieldFocused()) { try { document.activeElement.blur(); } catch (e) { /* ignore */ } resyncSoon(); }
     if (ui.sheet && ui.sheet.kind === 'check') return;
     if (!state.current || !state.current.exercises[ei] || !state.current.exercises[ei].sets[si]) return;
     ui.sheet = { ei, si }; renderSheet();
   }
-  function setLabel(e, si) { const x = e.sets[si]; return x.kind === 'warm' ? 'warm-up' : x.kind === 'single' ? 'opener' : x.open ? 'top single' : `set ${si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}`; }
+  function setLabel(e, si) { const x = e.sets[si]; return x.kind === 'warm' ? `warm-up ${e.sets.filter((y, j) => j <= si && y.kind === 'warm').length}` : x.kind === 'single' ? 'opener' : x.open ? 'top single' : `set ${si + 1 - e.sets.filter((y, j) => j < si && (y.kind === 'warm' || y.kind === 'single')).length}`; }
   // Focus (A14-C2-10): a sheet takes the focus when it opens and gives it back when it closes, so a
   // keyboard or VoiceOver user is not left on the row behind the dialog. Never scrolls the page.
   let sheetOpen = false, sheetBack = null;
@@ -3980,15 +4032,20 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
   }
   const chartHits = {}; // lift -> [{ id, px, py }] in CSS pixels of its canvas
   // Only the trend card is rebuilt for a chart tap; the session list and the readiness chart stay.
-  function redrawTrend() {
+  // keepH (a step with Earlier / Later): the details never get shorter while you step, so at the top of History, where
+  // no scroll can hold the tapped button, neither it nor the chart moves; its buttons sit at the card's foot (A15-R3-02).
+  // A pick or Close starts afresh.
+  function redrawTrend(keepH) {
     const card = document.getElementById('trend-card');
     if (!card) { render(); return; }
+    const old = keepH ? card.querySelector('.pt-card') : null, minH = old ? old.getBoundingClientRect().height : 0;
     const tmp = document.createElement('div'); tmp.innerHTML = renderHistory();
     const fresh = tmp.querySelector('#trend-card'); if (!fresh) { render(); return; }
     card.querySelectorAll('canvas').forEach(c => { c.width = c.height = 0; });
     card.replaceWith(fresh);
+    if (minH > 0) { const pc = fresh.querySelector('.pt-card'); if (pc) pc.style.minHeight = minH + 'px'; }
     drawCharts(true); // first: the anchor must measure the final layout
-    if (anchor) { const el = document.querySelector(anchor.sel); if (el) { const dy = el.getBoundingClientRect().top - anchor.top; if (Math.abs(dy) >= 1) scroller().scrollTop += dy; } anchor = null; }
+    if (anchor) { let el = document.querySelector(anchor.sel), was = anchor.top; if (!el) { el = document.querySelector(anchor.fallback); was = anchor.fallbackTop; } if (el) { const dy = el.getBoundingClientRect().top - was; if (Math.abs(dy) >= 1) scroller().scrollTop += dy; } anchor = null; }
   }
   function drawCharts(trendOnly) {
     cssCache = null;
@@ -4030,8 +4087,17 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       ctx.fillStyle = s.color;
       // A session dot grows with the weight of its evidence (more and harder sets read bigger).
       s.pts.forEach((p, i) => { if (s.dots || i === s.pts.length - 1) { ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), s.sized ? 2.5 + Math.min(2.5, (p.conf || 0) * 0.6) : s.faint ? 2.5 : 3.5, 0, Math.PI * 2); ctx.fill(); } });
-      if (!s.faint && !opt.sel) { const last = s.pts[s.pts.length - 1]; ctx.fillText(Math.round(last.y), Math.min(W - padR - 28, X(last.x) + 6), Y(last.y) - 6); }
       ctx.globalAlpha = 1;
+    }
+    // The last value's label, drawn after every dot and above the highest one under it, outlined in the card's
+    // colour, so level last weeks cannot hide it (A15-R1-04). The chart detail view (opt.sel) draws none.
+    if (!opt.sel) for (const s of series) {
+      if (s.faint || !s.pts.length) continue;
+      const last = s.pts[s.pts.length - 1], txt = String(Math.round(last.y)), tw = ctx.measureText(txt).width, tx = Math.min(W - padR - tw, X(last.x) + 6);
+      const under = all.filter(p => X(p.x) >= tx - 6 && X(p.x) <= tx + tw + 6).map(p => Y(p.y));
+      const top = Math.min(Y(last.y), ...under), bottom = Math.max(Y(last.y), ...under);
+      const ty = top - 7 >= padT + 9 ? top - 7 : Math.min(H - padB - 2, bottom + 16);
+      ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = cssVar('--surface'); ctx.strokeText(txt, tx, ty); ctx.fillStyle = s.color; ctx.fillText(txt, tx, ty); ctx.restore();
     }
     if (opt.sel) {
       const sx = X(opt.sel.x), sy = Y(opt.sel.y), c = opt.selColor || cssVar('--accent');
@@ -4082,7 +4148,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       ${groups.map(g => `<div class="pt-ex"><div class="tiny">${esc(g.name)}</div>${g.sets.map(setRow).join('')}</div>`).join('')}
       ${skipText ? `<p class="small muted">Not counted: ${skipText}.</p>` : ''}
       ${weekLine ? `<p class="small muted">${weekLine}</p>` : ''}${calText ? `<p class="small">${esc(calText)}</p>` : ''}
-      <div class="btnrow pt-nav"><button class="btn sm" data-action="chart-step" data-lift="${lift}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Earlier session">‹ Earlier</button><span class="small muted num">${i + 1} of ${pts.length}</span><button class="btn sm" data-action="chart-step" data-lift="${lift}" data-dir="1" ${i === pts.length - 1 ? 'disabled' : ''} aria-label="Later session">Later ›</button><button class="btn sm quiet" data-action="chart-open" data-id="${s.id}">Full session</button></div>
+      <div class="btnrow pt-nav"><button class="btn sm" data-action="chart-step" data-lift="${lift}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Earlier session">‹ Earlier</button><span class="small muted num pt-pos" data-w="${'0'.repeat(String(pts.length).length)} of ${pts.length}">${i + 1} of ${pts.length}</span><button class="btn sm" data-action="chart-step" data-lift="${lift}" data-dir="1" ${i === pts.length - 1 ? 'disabled' : ''} aria-label="Later session">Later ›</button><button class="btn sm quiet" data-action="chart-open" data-id="${s.id}">Full session</button></div>
     </div>`;
   }
 
@@ -4098,22 +4164,22 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
         </div>
         <label class="f">Training Max %<select id="set-tm" data-setting="tmPct"><option value="0.85" ${s.tmPct == 0.85 ? 'selected' : ''}>85%</option><option value="0.875" ${s.tmPct == 0.875 ? 'selected' : ''}>87.5%</option><option value="0.9" ${s.tmPct == 0.9 ? 'selected' : ''}>90%</option><option value="0.925" ${s.tmPct == 0.925 ? 'selected' : ''}>92.5%</option></select></label>
         <p class="small muted" id="tm-line">${esc(tmLine())}</p>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-cal" data-setting="autoCalibrate" ${s.autoCalibrate !== false ? 'checked' : ''} style="width:22px;height:22px"> Calibrate maxes from my sets <span class="muted small" style="font-weight:500">(down at once, up slowly)</span></label>`, { sum: LIFTS.map(l => `${LIFTNAME[l]} ${state.lifts[l].oneRM}`).join(' · ') })
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-cal" data-setting="autoCalibrate" ${s.autoCalibrate !== false ? 'checked' : ''} style="width:22px;height:22px"> <span class="chk-l">Calibrate maxes from my sets <span class="muted small" style="font-weight:500">(down at once, up slowly)</span></span></label>`, { sum: LIFTS.map(l => `${LIFTNAME[l]} ${state.lifts[l].oneRM}`).join(' · ') })
       + foldCard('set-equip', 'Equipment', `<div class="grid2"><label class="f">Bar weight<input id="set-bar" type="number" inputmode="decimal" data-setting="barWeight" value="${s.barWeight}"></label><label class="f">Dumbbell step<select id="set-dbi" data-setting="dbIncrement"><option value="2.5" ${s.dbIncrement == 2.5 ? 'selected' : ''}>2.5</option><option value="5" ${s.dbIncrement == 5 ? 'selected' : ''}>5</option></select></label></div>
         <div class="stack"><span class="tiny">Plates per side</span><div class="chips">${[55, 45, 35, 25, 15, 10, 5, 2.5, 1.25].map(p => `<button data-action="set-plate" data-p="${p}" aria-pressed="${s.plates.includes(p)}">${p}</button>`).join('')}</div></div>
         <div class="stack"><span class="tiny">Accessory working weights</span><div class="tablewrap"><table>${Object.keys(state.acc).length ? Object.keys(state.acc).map(k => `<tr><td>${esc(E.EX[k] ? E.EX[k].name : k)}</td><td class="num"><span class="acc-in"><input id="acc-${k}" type="number" inputmode="decimal" data-setting="acc:${k}" value="${state.acc[k].weight}" aria-label="${esc(E.EX[k] ? E.EX[k].name : k)} working weight"><span class="small muted">${E.EX[k] && E.EX[k].load === 'db' ? 'lb each' : 'lb'}</span></span></td></tr>`).join('') : '<tr><td class="muted small">These appear once you enter them in a session.</td></tr>'}</table></div></div>`, { closed: true, sum: `${s.barWeight} lb bar · ${s.plates.length} plate sizes` })
       + foldCard('set-sched', 'Schedule and cardio', `<div class="stack"><span class="tiny">Training days</span><span class="small muted">These days are only a note: the four sessions run in order, whenever you train.</span><div class="chips">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(x => `<button data-action="set-day" data-d="${x}" aria-pressed="${s.days.includes(x)}">${x}</button>`).join('')}</div></div>
         <div class="grid2"><label class="f">Bike after lifting (min)<input id="set-cm" type="number" inputmode="numeric" data-setting="cardioMin" value="${s.cardioMin}"></label><label class="f">Usual easy watts<input id="set-cw" type="number" inputmode="numeric" data-setting="cardioWatts" value="${s.cardioWatts}"></label></div>
-        <div class="grid3"><label class="f">Main rest (sec)<input id="set-r1" type="number" inputmode="numeric" data-setting="restPrimary" value="${s.restPrimary}"></label><label class="f">Second rest (sec)<input id="set-r2" type="number" inputmode="numeric" data-setting="restSecondary" value="${s.restSecondary}"></label><label class="f">Accessory rest (sec)<input id="set-r3" type="number" inputmode="numeric" data-setting="restAccessory" value="${s.restAccessory}"></label></div>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-peak" data-setting="includePeak" ${s.includePeak === true ? 'checked' : ''} style="width:22px;height:22px"> Include the Peak &amp; Test block</label>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-warm" data-setting="warmupSets" ${s.warmupSets !== false ? 'checked' : ''} style="width:22px;height:22px"> Show warm-up sets</label>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> Notify me when a rest ends <span class="muted small" style="font-weight:500">(only while ReadySet is open or just after you switch away; iPhone pauses web apps)</span></label>`, { closed: true, sum: `Bike ${s.cardioMin} min · rests ${s.restPrimary}/${s.restSecondary}/${s.restAccessory} s` })
+        <div class="grid3"><label class="f"><span>Main <br>rest (sec)</span><input id="set-r1" type="number" inputmode="numeric" data-setting="restPrimary" value="${s.restPrimary}"></label><label class="f"><span>Second <br>rest (sec)</span><input id="set-r2" type="number" inputmode="numeric" data-setting="restSecondary" value="${s.restSecondary}"></label><label class="f"><span>Accessory <br>rest (sec)</span><input id="set-r3" type="number" inputmode="numeric" data-setting="restAccessory" value="${s.restAccessory}"></label></div>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-peak" data-setting="includePeak" ${s.includePeak === true ? 'checked' : ''} style="width:22px;height:22px"> <span class="chk-l">Include the Peak &amp; Test block</span></label>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-warm" data-setting="warmupSets" ${s.warmupSets !== false ? 'checked' : ''} style="width:22px;height:22px"> <span class="chk-l">Show warm-up sets</span></label>
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" id="set-notify" data-setting="notify" ${s.notify ? 'checked' : ''} style="width:22px;height:22px"> <span class="chk-l">Notify me when a rest ends <span class="muted small" style="font-weight:500">(only while ReadySet is open or just after you switch away; iPhone pauses web apps)</span></span></label>`, { closed: true, sum: `Bike ${s.cardioMin} min · rests ${s.restPrimary}/${s.restSecondary}/${s.restAccessory} s` })
       + foldCard('set-extra', 'Extra cardio', `<label class="f">Easy cardio today (min, off-day bike or walk)<div class="row"><input id="extra-cardio" type="number" inputmode="numeric" placeholder="30" style="flex:1"><button class="btn sm" data-action="extra-cardio">Log</button></div></label>
         ${extraThisWeek().length ? `<div class="stack">${extraThisWeek().map(({ c, i }) => `<div class="row between small"><span>${fmtDate(c.date)} · ${c.min} min · ~${c.kcal} kcal</span><button class="btn sm quiet" data-action="extra-del" data-i="${i}" aria-label="Remove ${c.min} minutes on ${fmtDate(c.date)}">Remove</button></div>`).join('')}</div>` : ''}`, { closed: true, sum: extraThisWeek().length ? `${extraThisWeek().reduce((m, x) => m + x.c.min, 0)} min this week` : 'None this week' })
       + foldCard('set-data', 'Data and backups', `${Store.db ? '<p class="small muted">Synced to your Claude account.</p>' : `
         <div class="callout bad">Deleting the home-screen icon deletes this data. Never delete or re-add it without a backup.</div>
         <p class="small">A backup is your whole log in one dated file (${backupSizeText()}). Save it to Files or iCloud Drive; only the newest matters.</p>
-        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupOffer" ${s.backupOffer ? 'checked' : ''} style="width:22px;height:22px"> Offer a one-tap backup after each session</label>`}
+        <label class="row" style="gap:10px;font-weight:600"><input type="checkbox" data-setting="backupOffer" ${s.backupOffer ? 'checked' : ''} style="width:22px;height:22px"> <span class="chk-l">Offer a one-tap backup after each session</span></label>`}
         <div class="btnrow">${Store.db ? '' : '<button class="btn" data-action="share-backup">Save backup file</button>'}<button class="btn" data-action="export">Copy backup</button></div>
         ${Store.lastError ? `<div class="callout bad">${esc(Store.lastError)}</div>` : ''}
         <p class="small muted">${lastBak ? `Last backup ${lastBak} (${state.lastBackupKind === 'restore' ? 'restored from a backup' : state.lastBackupKind})` : 'No backup yet'}${since ? ` · ${since} session${since > 1 ? 's' : ''} since` : ''}.</p>
@@ -4184,6 +4250,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     if (!t || !booted) return;
     if (ev.isTrusted && state && state.current) unlockAudio();
     if (t.dataset.view) {
+      if (heldSlip('', {})) return; // a value the typo check would question asks first (A15-R3-01)
       // Leaving a session for another tab and coming back returns you to the same spot.
       if (view === 'today' && state.current) ui.todayScroll = scroller().scrollTop;
       if (view === 'history' && t.dataset.view !== 'history') ui.histAll = false;
@@ -4199,6 +4266,8 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       if (now - lastTap.t < 380 && near && !(a === lastTap.a && REPEATABLE.has(a))) return;
       lastTap = { t: now, x: ev.clientX, y: ev.clientY, a };
     }
+    if (heldSlip(a, d)) return; // the check opens and takes this tap; you answer, then tap again (A15-R3-01)
+    if (leaveField(a, d)) return; // a sane typed value is committed (and carries) before the tap acts, as on a desktop (decision 15)
     anchor = anchorFor(t, a); Promise.resolve().then(() => { anchor = null; });
     if (a === 'done' || a === 'rpe') { ui.lastEi = Number(d.ei); if (state.current) state.current.lastEi = ui.lastEi; }
     switch (a) {
@@ -4228,7 +4297,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       case 'ci-choice': ui.checkin.choice = d.v; render(); break;
       case 'ci-rest': restToday(); break;
       case 'start-session': startSession(d.mode); break;
-      case 'skip-session': if (window.__skipArmed) { window.__skipArmed = false; skipSession(); } else { window.__skipArmed = true; toast('Tap again to skip this session'); setTimeout(() => { window.__skipArmed = false; }, 3000); } break;
+      case 'skip-session': clearTimeout(ui.skipArm); if (ui.skipArm) { ui.skipArm = 0; skipSession(); } else { toast('Tap again to skip this session'); ui.skipArm = setTimeout(() => { ui.skipArm = 0; }, 3000); } break; // the second tap within 3 s skips; each arming gets its own full 3 s (A15-C1-03)
       case 'done': toggleDone(Number(d.ei), Number(d.si)); break;
       case 'rpe': openRpe(Number(d.ei), Number(d.si)); break;
       case 'rpe-pick': {
@@ -4285,9 +4354,12 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       case 'log-all': ui.logAll = true; render(); break;
       case 'chart-pick': case 'chart-step': case 'chart-close': {
         const lift = d.lift; if (!LIFTS.includes(lift)) break;
-        const cv = document.getElementById('c-' + lift); if (cv) anchor = { sel: '#c-' + lift, fallback: '#c-' + lift, top: cv.getBoundingClientRect().top, fallbackTop: cv.getBoundingClientRect().top };
+        // "Earlier" / "Later" hold themselves still, so they can be tapped again without moving the thumb (the details
+        // above them change length per session, A15-R2-02); a pick and Close hold the chart.
+        const cv = document.getElementById('c-' + lift), stepSel = a === 'chart-step' ? `[data-action="chart-step"][data-lift="${d.lift}"][data-dir="${d.dir}"]` : null;
+        if (cv) { const ct = cv.getBoundingClientRect().top; anchor = { sel: stepSel || '#c-' + lift, fallback: '#c-' + lift, top: stepSel ? t.getBoundingClientRect().top : ct, fallbackTop: ct }; }
         if (a === 'chart-close') { ui.chartSel = null; redrawTrend(); break; }
-        if (a === 'chart-step') { const pts = sessionEsts(lift), i = ui.chartSel ? pts.findIndex(p => p.id === ui.chartSel.id) : -1, ni = Math.max(0, Math.min(pts.length - 1, i + Number(d.dir))); if (pts[ni]) ui.chartSel = { lift, id: pts[ni].id }; redrawTrend(); break; }
+        if (a === 'chart-step') { const pts = sessionEsts(lift), i = ui.chartSel ? pts.findIndex(p => p.id === ui.chartSel.id) : -1, ni = Math.max(0, Math.min(pts.length - 1, i + Number(d.dir))); if (pts[ni]) ui.chartSel = { lift, id: pts[ni].id }; redrawTrend(true); break; }
         const hits = chartHits[lift] || []; if (!hits.length) break;
         const rc = t.getBoundingClientRect(), px = ev.clientX - rc.left, py = ev.clientY - rc.top;
         let best = null, bd = Infinity; for (const h of hits) { const dd = Math.abs(h.px - px) + Math.abs(h.py - py) * 0.35; if (dd < bd) { bd = dd; best = h; } }
@@ -4360,7 +4432,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
       fresh = cleanState(obj, false);
       if (!fresh.setupDone) throw new Error('no maxes');
     } catch (e) { toast('That does not look like a ReadySet backup'); return false; }
-    if (state.current) { toast('Finish or discard the session in progress first'); return false; }
+    if (state.current) { toast('Finish or discard the open session first'); return false; }
     if (!state.setupDone && !fromAside && storedProgramMissed()) { location.reload(); return false; }
     if (state.setupDone && state.sessions.some(x => !x.skipped)) { ui.pendingRestore = fresh; render(); scrollToY(0); return false; }
     return applyRestore(fresh, fromAside);
@@ -4417,6 +4489,50 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
   // "Fix it" on the typo check (A14-C1-12): the field keeps what you typed, so one wrong digit is one
   // key, and nothing is stored yet. The value is checked again when you tick the set (markDone reads
   // the field) or leave the field: a field left unchanged sends no change event, so focusout does it.
+  // A15-R3-01: a value the typo check would question waits, unsaved, in its field (A15-R2-01). On the iPhone a tap on a
+  // button does not leave the field, and the redraw that tap starts would drop the value without a word. So before any
+  // other tap acts, the check is opened for it and takes that tap; you answer, then tap again. That row's tick when it
+  // logs the set reads the field itself; an open sheet's buttons are the answer. The tab bar and the rest bar ask from
+  // their touch, before the app leaves the field (A15-R4-01); a click on +30s or Done redraws nothing under the field.
+  // A sane value never gets here. Where the browser leaves the field first (a desktop click), no set field is focused
+  // by now and this does nothing.
+  function heldSlip(a, d) {
+    const s = state && state.current, f = document.activeElement;
+    if (!s || ui.sheet || a === 'timer-add' || a === 'timer-stop') return false;
+    if (!f || f.tagName !== 'INPUT' || !f.dataset || !f.dataset.set || f.value === '' || (f.validity && f.validity.badInput)) return false;
+    const ei = Number(f.dataset.ei), si = Number(f.dataset.si), e = s.exercises[ei], x = e && e.sets[si]; if (!x) return false;
+    if (d.ei === f.dataset.ei && d.si === f.dataset.si && a === 'done' && !x.done) return false; // the tick that logs it reads the field itself; "Undo set" and its rating would drop it, so they ask too (A15-C4-01, A15-R4-01)
+    const isW = f.dataset.set === 'w', v = isW ? cleanW(f.value) : cleanReps(f.value);
+    if (v == null || v === (isW ? x.actualW : x.actualReps) || !oddEntry(e, x, isW ? v : null, isW ? null : v)) return false;
+    const val = f.value; clearTimeout(typeTimer); pendingType = null;
+    try { f.blur(); } catch (err) { /* ignore */ } // closes the keyboard; a browser that sends change on the way out has opened the check already
+    if (!(ui.sheet && ui.sheet.kind === 'check')) setField(ei, si, isW ? 'w' : 'r', val);
+    resyncSoon(); return true;
+  }
+  // Decision 15 (A15): on the iPhone a tap on a button does not leave a focused set field (D12), so a sane value typed
+  // there was saved as you type but never committed: it did not carry to the later sets as it does on a desktop. Before a
+  // session button acts, the field is left first, as a desktop click does. That row's tick when it logs the set reads the
+  // field itself; its rating is left here too, before openRpe (A15-AR-03); the rest bar redraws nothing under it. A browser that sends change on the
+  // way out commits the value; for one that does not, the same commit is made here. A typo check that this opens takes
+  // the tap. A questioned value never reaches this: heldSlip has asked about it first.
+  let fieldIn = null; // the set field that has the focus, and its value when it got it or was last committed
+  document.addEventListener('focusin', (ev) => { const t = ev.target; fieldIn = t && t.dataset && t.dataset.set ? { el: t, v: t.value } : null; });
+  function commitSet(t) { // what a change event on a set field does
+    delete t.dataset.recheck; clearTimeout(typeTimer); pendingType = null; if (fieldIn && fieldIn.el === t) fieldIn.v = t.value;
+    if (t.validity && t.validity.badInput) { toast('Use digits and one decimal point'); return; }
+    setField(Number(t.dataset.ei), Number(t.dataset.si), t.dataset.set, t.value);
+  }
+  function leaveField(a, d) {
+    const f = document.activeElement;
+    if (!state.current || ui.sheet || a === 'timer-add' || a === 'timer-stop') return false;
+    if (!f || f.tagName !== 'INPUT' || !f.dataset || !f.dataset.set) return false;
+    const e = state.current.exercises[Number(f.dataset.ei)], x = e && e.sets[Number(f.dataset.si)];
+    if (a === 'done' && !(x && x.done) && d.ei === f.dataset.ei && d.si === f.dataset.si) return false; // the tick that logs the set reads the field; "Undo set" does not (A15-AR-01), and the rating's own blur commits only where the browser sends change (A15-AR-03)
+    try { f.blur(); } catch (e) { /* ignore */ }
+    if (fieldIn && fieldIn.el === f && f.value !== fieldIn.v) commitSet(f); // no change event came on the way out
+    fieldIn = null; resyncSoon();
+    return !!(ui.sheet && ui.sheet.kind === 'check');
+  }
   function fixField(inp, v) {
     if (!inp) return;
     inp.value = String(v); inp.dataset.recheck = '1';
@@ -4427,14 +4543,14 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     if (!t || !t.dataset || !t.dataset.recheck) return;
     delete t.dataset.recheck;
     if (!t.dataset.set || !state.current || (t.validity && t.validity.badInput)) return;
-    clearTimeout(typeTimer); pendingType = null;
+    clearTimeout(typeTimer); pendingType = null; if (fieldIn && fieldIn.el === t) fieldIn.v = t.value;
     setField(Number(t.dataset.ei), Number(t.dataset.si), t.dataset.set, t.value);
   });
   document.addEventListener('change', (ev) => {
     const t = ev.target;
     if (t.dataset.draft) { const dr = draft(); dr[t.dataset.draft] = t.type === 'checkbox' ? t.checked : t.value; return; }
     if (t.dataset.calc) { const [l, k] = t.dataset.calc.split(':'); const dr = draft(); dr.calc[l] = dr.calc[l] || {}; dr.calc[l][k] = t.value; return; }
-    if (t.dataset.set) { delete t.dataset.recheck; clearTimeout(typeTimer); pendingType = null; if (t.validity && t.validity.badInput) { toast('Use digits and one decimal point'); return; } setField(Number(t.dataset.ei), Number(t.dataset.si), t.dataset.set, t.value); return; }
+    if (t.dataset.set) { commitSet(t); return; }
     if (t.dataset.setting) {
       const hadPending = !!ui.pendingMax;
       const r = applySetting(t.dataset.setting, t.type === 'checkbox' ? t.checked : t.value);
@@ -4510,6 +4626,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     const hit = document.elementFromPoint(p.clientX, p.clientY);
     if (!hit || hit.closest(FAST) !== f.el) return;
     ev.preventDefault();
+    if (heldSlip('', {})) return; // a value the typo check would question asks before a tab or the rest bar acts (A15-R4-01)
     const act = document.activeElement;
     if (act && act !== document.body && typeof act.blur === 'function') act.blur();
     if (state && state.current) unlockAudio();
@@ -4598,7 +4715,7 @@ canvas.tap-chart { cursor: pointer; -webkit-tap-highlight-color: transparent; to
     if (!ui.updateReady || $('#update-bar')) return;
     const bar = document.createElement('div'); bar.id = 'update-bar'; bar.className = 'update-bar';
     bar.innerHTML = `<span>${esc(updateBarText())}</span><button class="btn sm" data-action="apply-update">Update now</button>`;
-    const app = $('#app'); if (app) app.insertBefore(bar, app.firstChild);
+    const app = $('#app'); if (app) keepScrollSpot(() => app.insertBefore(bar, app.firstChild));
   }
   function updateBarText() { return state && state.current ? 'New version ready. Your sets are saved; it installs when you finish, or tap now.' : 'New version ready. Everything is saved.'; }
   // The bar outlives the screen it was drawn on: a session started or finished since then changes what it says.

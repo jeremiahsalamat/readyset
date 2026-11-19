@@ -93,8 +93,43 @@ expect(minH(rule('.set .field input')) >= 44, 'set weight and reps fields are at
 const tdIn = /\ntd input\[type=number\] \{([^}]*)\}/.exec(css);
 expect(minH(tdIn ? tdIn[1] : '') >= 44, 'Settings table inputs (accessory weights) are at least 44px high');
 expect(/min-width:\s*44px/.test(rule('.chips button')) && minH(rule('.chips button')) >= 44, 'plate and day chips are at least 44x44 (the "5" chip was 37px wide)');
-// The save bar speaks of sets and finishing the session only when a session is open.
-expect(app.includes("this.lastError = s && s.current ? 'This phone could not save your latest sets") && app.includes("'This phone could not save your latest changes (storage full or blocked). Keep ReadySet open and tap Save backup.'"), 'the storage-full message fits whether or not a session is open');
+// A15-C1-02: a select draws no ::after, so the small button's 44px touch area never reached the session's
+// "Swap…" select (36px tall). It is 44px itself.
+expect(minH(rule('select.btn.sm')) >= 44, 'the small select buttons (Swap…) are at least 44px high');
+// A15-R1-05 (rule 12): a checkbox label's text and its muted note are one flex item, or the note drops to its
+// own line under the box. Every checkbox row wraps its text in span.chk-l, and that span may shrink.
+const chkRows = app.match(/<label class="row"[^>]*><input type="checkbox"[^>]*>[^<]*(<[a-z]+[^>]*>)?/g) || [];
+expect(chkRows.length >= 7 && chkRows.every(r => / <span class="chk-l">$/.test(r)), 'every checkbox label keeps its text and note in one span (' + chkRows.length + ' rows)');
+expect(/\.row > \.chk-l \{[^}]*flex: 1 1 0;[^}]*min-width: 0;/.test(css), 'the checkbox label text may shrink beside its box');
+// A15-C2-02: a one-line checkbox row (the whole row toggles the box) was 28 px tall; the Remove-sets x was 40 px
+// at under 360 px with no larger touch area. Both are 44 px targets.
+expect(minH(rule('label.row')) >= 44, 'every checkbox row is at least 44px high');
+expect(/@media \(max-width: 359px\) \{[\s\S]*?\.set \.del::after \{ content: ""; position: absolute; inset: -4px; \}/.test(css), 'the 40px Remove-sets x is tapped at 44px under 360px');
+// A15-C3-01: the small buttons' touch area is the ::after box, measured from inside the 1 px border: -4px gave 42 px
+// (seen by elementFromPoint in headless Edge). -5px gives 36 + 2 x 4 = 44. A15-R2-05: "Close details" (36 px wide) gets
+// the same on all four sides.
+expect(/\.btn\.sm::after \{ content: ""; position: absolute; left: 0; right: 0; top: -5px; bottom: -5px; \}/.test(css), 'small buttons are tapped at 44 px tall (::after 5 px out from inside the border)');
+expect(/\.pt-head \.btn\.icon::after \{ inset: -5px; \}/.test(css) && /\.pt-head \.btn\.icon \{ min-width: 36px;/.test(css), 'the 36 px "Close details" is tapped at 44 x 44');
+// A15-R3-02: a step with Earlier / Later keeps the details' height (app.js redrawTrend), and the buttons sit at its foot,
+// so at the top of History neither they nor the chart move.
+expect(/\.pt-nav \{ align-items: center; flex-wrap: wrap; margin-top: auto; \}/.test(css) && /\.pt-card \{[^}]*display: flex; flex-direction: column;/.test(css), 'Earlier / Later sit at the foot of the chart details');
+// A15-C4-02: the session number between Earlier and Later is as wide as its widest value from the first step, so the
+// row does not re-wrap (moving Later from under the finger) when "9 of 84" becomes "10 of 84".
+expect(/\.pt-pos \{ display: inline-block; text-align: center; \}/.test(css) && /\.pt-pos::after \{ content: attr\(data-w\); display: block; height: 0; overflow: hidden; visibility: hidden; \}/.test(css), 'the Earlier / Later row keeps its layout as the session number gains a digit');
+// A15-R2-07: "Build my program" stays on one line beside "Back" (it wrapped at 320, 360 and 375 px).
+expect(/\[data-action="setup-finish"\] \{ white-space: nowrap; \}/.test(css) && app.includes('data-action="setup-finish">Build my program</button>'), '"Build my program" does not wrap');
+// A15-R2-06: the three rest labels take two lines at every phone width ("Accessory rest (sec)" alone wrapped at 402).
+expect(['Main', 'Second', 'Accessory'].every(n => app.includes(`<label class="f"><span>${n} <br>rest (sec)</span><input id="set-r`)), 'the three rest labels break at the same place');
+// A15-R1-02: under 400 px the exercise-choice selects take the full row (the names were cut, "(auto)" with them).
+expect(/@media \(max-width: 399px\) \{ \.swap-row \{ grid-template-columns: minmax\(0, 1fr\);/.test(css), 'under 400 px each exercise choice sits under its slot name');
+// The save bar speaks of sets and finishing the session only when a session is open (A14). It is short enough to take
+// three lines on a 320 px phone (it took seven), and each of its messages still says why and what to do (A15).
+{ const msgs = [...app.matchAll(/'((?:Sets n|N)ot saved: [^']*)'/g)].map(m => m[1]);
+  const sess = (/this\.lastError = s && s\.current \? '([^']*)'/.exec(app) || [])[1] || '', idle = (/\n\s*: '([^']*)'; \/\/ no session open/.exec(app) || [])[1] || '', write = (/catch \(e\) \{ this\.lastError = '([^']*)'/.exec(app) || [])[1] || '';
+  expect(msgs.length === 3 && [sess, idle, write].every(m => msgs.includes(m)), 'the three storage messages are found (a session open, none open, the data not written)');
+  expect(/\bsets\b/i.test(sess) && /finish/i.test(sess) && ![idle, write].some(m => /\bsets?\b|finish/i.test(m)), 'the storage-full message speaks of sets and finishing only when a session is open');
+  expect([sess, idle, write].every(m => /Keep ReadySet open/.test(m) && /tap Save backup\.$/.test(m) && m.length <= 95), 'each storage message says to keep ReadySet open and tap Save backup, in at most 95 characters');
+  expect(/storage full or blocked/.test(sess) && /storage full or blocked/.test(idle) && /could not be written/.test(write), 'each storage message still says why the save failed'); }
 // Editing a test session before its week ends feeds the block-end result, so it must not say "leaves them alone".
 expect(app.includes("lines.push(inBlock(s) ? 'A test sets the maxes once, when the test week ends: the edited singles count then.' : 'A test sets the maxes once, at its end, so this edit leaves them alone.')"), 'an edit of a test session says whether it still counts');
 // Two windows: a window that sees newer data from the other one (while it has a session open) is behind. It
@@ -128,7 +163,7 @@ expect(/function renderSheet\(\) \{\n\s*const before = sheetOpen;\n\s*drawSheet\
 // A14-C1-12: "Fix it" keeps the typed digits; the value is checked again on tick (markDone reads the field) and on leaving the field.
 expect(app.includes("if (a === 'check-fix') { render(); fixField(") && /function fixField\(inp, v\) \{\n\s*if \(!inp\) return;\n\s*inp\.value = String\(v\); inp\.dataset\.recheck = '1';/.test(app)
   && /addEventListener\('focusout', \(ev\) => \{\n\s*const t = ev\.target;\n\s*if \(!t \|\| !t\.dataset \|\| !t\.dataset\.recheck\) return;\n\s*delete t\.dataset\.recheck;[\s\S]{0,200}setField\(Number\(t\.dataset\.ei\), Number\(t\.dataset\.si\), t\.dataset\.set, t\.value\);/.test(app)
-  && app.includes("if (t.dataset.set) { delete t.dataset.recheck; clearTimeout(typeTimer);") && app.includes("if (wEl && wEl.value !== '') { const v = cleanW(wEl.value);") && app.includes("const odd = oddEntry(e, x, x.actualW, x.actualReps);\n    if (odd) { const f = odd.field === 'w' ? wEl : rEl; if (f && f.value !== '') odd.typed = f.value; openCheck(ei, si, odd, 'tick'); return false; }")
+  && app.includes("if (t.dataset.set) { commitSet(t); return; }") && /function commitSet\(t\) \{ \/\/ what a change event on a set field does\n\s*delete t\.dataset\.recheck; clearTimeout\(typeTimer\);/.test(app) && app.includes("if (wEl && wEl.value !== '') { const v = cleanW(wEl.value);") && /const odd = oddEntry\(e, x, x\.actualW, x\.actualReps\);\n\s*if \(odd\) \{[\s\S]{0,300}?if \(f && f\.value !== ''\) odd\.typed = f\.value;[\s\S]{0,200}?openCheck\(ei, si, odd, 'tick'\); return false;/.test(app)
   && app.includes("if (odd) { odd.typed = String(val); openCheck(ei, si, odd, 'none'); return; }") && app.includes("o.typed != null ? o.typed : o.v);"),
   '"Fix it" keeps the digits, and they are checked again on tick and on blur');
 // A14-C2-09: "Use" on a carried weight puts that weight back as it was.

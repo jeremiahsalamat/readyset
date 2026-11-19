@@ -124,7 +124,16 @@ stored: finishing a session and the week and block reviews, a session logged aft
 week and in a two-red week, edit, delete and Undo, two windows (a window that is behind never writes,
 no account push from it, a save during an update download, a save made while the claude.ai copy waits
 for the account, a window that changed nothing writes nothing while a repair made on load is still saved), the typo check's "Fix it" and carried "Use",
-focus into and out of the sheets, when a backup counts, and the copy set aside after an error.
+focus into and out of the sheets, when a backup counts, the copy set aside after an error, the update
+and save bars keeping the sets in place as they appear, the storage-full text (short, and about sets only with a session open), the two-tap skip, the session buttons' labels (no two
+alike) and the check-in's named answer groups, a value the typo check would question (typed the phone's way,
+with no blur) neither saved nor used until a tick, leaving the field or any other tap asks, a tab or rest-bar touch
+included, whether or not the phone sends a change event when the app leaves the field (never dropped
+without a word, and the plates under it no longer describe another weight), while a sane typed value is still
+saved as you type and is committed before another session button acts, so it carries to the later sets as on a desktop, "Earlier" and "Later" under a chart and "Remove sets" held under the finger (the chart
+details keep their height while you step), the rest bar naming the next exercise after a fatigue stop, a cut
+or a delete and this one again when cut sets come back, and the taps it ignores on purpose just
+after a tick opens the RPE sheet or a set is deleted.
 `sw_budget.js` runs the built `docs/sw.js` (so build first)
 with stubbed caches and network: a return never waits on the network, offline, updates, fonts, the
 captive-portal guard, and one rest banner per deadline (a cancel, a restarted worker, the 5 s limit).
